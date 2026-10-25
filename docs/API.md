@@ -254,6 +254,43 @@ Base path: `/api/v1`. In production the browser calls the API through the web ap
 | `GET /super-admin/live-ops` | Super Admin | SOS response metrics, active alerts (no identities or locations), installs by app version, push status, failed jobs. |
 | `GET /super-admin/data-requests` · `POST /super-admin/data-requests/:id/decision` | `retention:manage` | Complete or reject; deletion anonymises the account and needs `confirm: "DELETE ACCOUNT"` plus re-auth. |
 
+### Community feed
+
+Public to signed-in campus users once published. Private support chats, counselling conversations, complaint chats, SOS and location data live in their own collections and are never copied into the feed. Limits are `FEED_LIMITS` in `packages/shared/src/community.ts`.
+
+| Method & path | Who | Notes |
+|---|---|---|
+| `GET /community/posts?scope=feed\|mine\|bookmarks&category=&q=&tag=&cursor=&limit=` | signed in | Feed newest first. `q` searches text and tags (`#tag` matches a tag). Pages with an opaque `cursor`. `mine`/`bookmarks` use `page`. The first feed page also returns `pinned` official announcements. Posts by people you blocked are left out. `disabled: true` when the feed is turned off. |
+| `GET /community/featured` | signed in | Pinned official announcements, the next 3 events, and the counselling channel card. |
+| `POST /community/posts` | `chat:community` | `{ body, category, tags[], attachmentIds[], locationLabel?, official?, clientId }`. Only `announcements:manage` may use `announcements` or `official: true` (otherwise 403 `not_official`, audited). Rate limits: 429 `rate_limited`. Same text again within 24 h: 409 `duplicate_post`. A repeated `clientId` returns the original post with `duplicate: true`. Screening may hold the post (`held: true`, `status: pending_review`). `crisisSupport` is set when the text mentions self-harm. `locationLabel` is free text the author typed; coordinates are never accepted. |
+| `GET,PATCH,DELETE /community/posts/:id` | viewer / author | GET counts one unique view. PATCH edits your own post (and re-screens it), or pins an official one (`announcements:manage`). DELETE soft-deletes your own post. Channel posts are edited through the channel routes. |
+| `POST /community/uploads` · `GET /community/files/:id` | participants | Images are JPG/PNG/WEBP up to 5 MB, checked from the bytes. Verified channel publishers and announcers may also upload PDFs. A file is readable only by people who can see its post (or the uploader before posting). |
+| `PUT,DELETE /community/posts/:id/reaction` | signed in | `{ kind: like\|helpful\|support }`. One reaction per person, enforced by a unique index. Returns `{ reactionCount, myReaction }`. |
+| `PUT,DELETE /community/posts/:id/bookmark` | signed in | Idempotent. |
+| `GET,POST /community/posts/:id/comments` · `PATCH,DELETE /community/comments/:id` | signed in / author | Oldest first. Replies are one level deep. Paged with `cursor` (last top-level comment id). POST takes `{ body, parentId?, clientId }` and returns the server `commentCount`. Notifications never include the comment text. |
+| `GET /community/(posts\|comments)/:id/author` | signed in | Profile preview. Students who hide their name stay anonymous. Returns `counsellorId` when a student views an active counsellor. |
+| `POST /community/(posts\|comments)/:id/block-author` · `GET /community/blocks` · `DELETE /community/blocks/:id` | signed in | Uses the same block list as chat. Blocked authors' posts and comments are hidden from you, and they can't comment on your posts. Official accounts can't be blocked. |
+| `POST /community/reports` | signed in | `{ targetType: post\|comment\|user, targetId, via?, reason, details? }`. One report per person per target. At `reportsToAutoHide` open reports (2 for urgent reasons) the content is held for review. |
+| `POST /community/(posts\|comments)/:id/appeal` | author | `{ reason }`. One appeal per decision, reviewed by a different moderator. |
+| `GET /community/moderation/queue` · `POST /community/moderation/(posts\|comments)/:id` · `POST /community/moderation/user-reports/:id` · `GET,POST /community/moderation/appeals[/:id]` | `community:moderate` | Actions: `approve\|hide\|remove\|restore\|dismiss`. Hide and remove need a `reason`, which the author sees. You can't moderate your own content or decide an appeal of your own decision. Audited. Gives no access to private chats or counselling conversations. |
+| `GET,POST /community/events` · `GET,PATCH /community/events/:id` · `POST …/:id/cancel` · `POST …/:id/rsvp` | signed in / organisers | `?when=upcoming\|past&channel=counselling`. Only `announcements:manage`, `community:organize_events` or verified counselling publishers (counselling events only) can create. RSVP takes `going\|interested\|none` and respects capacity. Reminders go out about 24 h before. |
+
+### Official Counselling Support channel and counsellor chat
+
+| Method & path | Who | Notes |
+|---|---|---|
+| `GET /community/channels/counselling` | signed in | Name, description, `verified`, `following`, `canPublish` (decided by the server), topics, verified counsellors with availability (`available\|outside_hours\|away`, `nextAvailableAt`), and `emergencyNotice`. |
+| `POST /community/channels/counselling/follow` | signed in | `{ following }`. Followers are notified of new posts (no content in the notification). |
+| `GET /community/channels/counselling/posts?topic=&q=&cursor=` | signed in | Published posts plus `pinned` (max 3). |
+| `POST /community/channels/counselling/posts` | verified publisher | `{ body, topic, tags[], attachmentIds[], resourceLinks[{title,url https}], status: draft\|published\|scheduled, scheduledAt?, commentsEnabled, pinned, clientId }`. Publishing needs the `counsellor` role, an active account and an unrevoked Super Admin verification. Anyone else gets 403 `not_publisher`, and the denial is audited. Publishing, scheduling and drafting are all audited with the counsellor's identity and the time. |
+| `PATCH,DELETE /community/channels/counselling/posts/:postId` | verified publisher | Content changes and deletion are for your own posts only. Any publisher can pin or unpin published posts. Other counsellors' drafts and scheduled posts return 404. Moderated posts can't be changed or pinned (409). |
+| `GET /community/channels/counselling/dashboard` | verified publisher | Your own drafts, scheduled and published posts with engagement totals. Counts only, never who viewed or reacted. |
+| `GET,POST /community/channels/counselling/publishers` · `DELETE …/publishers/:userId` | `community_channels:manage` (Super Admin) | Verify or revoke publishers. Only active `counsellor` accounts can be verified. Audited. Website: Super Admin → Counselling channel. |
+| `GET,POST /counselling/conversations` | signed in / student | A student opens or reopens a private one-to-one conversation with an active counsellor (`{ counsellorId }`; max 5 new per day). The list shows only conversations you belong to. |
+| `GET /counselling/conversations/:id` · `GET,POST …/:id/messages` | the two participants | Anyone else gets 404, including moderators and other counsellors. Messages use the chat system (`clientMessageId` idempotency, read state via `GET /chat/channels/:id/read-state`, media policy `counselling`). Notifications contain no message text or student name. Nothing here is ever published to the feed. |
+
+**Retention and consent.** Counselling conversations are kept while both accounts are active so the student and counsellor can refer back to them. The automatic retention job (Super Admin → Data retention) only covers community chat messages today and does **not** expire counselling conversations. They are removed through the student's data-deletion request (`POST /me/data-requests`). The institution should decide the retention period for counselling conversations and add it to the retention job. Students are told in the app that the chat is confidential, is not an emergency service, and that replies may take time.
+
 ### Webhooks
 
 | Method | Path | Guard |

@@ -94,6 +94,7 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlinx.coroutines.launch
+import androidx.compose.material.icons.rounded.Verified
 
 private val ACTIVE = setOf("requested", "confirmed", "rescheduled")
 private val WEEKDAYS = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
@@ -134,6 +135,10 @@ fun CounsellorHomeScreen() {
             ListRow("Availability", subtitle = "Weekly hours, slot length, time off", icon = Icons.Rounded.Schedule, tone = Tone.Teal, onClick = { nav.navigate(Routes.Availability) })
             Divider()
             ListRow("My students", subtitle = "Students you've seen and follow-ups", icon = Icons.Rounded.Groups, tone = Tone.Violet, onClick = { nav.navigate(Routes.CounsellorStudents) })
+            Divider()
+            ListRow("Private student chats", subtitle = "One-to-one conversations students started with you", icon = Icons.Rounded.Forum, tone = Tone.Violet, onClick = { nav.navigate(Routes.CounsellorChats) })
+            Divider()
+            ListRow("Official Counselling Support", subtitle = "Channel posts, drafts and engagement (verified publishers)", icon = Icons.Rounded.Verified, tone = Tone.Brand, onClick = { nav.navigate(Routes.CounsellingChannel) })
         }
         InfoBanner("Your session notes are private to you. Committees and administrators can't read them.", icon = Icons.Rounded.Lock, tone = Tone.Violet)
     }

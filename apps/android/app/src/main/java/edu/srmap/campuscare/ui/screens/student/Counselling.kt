@@ -91,6 +91,10 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.launch
+import androidx.compose.material.icons.rounded.Verified
+import edu.srmap.campuscare.data.counsellingChannel
+import edu.srmap.campuscare.ui.components.ListRow
+import edu.srmap.campuscare.ui.components.Divider
 
 private val ACTIVE_APPT = setOf("requested", "confirmed", "rescheduled")
 
@@ -115,6 +119,7 @@ fun CounsellingScreen() {
     var cancelTarget by remember { mutableStateOf<Appointment?>(null) }
     var busy by remember { mutableStateOf(false) }
     var breathing by remember { mutableStateOf(false) }
+    var messaging by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { app.realtime.events.collect { e -> if (e.name == "appointment:updated") appts.reload() } }
     val helpline = app.config.nationalEmergencyNumbers.firstOrNull { it.id == "14416" }
 
@@ -137,6 +142,12 @@ fun CounsellingScreen() {
                 Spacer(Modifier.height(12.dp))
                 CcButton("Book a session", { nav.navigate(Routes.bookSession()) }, kind = ButtonKind.Primary, leadingIcon = Icons.Rounded.CalendarMonth)
             }
+        }
+
+        CcCard(padding = 8.dp) {
+            ListRow("Message a counsellor", subtitle = "Private one-to-one chat · not an emergency service", icon = Icons.AutoMirrored.Rounded.Chat, tone = Tone.Violet, onClick = { nav.navigate(Routes.CounsellorChats) })
+            Divider()
+            ListRow("Official Counselling Support", subtitle = "Wellness tips, resources and session news", icon = Icons.Rounded.Verified, tone = Tone.Brand, onClick = { nav.navigate(Routes.CounsellingChannel) })
         }
 
         // Upcoming & past sessions
@@ -172,8 +183,22 @@ fun CounsellingScreen() {
                             StatusChip(if (c.acceptingRequests) "Available" else "Not taking requests", if (c.acceptingRequests) Tone.Brand else Tone.Neutral, dot = true)
                         }
                         if (c.bio.isNotBlank()) Text(c.bio, style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, maxLines = 4, modifier = Modifier.padding(top = 8.dp))
-                        if (c.acceptingRequests) {
-                            CcButton("Book with ${c.name.substringBefore(' ')}", { nav.navigate(Routes.bookSession(c.id)) }, Modifier.fillMaxWidth().padding(top = 10.dp), kind = ButtonKind.Soft)
+                        Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CcButton("Message", {
+                                if (messaging == null) scope.launch {
+                                    messaging = c.id
+                                    try {
+                                        nav.navigate(Routes.chat(app.api.counsellingChannel.startConversation(c.id).id))
+                                    } catch (e: ApiException) {
+                                        snack.error(e)
+                                    } finally {
+                                        messaging = null
+                                    }
+                                }
+                            }, Modifier.weight(1f), kind = ButtonKind.Outline, loading = messaging == c.id, leadingIcon = Icons.AutoMirrored.Rounded.Chat)
+                            if (c.acceptingRequests) {
+                                CcButton("Book", { nav.navigate(Routes.bookSession(c.id)) }, Modifier.weight(1f), kind = ButtonKind.Soft)
+                            }
                         }
                     }
                 }

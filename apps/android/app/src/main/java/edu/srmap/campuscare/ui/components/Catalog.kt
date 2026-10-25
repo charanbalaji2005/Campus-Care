@@ -82,6 +82,7 @@ object Catalog {
     val studentTimeline = listOf("submitted", "assigned", "under_review", "in_progress", "resolved", "closed")
 
     val sosLabels = mapOf(
+        "pending" to "Countdown — not sent yet",
         "queued" to "Alert queued", "sending" to "Sending to responders", "sent" to "Delivered — waiting for a responder",
         "acknowledged" to "Acknowledged by Campus Security", "en_route" to "Responder on the way", "resolved" to "Resolved",
         "failed" to "Delivery failed — call for help", "cancelled" to "Cancelled",
@@ -93,6 +94,25 @@ object Catalog {
         "failed" -> Tone.Danger
         "cancelled" -> Tone.Neutral
         else -> Tone.Amber
+    }
+
+    /** SOS statuses that are still open for the student (includes the cancellable "pending" countdown). */
+    val studentActiveSos = setOf("pending", "queued", "sending", "sent", "acknowledged", "en_route", "failed")
+
+    /** Responder duty statuses (same keys as the server). "responding" and "stale" are set only by the server. */
+    val dutyLabels = mapOf(
+        "on_duty" to "On duty", "off_duty" to "Off duty", "on_break" to "On break", "busy" to "Busy",
+        "responding" to "Responding", "unavailable" to "Unavailable", "stale" to "Unreachable — heartbeat lost",
+    )
+
+    fun dutyLabel(status: String) = dutyLabels[status] ?: status.replace('_', ' ').replaceFirstChar { it.uppercase() }
+
+    fun dutyTone(status: String): Tone = when (status) {
+        "on_duty" -> Tone.Brand
+        "responding" -> Tone.Danger
+        "on_break", "busy" -> Tone.Amber
+        "stale" -> Tone.Rose
+        else -> Tone.Neutral
     }
 
     val hazardCategories = listOf(

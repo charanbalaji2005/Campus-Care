@@ -68,6 +68,12 @@ const limited = (message: string) => (_req: Request, _res: Response, next: NextF
 export const authLimiter = rateLimit({ ...limiterBase, windowMs: 15 * 60_000, limit: 30, handler: limited('Too many attempts. Please wait a few minutes and try again.') });
 export const emailLimiter = rateLimit({ ...limiterBase, windowMs: 60 * 60_000, limit: 6, handler: limited('Too many email requests. Please try again later.') });
 export const apiLimiter = rateLimit({ ...limiterBase, windowMs: 60_000, limit: 300, handler: limited('Too many requests. Please slow down.') });
+/** Second-factor and recovery-code attempts (per IP). Per-account lockout is enforced separately in mfa.service. */
+export const mfaLimiter = rateLimit({ ...limiterBase, windowMs: 15 * 60_000, limit: 20, handler: limited('Too many verification attempts. Please wait a few minutes and try again.') });
+/** Duty heartbeats arrive every ~45 s per device; this only stops runaway clients. */
+export const heartbeatLimiter = rateLimit({ ...limiterBase, windowMs: 60_000, limit: 30, handler: limited('Heartbeats are arriving too fast.') });
+/** Live location updates (SOS, shares). Generous enough for a queued backlog after an outage. */
+export const locationLimiter = rateLimit({ ...limiterBase, windowMs: 60_000, limit: 90, handler: limited('Location updates are arriving too fast.') });
 export const sosLimiter = rateLimit({ ...limiterBase, windowMs: 60_000, limit: 10, handler: limited('Too many SOS requests. If you need help, call 112 now.') });
 export const webhookLimiter = rateLimit({ ...limiterBase, windowMs: 60_000, limit: 120, handler: limited('Rate limited') });
 

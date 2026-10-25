@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { Bell, ChevronsLeft, ChevronsRight, KeyRound, LogOut, Menu, WifiOff, X, type LucideIcon } from 'lucide-react';
+import { Bell, ChevronsLeft, ChevronsRight, KeyRound, LogOut, Menu, Smartphone, WifiOff, X, type LucideIcon } from 'lucide-react';
 import { hasPermission, ROLE_LABELS, type Permission, type Role } from '@campuscare/shared';
 import { toast } from 'sonner';
 import { Logo } from '@/components/brand';
@@ -13,6 +13,7 @@ import { Avatar, Skeleton } from '@/components/ui/primitives';
 import { api } from '@/lib/api';
 import { useApi, useMe, useOnline, useUserEvents, type Me } from '@/lib/hooks';
 import { cn, timeAgo } from '@/lib/utils';
+import { GlobalSearch } from './global-search';
 
 export interface NavItem {
   href: string;
@@ -20,6 +21,8 @@ export interface NavItem {
   icon: LucideIcon;
   permission?: Permission;
   exact?: boolean;
+  /** Sidebar section heading; consecutive items with the same group are listed together. */
+  group?: string;
 }
 
 interface ShellProps {
@@ -110,6 +113,11 @@ function UserMenu({ me }: { me: Me }) {
           <DropdownMenu.Item asChild className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none data-[highlighted]:bg-brand-50">
             <Link href="/account/security"><KeyRound className="h-4 w-4" /> Account security</Link>
           </DropdownMenu.Item>
+          {me.user.role === 'super_admin' && (
+            <DropdownMenu.Item asChild className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none data-[highlighted]:bg-brand-50">
+              <Link href="/super-admin/authenticator"><Smartphone className="h-4 w-4" /> Authenticator app</Link>
+            </DropdownMenu.Item>
+          )}
           <DropdownMenu.Item onSelect={signOut} className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700 outline-none data-[highlighted]:bg-rose-50">
             <LogOut className="h-4 w-4" /> Sign out
           </DropdownMenu.Item>
@@ -121,15 +129,21 @@ function UserMenu({ me }: { me: Me }) {
 
 function NavList({ items, pathname, collapsed, onNavigate }: { items: NavItem[]; pathname: string; collapsed?: boolean; onNavigate?: () => void }) {
   return (
-    <nav className="space-y-1" aria-label="Main">
-      {items.map((item) => {
+    <nav className="space-y-0.5" aria-label="Main">
+      {items.map((item, i) => {
         const active = isActive(pathname, item);
+        const heading = item.group && item.group !== items[i - 1]?.group ? item.group : null;
         return (
-          <Link key={item.href} href={item.href} onClick={onNavigate} aria-current={active ? 'page' : undefined} title={collapsed ? item.label : undefined}
-            className={cn('flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors', active ? 'bg-white/15 text-white' : 'text-white/75 hover:bg-white/10 hover:text-white', collapsed && 'justify-center px-2')}>
-            <item.icon className="h-5 w-5 shrink-0" aria-hidden />
-            {!collapsed && <span className="truncate">{item.label}</span>}
-          </Link>
+          <React.Fragment key={item.href}>
+            {heading && (collapsed
+              ? <div className="mx-3 my-2 h-px bg-white/10" aria-hidden />
+              : <p className="px-3 pb-1 pt-4 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-brand-300/80 first:pt-0">{heading}</p>)}
+            <Link href={item.href} onClick={onNavigate} aria-current={active ? 'page' : undefined} title={collapsed ? item.label : undefined}
+              className={cn('flex items-center gap-3 rounded-xl px-3 py-2 text-[13.5px] font-medium transition-colors', active ? 'bg-white/15 text-white shadow-[inset_2px_0_0_0_theme(colors.brand.300)]' : 'text-white/70 hover:bg-white/10 hover:text-white', collapsed && 'justify-center px-2')}>
+              <item.icon className="h-[18px] w-[18px] shrink-0" aria-hidden />
+              {!collapsed && <span className="truncate">{item.label}</span>}
+            </Link>
+          </React.Fragment>
         );
       })}
     </nav>
@@ -177,13 +191,13 @@ export function PortalShell({ portal, nav, roles, permission, children, mobileNa
             </button>
           </div>
           {!collapsed && <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-wider text-brand-300">{portal}</p>}
-          <div className="flex-1 overflow-y-auto"><NavList items={items} pathname={pathname} collapsed={collapsed} /></div>
+          <div className="flex-1 overflow-y-auto no-scrollbar"><NavList items={items} pathname={pathname} collapsed={collapsed} /></div>
         </aside>
 
         <DialogPrimitive.Root open={mobileOpen} onOpenChange={setMobileOpen}>
           <DialogPrimitive.Portal>
             <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-forest-900/50 lg:hidden" />
-            <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 w-72 overflow-y-auto bg-forest p-4 text-white lg:hidden">
+            <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 w-72 overflow-y-auto no-scrollbar bg-forest p-4 text-white lg:hidden">
               <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
               <DialogPrimitive.Description className="sr-only">{portal} navigation</DialogPrimitive.Description>
               <div className="mb-6 flex items-center justify-between"><Logo light /><DialogPrimitive.Close className="rounded-lg p-1.5 hover:bg-white/10" aria-label="Close menu"><X className="h-5 w-5" /></DialogPrimitive.Close></div>
@@ -196,7 +210,7 @@ export function PortalShell({ portal, nav, roles, permission, children, mobileNa
           <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-white/90 px-4 backdrop-blur sm:px-6">
             <button className="rounded-xl p-2 hover:bg-brand-50 lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open menu"><Menu className="h-5 w-5" /></button>
             <span className="text-sm font-semibold text-ink-strong lg:hidden">{portal}</span>
-            <div className="flex-1" />
+            <div className="flex flex-1 justify-end md:justify-start">{hasPermission({ role: me.user.role, permissions: me.user.permissions }, 'admin:access') && <GlobalSearch />}</div>
             <NotificationBell />
             <UserMenu me={me} />
           </header>
@@ -206,7 +220,7 @@ export function PortalShell({ portal, nav, roles, permission, children, mobileNa
             </div>
           )}
           <main id="main" className={cn('flex-1 px-4 py-6 sm:px-6 lg:px-8', bottom.length && 'pb-24 lg:pb-6')}>
-            <div className="mx-auto w-full max-w-6xl">{children}</div>
+            <div className="mx-auto w-full max-w-7xl">{children}</div>
           </main>
           {bottom.length > 0 && (
             <nav className="fixed inset-x-0 bottom-0 z-30 grid border-t border-line bg-white pb-[env(safe-area-inset-bottom)] lg:hidden" style={{ gridTemplateColumns: `repeat(${bottom.length}, minmax(0, 1fr))` }} aria-label="Bottom navigation">

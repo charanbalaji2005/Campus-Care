@@ -91,4 +91,11 @@ object Notifications {
             // Permission revoked between the check and the call.
         }
     }
+
+    fun cancel(context: Context, id: Int) {
+        NotificationManagerCompat.from(context).cancel(id)
+    }
+
+    /** Stable notification id per SOS alert, so an offer can be replaced or withdrawn later. */
+    fun sosId(alertId: String): Int = "sos:$alertId".hashCode()
 }

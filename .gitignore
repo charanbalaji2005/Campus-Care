@@ -6,12 +6,16 @@ dist/
 !.env.example
 storage/
 .dev-mail/
+.test-mail/
+.test-storage/
+*.tsbuildinfo
 *.log
 coverage/
 .DS_Store
 
 # Android
 apps/android/.gradle/
+apps/android/.kotlin/
 apps/android/build/
 apps/android/app/build/
 apps/android/local.properties

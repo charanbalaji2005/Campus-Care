@@ -8,6 +8,7 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import edu.srmap.campuscare.BuildConfig
 import java.security.SecureRandom
@@ -29,25 +30,35 @@ object GoogleSignIn {
     suspend fun signIn(activityContext: Context): GoogleResult {
         if (!configured) return GoogleResult.Failed("Google sign-in is not set up in this build.")
         val nonce = ByteArray(24).also { SecureRandom().nextBytes(it) }.let { Base64.encodeToString(it, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING) }
-        val option = GetGoogleIdOption.Builder()
+        
+        val googleIdOption = GetGoogleIdOption.Builder()
             .setServerClientId(BuildConfig.GOOGLE_WEB_CLIENT_ID)
             .setFilterByAuthorizedAccounts(false)
             .setAutoSelectEnabled(false)
             .setNonce(nonce)
             .build()
-        val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
+
+        val signInWithGoogleOption = GetSignInWithGoogleOption.Builder(BuildConfig.GOOGLE_WEB_CLIENT_ID)
+            .setNonce(nonce)
+            .build()
+
+        val request = GetCredentialRequest.Builder()
+            .addCredentialOption(googleIdOption)
+            .addCredentialOption(signInWithGoogleOption)
+            .build()
+
         return try {
             val result = CredentialManager.create(activityContext).getCredential(activityContext, request)
             val credential = result.credential
             if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 GoogleResult.Token(GoogleIdTokenCredential.createFrom(credential.data).idToken, nonce)
             } else {
-                GoogleResult.Failed("Unexpected credential type.")
+                GoogleResult.Failed("Unexpected credential type: ${credential.type}")
             }
         } catch (e: GetCredentialCancellationException) {
             GoogleResult.Cancelled
         } catch (e: NoCredentialException) {
-            GoogleResult.Failed("No Google account found on this device. Add your @srmap.edu.in account in Settings.")
+            GoogleResult.Failed("No matching Google account returned. If your @srmap.edu.in account is on this phone, verify that package 'in.edu.srmap.campuscare' and SHA-1 are registered in Google Cloud.")
         } catch (e: GetCredentialException) {
             GoogleResult.Failed(e.message ?: "Google sign-in failed.")
         }

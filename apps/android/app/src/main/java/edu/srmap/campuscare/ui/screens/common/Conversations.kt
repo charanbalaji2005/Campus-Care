@@ -158,6 +158,12 @@ fun ChatScreen(id: String) {
                 CcTextField(query, { query = it }, label = "Search this conversation", leadingIcon = Icons.Rounded.Search, modifier = Modifier.weight(1f), onImeAction = { activeQuery = query.trim().ifBlank { null } })
             }
         }
+        channel.data?.let { d ->
+            val c = d.counsellor
+            if (d.kind == "counselling_thread" && c != null) {
+                edu.srmap.campuscare.ui.screens.community.CounsellingThreadBanner(c, student = app.session.user.value?.role == "student")
+            }
+        }
         LoadContent(channel, modifier = Modifier.weight(1f)) { d ->
             // Re-key on the search so results replace the live thread while searching.
             val source = remember(d, activeQuery) { ChannelChatSource(app.api, d, activeQuery) }

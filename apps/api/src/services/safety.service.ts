@@ -1,4 +1,4 @@
-import { formatSosNumber, hasPermission, type Role } from '@campuscare/shared';
+import { LOCATION_STALE_SECONDS, classifyLocationQuality, formatSosNumber, hasPermission, type Role } from '@campuscare/shared';
 import { Types } from 'mongoose';
 import { AlertDeliveryEvent, EmergencyAlert, EmergencyRecipient, SafeWalkSession, TrustedContact, type EmergencyAlertDoc } from '../models/safety';
 import { nextSequence } from '../models/incident';
@@ -10,6 +10,7 @@ import { emitToRoom, emitToUser, registerRoomAuthoriser } from '../realtime/sock
 import { getSettings } from './settings.service';
 import { audit } from './audit.service';
 import { logger } from '../lib/logger';
+import { claimDispatch, runAssignment } from './dispatch.service';
 
 registerRoomAuthoriser('responders', async (user) => hasPermission({ role: user.role as Role, permissions: user.permissions }, 'sos:respond'));
 registerRoomAuthoriser('sos', async (user, alertId) => {
@@ -56,37 +57,113 @@ export function serializeAlert(a: EmergencyAlertDoc | Record<string, unknown>, f
     enRouteAt: al.enRouteAt ?? null,
     escalationLevel: al.escalationLevel ?? 0,
     resolutionOutcome: al.resolutionOutcome ?? null,
+    countdownMode: al.countdownMode ?? 'client',
+    dispatchAt: al.dispatchAt ?? null,
+    dispatchedAt: al.dispatchedAt ?? null,
+    locationAgeSeconds: al.locationAgeSeconds ?? null,
+    // Capture time on the server clock, and quality recomputed from its current age (never the client's label).
+    locationAt: al.locationAt ?? null,
+    locationQuality: al.latitude != null
+      ? classifyLocationQuality(
+        { accuracyMeters: al.accuracyMeters, ageSeconds: al.locationAt ? (Date.now() - new Date(al.locationAt).getTime()) / 1000 : al.locationAgeSeconds ?? null },
+        { staleSeconds: LOCATION_STALE_SECONDS.sos },
+      )
+      : null,
+    locationUpdateCount: al.locationUpdateCount ?? 0,
+    lastLocationReceivedAt: al.lastLocationReceivedAt ?? null,
+    assignmentState: al.assignmentState ?? 'none',
+    unassignedSince: forResponder ? al.unassignedSince ?? null : undefined,
     assignedToMe: undefined as boolean | undefined,
     timeline: sosTimeline(al as never, forResponder),
     student: forResponder ? student : undefined,
   };
 }
 
-export async function raiseSos(userId: string, input: { idempotencyKey: string; latitude?: number; longitude?: number; accuracyMeters?: number; locationUnavailableReason?: string; note?: string; notifyTrustedContacts?: boolean }) {
+export interface RaiseSosInput {
+  idempotencyKey: string; latitude?: number; longitude?: number; accuracyMeters?: number; locationUnavailableReason?: string; note?: string;
+  notifyTrustedContacts?: boolean; countdownMode?: 'client' | 'server'; locationAgeSeconds?: number;
+}
+
+/**
+ * Persists the alert BEFORE the API reports success. In "server" countdown mode the alert waits as
+ * "pending" until dispatchAt; a cancel before then is an atomic, recorded cancellation and nobody is
+ * notified. In "client" mode (older apps that already counted down) it is dispatched at once.
+ */
+export async function raiseSos(userId: string, input: RaiseSosInput) {
   const existing = await EmergencyAlert.findOne({ idempotencyKey: input.idempotencyKey });
   if (existing) {
     if (String(existing.userId) !== userId) throw new Error('conflict');
     return existing; // retry after a dropped connection — never a second alert
   }
-  const year = new Date().getFullYear();
+  const settings = await getSettings();
+  const now = new Date();
+  const serverCountdown = input.countdownMode === 'server';
+  const year = now.getFullYear();
   const seq = await nextSequence(`sos:${year}`);
   const alert = await EmergencyAlert.create({
     alertNumber: formatSosNumber(year, seq),
     userId,
     idempotencyKey: input.idempotencyKey,
-    status: 'queued',
+    status: serverCountdown ? 'pending' : 'queued',
+    countdownMode: serverCountdown ? 'server' : 'client',
+    dispatchAt: serverCountdown ? new Date(now.getTime() + settings.sos.countdownSeconds * 1000) : now,
+    dispatchedAt: serverCountdown ? null : now,
     latitude: input.latitude ?? null,
     longitude: input.longitude ?? null,
     accuracyMeters: input.accuracyMeters ?? null,
+    locationAgeSeconds: input.latitude != null ? input.locationAgeSeconds ?? null : null,
     locationUnavailableReason: input.latitude == null ? input.locationUnavailableReason ?? 'Location not shared' : null,
     note: input.note ?? null,
-    events: [{ type: 'raised', at: new Date(), actorLabel: 'Student', note: null, studentVisible: true }],
+    events: [
+      { type: 'raised', at: now, actorLabel: 'Student', note: null, studentVisible: true },
+      ...(serverCountdown ? [] : [{ type: 'dispatched', at: now, actorLabel: 'CampusCare', note: null, studentVisible: true }]),
+    ],
   });
-  await audit({ action: 'sos.raised', actorId: userId, actorRole: 'student', targetType: 'sos', targetId: String(alert._id), meta: { location: alert.latitude != null } });
-  // Deliver immediately in-process, with a durable job as the retry path.
-  await enqueueJob('sos.deliver', { alertId: String(alert._id) }, { dedupeKey: `sos:${alert._id}:1`, maxAttempts: 8 });
-  if (input.notifyTrustedContacts !== false) await enqueueJob('sos.trusted_contacts', { alertId: String(alert._id) }, { dedupeKey: `sos-tc:${alert._id}` });
+  await audit({ action: 'sos.raised', actorId: userId, actorRole: 'student', targetType: 'sos', targetId: String(alert._id), meta: { location: alert.latitude != null, countdown: alert.countdownMode } });
+  if (serverCountdown) {
+    // Durable path: a job due at dispatchAt (plus the pending sweep). An in-process timer only reduces latency.
+    await enqueueJob('sos.dispatch', { alertId: String(alert._id) }, { runAt: alert.dispatchAt!, dedupeKey: `sos-dispatch:${alert._id}`, maxAttempts: 10 });
+    setTimeout(() => void dispatchSos(String(alert._id)).catch((err) => logger.error({ err: (err as Error).message }, 'sos dispatch timer failed')), Math.max(0, alert.dispatchAt!.getTime() - Date.now()) + 50).unref?.();
+  } else {
+    await afterDispatch(alert, input.notifyTrustedContacts !== false);
+  }
   return alert;
+}
+
+/** What happens once an alert leaves the countdown: targeted assignment first, then broadcast delivery. */
+async function afterDispatch(alert: EmergencyAlertDoc, notifyTrustedContacts = true) {
+  emitToUser(String(alert.userId), 'sos:updated', { id: String(alert._id), status: alert.status });
+  emitToRoom(`sos:${alert._id}`, 'sos:updated', { id: String(alert._id), status: alert.status });
+  await runAssignment(String(alert._id), { reason: 'New SOS' }).catch((err) => logger.error({ err: (err as Error).message, alert: alert.alertNumber }, 'initial assignment failed'));
+  await enqueueJob('sos.deliver', { alertId: String(alert._id) }, { dedupeKey: `sos:${alert._id}:1`, maxAttempts: 8 });
+  if (notifyTrustedContacts) await enqueueJob('sos.trusted_contacts', { alertId: String(alert._id) }, { dedupeKey: `sos-tc:${alert._id}` });
+}
+
+/** Ends the countdown for a pending alert. Safe to call any number of times; only the first call dispatches. */
+export async function dispatchSos(alertId: string, opts: { force?: boolean } = {}) {
+  const alert = await claimDispatch(alertId, opts);
+  if (!alert) return null; // cancelled, already dispatched, or not due yet
+  await audit({ action: 'sos.dispatched', targetType: 'sos', targetId: alertId, meta: { early: Boolean(opts.force) } });
+  await afterDispatch(alert);
+  return alert;
+}
+
+registerJob('sos.dispatch', async (payload) => {
+  await dispatchSos(String(payload.alertId));
+});
+
+registerPeriodic('sos-pending-dispatch', 2_000, async () => {
+  const due = await EmergencyAlert.find({ status: 'pending', dispatchAt: { $lte: new Date() } }, { _id: 1 }).limit(50).lean();
+  for (const a of due) await dispatchSos(String(a._id));
+});
+
+/** Configured primary recipients only (control room accounts and email lists), without the automatic officer list. */
+async function configuredRecipients() {
+  const configured = await EmergencyRecipient.find({ active: true, tier: { $in: ['primary', null] } }).lean();
+  return {
+    userIds: [...new Set(configured.filter((r) => r.type === 'user' && r.userId).map((r) => String(r.userId)))],
+    emails: [...new Set(configured.filter((r) => r.type === 'email' && r.email).map((r) => r.email!))],
+  };
 }
 
 async function responderRecipients(tier: 'primary' | 'backup' = 'primary') {
@@ -105,9 +182,14 @@ async function responderRecipients(tier: 'primary' | 'backup' = 'primary') {
   return { userIds: [...userIds], emails: [...emails] };
 }
 
+/**
+ * Broadcast delivery to configured emergency recipients (control room, email lists) and the live
+ * responder queue. Targeted responder assignment happens separately in dispatch.service. When
+ * automatic assignment is switched off, every active officer is notified (the original behaviour).
+ */
 registerJob('sos.deliver', async (payload) => {
   const alert = await EmergencyAlert.findById(payload.alertId);
-  if (!alert || ['cancelled', 'acknowledged', 'en_route', 'resolved'].includes(alert.status)) return;
+  if (!alert || ['pending', 'cancelled', 'acknowledged', 'en_route', 'resolved'].includes(alert.status)) return;
   if (alert.status === 'sent') return;
   alert.status = 'sending';
   alert.deliveryAttempts += 1;
@@ -116,7 +198,7 @@ registerJob('sos.deliver', async (payload) => {
 
   const settings = await getSettings();
   const student = await User.findById(alert.userId, { fullName: 1, phone: 1, studentId: 1, hostel: 1 }).lean();
-  const { userIds, emails } = await responderRecipients();
+  const { userIds, emails } = settings.dispatch.autoAssign ? await configuredRecipients() : await responderRecipients();
   let delivered = 0;
   const locationText = alert.latitude != null ? `${alert.latitude.toFixed(5)}, ${alert.longitude!.toFixed(5)} (±${Math.round(alert.accuracyMeters ?? 0)} m)` : `Unavailable — ${alert.locationUnavailableReason ?? 'not shared'}`;
 
@@ -142,8 +224,10 @@ registerJob('sos.deliver', async (payload) => {
       await AlertDeliveryEvent.create({ alertId: alert._id, channel: 'email', recipient: to.replace(/^(.).*@/, '$1***@'), outcome: 'accepted', error: d ? null : 'already queued' });
     }
   }
-  await AlertDeliveryEvent.create({ alertId: alert._id, channel: 'sms', recipient: 'gateway', outcome: 'not_configured' });
+  if (alert.deliveryAttempts === 1) await AlertDeliveryEvent.create({ alertId: alert._id, channel: 'sms', recipient: 'gateway', outcome: 'not_configured' });
 
+  // Responders reached through assignment offers or the fallback group count as delivered too.
+  delivered += await AlertDeliveryEvent.countDocuments({ alertId: alert._id, channel: 'in_app', outcome: 'delivered', recipient: { $nin: userIds } });
   if (delivered === 0) {
     alert.status = 'failed';
     alert.lastDeliveryError = userIds.length ? 'Could not reach any responder' : 'No active responders are configured';
@@ -199,7 +283,7 @@ registerPeriodic('safe-walk-overdue', 30_000, async () => {
 
 // Safety net: retry stuck SOS alerts that never left "queued"/"sending".
 registerPeriodic('sos-watchdog', 15_000, async () => {
-  const stuck = await EmergencyAlert.find({ status: { $in: ['queued', 'sending'] }, updatedAt: { $lt: new Date(Date.now() - 20_000) } }).limit(20);
+  const stuck = await EmergencyAlert.find({ status: { $in: ['queued', 'sending'] }, dispatchedAt: { $ne: null }, updatedAt: { $lt: new Date(Date.now() - 20_000) } }).limit(20);
   for (const a of stuck) await enqueueJob('sos.deliver', { alertId: String(a._id) }, { dedupeKey: `sos:${a._id}:${a.deliveryAttempts + 1}` });
 });
 
@@ -232,7 +316,8 @@ export async function runSosEscalation(now = Date.now()): Promise<number> {
   let escalated = 0;
   const waiting = await EmergencyAlert.find({ status: { $in: ['sent', 'failed', 'sending', 'queued'] }, acknowledgedAt: null, escalationLevel: { $lt: 2 } }).limit(50);
   for (const a of waiting) {
-    const age = now - a.createdAt.getTime();
+    // Measured from dispatch: the cancellable countdown is not "waiting for a responder".
+    const age = now - (a.dispatchedAt ?? a.createdAt).getTime();
     const level = age >= s.sos.secondEscalationAfterSeconds * 1000 ? 2 : age >= s.sos.escalateAfterSeconds * 1000 ? 1 : 0;
     if (level <= (a.escalationLevel ?? 0)) continue;
     // Claim the escalation level atomically so parallel workers never notify twice.

@@ -1,7 +1,9 @@
 package edu.srmap.campuscare.ui.screens.student
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -63,13 +65,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import edu.srmap.campuscare.data.Announcement
 import edu.srmap.campuscare.data.ApiException
 import edu.srmap.campuscare.data.CampusAlertSummary
@@ -77,7 +83,6 @@ import edu.srmap.campuscare.data.StudentDashboard
 import edu.srmap.campuscare.ui.components.ActionTile
 import edu.srmap.campuscare.ui.components.Avatar
 import edu.srmap.campuscare.ui.components.ButtonKind
-import edu.srmap.campuscare.ui.components.CampusSkyline
 import edu.srmap.campuscare.ui.components.Catalog
 import edu.srmap.campuscare.ui.components.CcButton
 import edu.srmap.campuscare.ui.components.CcCard
@@ -170,6 +175,7 @@ fun HomeScreen() {
                 }
             }
             MoreTools(lostFound = config.settings.community.lostFoundEnabled, suggestions = config.settings.community.suggestionsEnabled)
+            CounsellingSupportSection()
 
             LoadContent(dash, skeleton = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { SkeletonBlock(height = 90.dp); SkeletonBlock(height = 160.dp) } }) { d ->
                 DashboardBody(d)
@@ -195,51 +201,229 @@ private data class Tile(val icon: ImageVector, val label: String, val tone: Tone
 
 @Composable
 private fun SafetyHero(live: Boolean, sosEnabled: Boolean, onSos: () -> Unit, modifier: Modifier = Modifier) {
-    val pulse = rememberPulse(0.96f, 1.04f, 1400)
+    val pulse = rememberPulse(0.97f, 1.03f, 1200)
     Box(
         modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(28.dp))
-            .background(Brush.linearGradient(listOf(CcColors.ForestDeep, CcColors.Forest700, CcColors.Emerald))),
-    ) {
-        CampusSkyline(
-            Modifier.fillMaxWidth().height(170.dp).align(Alignment.BottomCenter),
-            tint = Color.White.copy(alpha = 0.10f),
-            accent = Color.White.copy(alpha = 0.18f),
-        )
-        Column(Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.VerifiedUser, contentDescription = null, tint = CcColors.Emerald400, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Your safety, our priority", style = MaterialTheme.typography.labelLarge, color = CcColors.Mint)
-                Spacer(Modifier.weight(1f))
-                Box(Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.92f)).padding(horizontal = 10.dp, vertical = 4.dp)) { LiveDot(live) }
-            }
-            Spacer(Modifier.height(10.dp))
-            Text("Help is one press away", style = MaterialTheme.typography.headlineMedium, color = Color.White)
-            Text(
-                "Campus Security receives your SOS with your location. You'll see when they acknowledge it.",
-                style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.85f),
+            .shadow(
+                elevation = 12.dp,
+                shape = RoundedCornerShape(26.dp),
+                ambientColor = Color(0x33064E3B),
+                spotColor = Color(0x33064E3B),
             )
-            Spacer(Modifier.height(14.dp))
-            if (sosEnabled) {
+            .clip(RoundedCornerShape(26.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        Color(0xFF063A2D),
+                        Color(0xFF064E3B),
+                        Color(0xFF085B45),
+                    ),
+                    start = Offset(0f, 0f),
+                    end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
+                )
+            )
+            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(26.dp)),
+    ) {
+        // Decorative radar/safety concentric rings in the background
+        Canvas(Modifier.matchParentSize()) {
+            val w = size.width
+            val h = size.height
+            val center = Offset(w * 0.90f, h * 0.15f)
+
+            // Soft radial ambient light
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        CcColors.Emerald400.copy(alpha = 0.18f),
+                        Color.Transparent,
+                    ),
+                    center = center,
+                    radius = w * 0.55f,
+                ),
+                radius = w * 0.55f,
+                center = center,
+            )
+
+            // Concentric security radar rings
+            drawCircle(
+                color = Color.White.copy(alpha = 0.08f),
+                radius = w * 0.20f,
+                center = center,
+                style = Stroke(width = 1.5.dp.toPx()),
+            )
+            drawCircle(
+                color = Color.White.copy(alpha = 0.05f),
+                radius = w * 0.38f,
+                center = center,
+                style = Stroke(width = 1.5.dp.toPx()),
+            )
+            drawCircle(
+                color = Color.White.copy(alpha = 0.03f),
+                radius = w * 0.58f,
+                center = center,
+                style = Stroke(width = 1.dp.toPx()),
+            )
+        }
+
+        Column(Modifier.padding(horizontal = 20.dp, vertical = 20.dp)) {
+            // Header Row: Pill Badge + Live Status
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
                 Row(
-                    Modifier
-                        .scale(pulse)
+                    modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .background(CcColors.Sos)
-                        .clickable(role = Role.Button, onClick = onSos)
-                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                        .background(Color.White.copy(alpha = 0.12f))
+                        .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(50))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Rounded.Shield, contentDescription = null, tint = Color.White)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Open Emergency SOS", color = Color.White, fontWeight = FontWeight.Bold)
+                    Icon(
+                        Icons.Rounded.VerifiedUser,
+                        contentDescription = null,
+                        tint = CcColors.Emerald400,
+                        modifier = Modifier.size(15.dp),
+                    )
                     Spacer(Modifier.width(6.dp))
-                    Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Text(
+                        "Your safety, our priority",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = CcColors.Mint,
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.White.copy(alpha = 0.94f))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    LiveDot(live)
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            // Main Title
+            Text(
+                text = "Help is one press away",
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.4).sp,
+                ),
+                color = Color.White,
+            )
+
+            Spacer(Modifier.height(6.dp))
+
+            // Subtitle
+            Text(
+                text = "Campus Security receives your SOS with your location. You'll see when they acknowledge it.",
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    lineHeight = 20.sp,
+                ),
+                color = Color.White.copy(alpha = 0.88f),
+            )
+
+            Spacer(Modifier.height(18.dp))
+
+            // Emergency Action Button
+            if (sosEnabled) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .scale(pulse)
+                        .shadow(
+                            elevation = 8.dp,
+                            shape = RoundedCornerShape(16.dp),
+                            ambientColor = Color(0x66DC2626),
+                            spotColor = Color(0x88DC2626),
+                        )
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    Color(0xFFE11D48),
+                                    Color(0xFFDC2626),
+                                    Color(0xFFB91C1C),
+                                )
+                            )
+                        )
+                        .clickable(role = Role.Button, onClick = onSos)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.22f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Rounded.Shield,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+
+                    Spacer(Modifier.width(12.dp))
+
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "Open Emergency SOS",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = Color.White,
+                        )
+                        Text(
+                            text = "Tap to launch instant response",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.85f),
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Rounded.ArrowForward,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
             } else {
-                Text("In-app SOS is paused — use the emergency numbers below.", color = CcColors.AmberSoft, style = MaterialTheme.typography.bodySmall)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.White.copy(alpha = 0.10f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.Warning,
+                        contentDescription = null,
+                        tint = CcColors.AmberSoft,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "In-app SOS is paused — use the emergency numbers below.",
+                        color = CcColors.AmberSoft,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }
@@ -323,6 +507,18 @@ private fun MoreTools(lostFound: Boolean, suggestions: Boolean) {
                 Text(label, style = MaterialTheme.typography.labelLarge, color = CcColors.Ink)
             }
         }
+    }
+}
+
+/** Counselling Support on the home screen: private counsellor chat and the official channel. */
+@Composable
+private fun CounsellingSupportSection() {
+    val nav = LocalNav.current
+    CcCard(padding = 8.dp) {
+        Text("Counselling Support", style = MaterialTheme.typography.titleMedium, color = CcColors.Ink, modifier = Modifier.padding(start = 8.dp, top = 8.dp))
+        ListRow("Message a counsellor", subtitle = "Private and confidential · replies may take time", icon = Icons.Rounded.Forum, tone = Tone.Violet, onClick = { nav.navigate(Routes.CounsellorChats) })
+        Divider()
+        ListRow("Official Counselling Support", subtitle = "Verified wellness tips, resources and sessions", icon = Icons.Rounded.Psychology, tone = Tone.Brand, onClick = { nav.navigate(Routes.CounsellingChannel) })
     }
 }
 

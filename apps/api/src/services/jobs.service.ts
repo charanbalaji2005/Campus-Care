@@ -52,6 +52,7 @@ export async function runDueJobs(max = 20): Promise<number> {
       job.lockedUntil = null;
       if (job.attempts >= job.maxAttempts) {
         job.status = 'failed';
+        if (job.type === 'email.send') job.payload = {}; // undeliverable email: drop its links (single-use tokens)
         logger.error({ jobId: String(job._id), type: job.type }, 'job failed permanently');
       } else {
         job.status = 'pending';

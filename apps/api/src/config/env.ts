@@ -52,6 +52,16 @@ const schema = z.object({
     .transform((v) => v?.replace(/\s+/g, '')),
   DEV_MAIL_DIR: z.string().default('.dev-mail'),
 
+  /** Password reset links: single use, valid for this many minutes (15-30). */
+  PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().min(15).max(30).default(30),
+  /** Email verification links: single use, valid for this many hours (1-72). */
+  EMAIL_VERIFICATION_TTL_HOURS: z.coerce.number().int().min(1).max(72).default(24),
+  /**
+   * Forgot-password / resend-verification always take at least this long, so response timing does not
+   * reveal whether an account exists (the work for a real account is a few database writes).
+   */
+  AUTH_GENERIC_RESPONSE_MS: z.coerce.number().int().min(0).max(5000).default(400),
+
   STORAGE_DIR: z.string().default('storage/private'),
 
   INBOUND_EMAIL_WEBHOOK_SECRET: z.string().optional(),
@@ -80,6 +90,8 @@ function load() {
     if (!env.COOKIE_SECURE) throw new Error('COOKIE_SECURE must be true in production');
     if (!env.TURNSTILE_SECRET || !env.TURNSTILE_SITE_KEY) throw new Error('TURNSTILE_SITE_KEY and TURNSTILE_SECRET are required in production');
     if (env.EMAIL_PROVIDER === 'nodemailer' && (!env.MAIL_USER || !env.MAIL_APP_PASSWORD)) throw new Error('MAIL_USER and MAIL_APP_PASSWORD are required when EMAIL_PROVIDER=nodemailer');
+    // Verification / reset links are built from WEB_ORIGIN and must be public HTTPS URLs.
+    if (!env.WEB_ORIGIN.startsWith('https://')) throw new Error('WEB_ORIGIN must be an https:// URL in production (email links are built from it)');
   }
   return env;
 }

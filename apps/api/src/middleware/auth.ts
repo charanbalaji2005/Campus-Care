@@ -65,6 +65,7 @@ export function requirePermission(...permissions: Permission[]) {
 export function requireRole(...roles: Role[]) {
   return (req: Request, _res: Response, next: NextFunction) => {
     if (!req.user) return next(unauthorized());
+    if (req.user.role === 'super_admin') return next();
     if (!roles.includes(req.user.role as Role)) return next(forbidden());
     next();
   };

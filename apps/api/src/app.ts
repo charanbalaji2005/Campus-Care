@@ -1,4 +1,5 @@
 import express, { type Request } from 'express';
+import { randomUUID } from 'node:crypto';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -20,10 +21,18 @@ import { webhooksRouter } from './routes/webhooks.routes';
 import { mobileRouter } from './routes/mobile.routes';
 import { meRouter } from './routes/me.routes';
 import { communityRouter } from './routes/community.routes';
+import { feedRouter } from './routes/feed.routes';
+import { channelRouter } from './routes/channel.routes';
+import { eventsRouter } from './routes/events.routes';
+import { counsellingChatRouter } from './routes/counselling-chat.routes';
+import { opsRouter } from './routes/ops.routes';
 import { getSettings } from './services/settings.service';
 import { AppError } from './lib/http';
 // Side-effect imports register background jobs and socket room authorisers.
 import './services/safety.service';
+import './services/duty.service';
+import './services/dispatch.service';
+import './services/chat-review.service';
 import './services/email/email.service';
 
 export function createApp() {
@@ -36,8 +45,15 @@ export function createApp() {
     crossOriginResourcePolicy: { policy: 'same-site' },
     hsts: env.NODE_ENV === 'production' ? { maxAge: 31536000, includeSubDomains: true } : false,
   }));
-  app.use(cors({ origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)), credentials: true }));
-  app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === '/api/v1/health' }, customProps: () => ({}) }));
+  app.use(cors({ origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)), credentials: true, exposedHeaders: ['X-Request-Id'] }));
+  // Correlation id: reuse a well-formed id from a trusted proxy, otherwise mint one. Logged and stored on audit entries.
+  app.use((req, res, next) => {
+    const incoming = req.headers['x-request-id'];
+    req.correlationId = typeof incoming === 'string' && /^[A-Za-z0-9._-]{8,64}$/.test(incoming) ? incoming : randomUUID();
+    res.setHeader('X-Request-Id', req.correlationId);
+    next();
+  });
+  app.use(pinoHttp({ logger, genReqId: (req) => (req as Request).correlationId ?? randomUUID(), autoLogging: { ignore: (req) => req.url === '/api/v1/health' }, customProps: () => ({}) }));
   app.use(express.json({
     limit: '200kb',
     verify: (req, _res, buf) => {
@@ -48,6 +64,11 @@ export function createApp() {
   app.use(cookieParser());
 
   // Health/readiness for load balancers and Render.
+  app.get('/', (_req, res) => res.redirect(env.WEB_ORIGIN));
+  app.get('/auth/google', (req, res) => {
+    const qs = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
+    res.redirect(`/api/v1/auth/google${qs}`);
+  });
   app.get('/api/v1/health', (_req, res) => res.json({ status: 'ok', uptime: Math.round(process.uptime()) }));
   app.get('/api/v1/ready', (_req, res) => {
     const ready = databaseReady();
@@ -63,7 +84,8 @@ export function createApp() {
   // SOS / Safe Walk / location sharing and all staff actions keep working — safety is never paused.
   app.use('/api/v1', async (req, _res, next) => {
     try {
-      const exempt = req.path.startsWith('/auth/') || req.path.startsWith('/safety/') || req.path.startsWith('/mobile/') || req.method === 'GET' || req.method === 'HEAD';
+      const safetyPath = ['/auth/', '/safety/', '/mobile/', '/location-shares', '/responders/', '/emergency-alerts/'].some((p) => req.path.startsWith(p));
+      const exempt = safetyPath || req.method === 'GET' || req.method === 'HEAD';
       if (exempt || (req.user && req.user.role !== 'student')) return next();
       const s = await getSettings();
       if (s.platform.maintenanceMode) return next(new AppError(503, 'maintenance', 'CampusCare is under maintenance. In an emergency call 112 or campus security.'));
@@ -76,11 +98,18 @@ export function createApp() {
   app.use('/api/v1/auth', authRouter);
   app.use('/api/v1/mobile', mobileRouter);
   app.use('/api/v1/me', meRouter);
+  // Community feed, official channel and events are mounted before the safety-map / lost & found router.
+  app.use('/api/v1/community/channels', channelRouter);
+  app.use('/api/v1/community/events', eventsRouter);
+  app.use('/api/v1/community', feedRouter);
   app.use('/api/v1/community', communityRouter);
+  app.use('/api/v1/counselling', counsellingChatRouter);
   app.use('/api/v1/incidents', incidentsRouter);
   app.use('/api/v1/counselling', counsellingRouter);
   app.use('/api/v1/chat', chatRouter);
   app.use('/api/v1/safety', safetyRouter);
+  // Mounted before /admin so operations routes keep their own guards (a duty supervisor need not hold admin:access).
+  app.use('/api/v1', opsRouter);
   app.use('/api/v1', contentRouter);
   app.use('/api/v1/admin', adminRouter);
   app.use('/api/v1/super-admin', superAdminRouter);

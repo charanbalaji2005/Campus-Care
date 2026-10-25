@@ -8,6 +8,13 @@ import '../models/chat';
 import '../models/safety';
 import '../models/content';
 import '../models/platform';
+import '../models/community';
+import '../models/feed';
+import '../models/mobile';
+// Correctness depends on these: AlertAssignment's partial unique indexes prevent duplicate SOS assignments,
+// RecoveryCode's unique hash index and TotpConfiguration's unique user index protect MFA.
+import '../models/duty';
+import '../models/mfa';
 
 (async () => {
   await connectDatabase();

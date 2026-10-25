@@ -1,4 +1,4 @@
-import { ACCOUNT_EMAIL_DOMAIN, DEFAULT_SETTINGS, deepMerge, type PlatformSettings, type PublicSettings } from '@campuscare/shared';
+import { ACCOUNT_EMAIL_DOMAIN, DEFAULT_SETTINGS, DISPATCH_POLICIES, DUTY_LIMITS, RESPONDER_SKILLS, deepMerge, type PlatformSettings, type PublicSettings } from '@campuscare/shared';
 import { SystemSetting, IdentityProviderConfig } from '../models/platform';
 import { turnstileKeys, env } from '../config/env';
 
@@ -64,6 +64,24 @@ export function validateSettings(s: PlatformSettings) {
   if (s.sos.secondEscalationAfterSeconds <= s.sos.escalateAfterSeconds) errors.push('Second escalation must come after the first');
   if (Math.abs(s.map.centerLatitude) > 90 || Math.abs(s.map.centerLongitude) > 180) errors.push('Map centre is not a valid coordinate');
   if (s.map.heatmapMinCount < 3) errors.push('Heatmap minimum group size must be at least 3');
+  const within = (v: number, k: keyof typeof DUTY_LIMITS) => v >= DUTY_LIMITS[k].min && v <= DUTY_LIMITS[k].max && Number.isInteger(v);
+  if (!within(s.duty.heartbeatIntervalSeconds, 'heartbeatIntervalSeconds')) errors.push(`Heartbeat interval must be ${DUTY_LIMITS.heartbeatIntervalSeconds.min}–${DUTY_LIMITS.heartbeatIntervalSeconds.max} seconds`);
+  if (!within(s.duty.staleThresholdSeconds, 'staleThresholdSeconds')) errors.push(`Stale threshold must be ${DUTY_LIMITS.staleThresholdSeconds.min}–${DUTY_LIMITS.staleThresholdSeconds.max} seconds`);
+  // At least two missed heartbeats before anyone is marked stale, so one dropped request never does it.
+  if (s.duty.staleThresholdSeconds < s.duty.heartbeatIntervalSeconds * 2) errors.push('Stale threshold must be at least twice the heartbeat interval');
+  if (s.duty.shiftStartGraceMinutes < 0 || s.duty.shiftStartGraceMinutes > 120) errors.push('Shift start grace must be 0–120 minutes');
+  if (!within(s.dispatch.ackDeadlineSeconds, 'ackDeadlineSeconds')) errors.push(`Acknowledgement deadline must be ${DUTY_LIMITS.ackDeadlineSeconds.min}–${DUTY_LIMITS.ackDeadlineSeconds.max} seconds`);
+  if (!within(s.dispatch.maxAttempts, 'maxAttempts')) errors.push('Assignment attempts must be 1–10');
+  if (!within(s.dispatch.groupSize, 'groupSize')) errors.push('Dispatch group size must be 1–5');
+  if (!within(s.dispatch.maxActiveAssignmentsPerResponder, 'maxActiveAssignmentsPerResponder')) errors.push('Assignments per responder must be 1–5');
+  if (!(DISPATCH_POLICIES as readonly string[]).includes(s.dispatch.policy)) errors.push('Dispatch policy must be single or group');
+  if (s.dispatch.trustedLocationAccuracyMeters < 5 || s.dispatch.trustedLocationAccuracyMeters > 1000) errors.push('Trusted location accuracy must be 5–1000 m');
+  if (s.dispatch.proximityBandMeters < 50 || s.dispatch.proximityBandMeters > 2000) errors.push('Proximity band must be 50–2000 m');
+  if (s.dispatch.unassignedRetrySeconds < 10 || s.dispatch.unassignedRetrySeconds > 600) errors.push('Unassigned retry must be 10–600 seconds');
+  for (const skill of [...s.dispatch.requiredSkills, ...s.dispatch.preferredSkills]) {
+    if (!(RESPONDER_SKILLS as readonly string[]).includes(skill)) errors.push(`Unknown responder skill: ${skill}`);
+  }
+  if (!within(s.chatGovernance.maxReviewMinutes, 'maxReviewMinutes')) errors.push('Private review duration must be 5–240 minutes');
   for (const scope of Object.values(s.chat.media)) {
     if (typeof scope.images !== 'boolean' || typeof scope.videos !== 'boolean') errors.push('Media switches must be on/off values');
   }
@@ -77,7 +95,7 @@ export function validateSettings(s: PlatformSettings) {
 export async function publicSettings(): Promise<PublicSettings> {
   const s = await getSettings();
   const google = await IdentityProviderConfig.findOne({ provider: 'google' }).lean();
-  const googleConfigured = Boolean(google?.enabled && (google.clientId || env.GOOGLE_CLIENT_ID));
+  const googleConfigured = google ? Boolean(google.enabled && (google.clientId || env.GOOGLE_CLIENT_ID)) : Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
   return {
     platformName: s.platform.name,
     universityName: s.platform.universityName,

@@ -1,13 +1,13 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
-import { chatMediaDecision, mediaKindOf, type MediaScope } from '@campuscare/shared';
+import { FEED_LIMITS, chatMediaDecision, mediaKindOf, type MediaScope } from '@campuscare/shared';
 import { AppError, badRequest } from '../lib/http';
 import { safeFileName, sniffMime } from '../lib/sniff';
 import { Evidence, type EvidenceDoc } from '../models/incident';
 import { storage } from './storage.service';
 import { getSettings } from './settings.service';
 
-export type UploadPurpose = 'evidence' | 'case_chat' | 'chat' | 'lost_found';
+export type UploadPurpose = 'evidence' | 'case_chat' | 'chat' | 'lost_found' | 'feed';
 
 /**
  * Validates and stores an uploaded file. The real type comes from the file's bytes,
@@ -15,7 +15,7 @@ export type UploadPurpose = 'evidence' | 'case_chat' | 'chat' | 'lost_found';
  */
 export async function storeUpload(
   file: Express.Multer.File | undefined,
-  opts: { purpose: UploadPurpose; uploaderId: string | null; uploaderTag?: string | null; mediaScope?: MediaScope; incidentId?: string | null; channelId?: string | null },
+  opts: { purpose: UploadPurpose; uploaderId: string | null; uploaderTag?: string | null; mediaScope?: MediaScope; incidentId?: string | null; channelId?: string | null; allowDocuments?: boolean },
 ): Promise<EvidenceDoc> {
   if (!file) throw badRequest('Choose a file to upload.');
   const sniffed = sniffMime(file.buffer);
@@ -29,6 +29,13 @@ export async function storeUpload(
   } else if (opts.purpose === 'lost_found') {
     if (mediaKindOf(sniffed) !== 'image') throw new AppError(415, 'unsupported_type', 'Lost & found photos must be JPG, PNG, WEBP or GIF images.');
     if (file.size > 5 * 1024 * 1024) throw new AppError(413, 'too_large', 'Photos must be 5 MB or smaller.');
+  } else if (opts.purpose === 'feed') {
+    // Public community posts: still images only, checked from the bytes (not the file name or browser type).
+    // Verified official publishers may also attach PDF documents (e.g. a resource sheet).
+    const kind = mediaKindOf(sniffed);
+    const allowed = (kind === 'image' && sniffed !== 'image/gif') || (opts.allowDocuments === true && sniffed === 'application/pdf');
+    if (!allowed) throw new AppError(415, 'unsupported_type', opts.allowDocuments ? 'Attach JPG, PNG or WEBP images, or PDF documents.' : 'Post images must be JPG, PNG or WEBP.');
+    if (file.size > FEED_LIMITS.attachmentMaxMb * 1024 * 1024) throw new AppError(413, 'too_large', `Files must be ${FEED_LIMITS.attachmentMaxMb} MB or smaller.`);
   } else {
     const decision = chatMediaDecision(settings, opts.mediaScope ?? 'support', sniffed, file.size);
     if (!decision.allowed) throw new AppError(403, 'media_disabled', decision.reason);

@@ -3,7 +3,8 @@ import {
   ALERT_SEVERITIES, APPOINTMENT_MODES, APPOINTMENT_STATUSES, COMMITTEE_TYPES, CONTACT_CATEGORIES,
   INCIDENT_CATEGORIES, INCIDENT_STATUSES, PRIORITIES, ROLES, SEVERITIES, MAIL_SERVICES,
   HAZARD_CATEGORIES, HAZARD_STATUSES, PLACE_KINDS, LOST_FOUND_CATEGORIES, SUGGESTION_CATEGORIES, SUGGESTION_STATUSES,
-  NOTIFICATION_CATEGORIES, DATA_REQUEST_TYPES, type NotificationCategory,
+  NOTIFICATION_CATEGORIES, DATA_REQUEST_TYPES, type NotificationCategory, DUTY_STATUSES, RESPONDER_SKILLS, RESPONDER_RESPONSIBILITIES,
+  CHAT_REVIEW_SCOPES, CHAT_REVIEW_BASES,
 } from './enums';
 
 const trimmed = (max: number) => z.string().trim().max(max);
@@ -17,7 +18,7 @@ export function isAllowedAccountEmail(address: string): boolean {
   return at > 0 && address.trim().toLowerCase().slice(at + 1) === ACCOUNT_EMAIL_DOMAIN;
 }
 export const universityEmail = email.refine(isAllowedAccountEmail, `Use your @${ACCOUNT_EMAIL_DOMAIN} email address`);
-export const turnstileToken = z.string().max(4096).optional();
+export const turnstileToken = z.string().max(4096).nullish();
 
 export const passwordSchema = (min = 10) =>
   z
@@ -34,7 +35,7 @@ export const registerSchema = z
     studentId: trimmed(40).min(2, 'Enter your student ID').regex(/^[A-Za-z0-9\-/]+$/, 'Letters, numbers, - and / only'),
     department: trimmed(120).min(2, 'Select your department'),
     academicYear: z.coerce.number().int().min(1).max(6),
-    phone: trimmed(20).regex(/^\+?[0-9 ]{7,20}$/, 'Enter a valid phone number').optional().or(z.literal('')),
+    phone: trimmed(20).regex(/^\+?[0-9 ]{7,20}$/, 'Enter a valid phone number').nullish().or(z.literal('')),
     password: passwordSchema(),
     confirmPassword: z.string(),
     acceptPolicy: z.literal(true, { errorMap: () => ({ message: 'You must accept the privacy policy' }) }),
@@ -45,8 +46,8 @@ export const registerSchema = z
 export const loginSchema = z.object({
   email,
   password: z.string().min(1, 'Enter your password').max(128),
-  rememberMe: z.boolean().optional(),
-  mfaCode: z.string().regex(/^\d{6}$/).optional(),
+  rememberMe: z.boolean().nullish(),
+  mfaCode: z.string().regex(/^\d{6}$/).nullish(),
   turnstileToken,
 });
 
@@ -189,7 +190,16 @@ export const sosCreateSchema = z.object({
   note: trimmed(300).optional(),
   /** Email verified trusted contacts as well as Campus Security. */
   notifyTrustedContacts: z.boolean().default(true),
+  /**
+   * "server": the alert is stored as pending and dispatched by the server when the countdown ends,
+   * so a cancel before then is an atomic, recorded cancellation. "client" (older app versions): the
+   * app already counted down, so the alert is dispatched immediately.
+   */
+  countdownMode: z.enum(['client', 'server']).default('client'),
+  /** How old the device's location fix was when the alert was raised. Informational only. */
+  locationAgeSeconds: z.number().min(0).max(86400).optional(),
 });
+export const sosCancelSchema = z.object({ reason: trimmed(300).optional() });
 export const trustedContactSchema = z.object({
   name: trimmed(80).min(2),
   email,
@@ -209,12 +219,25 @@ export const locationShareSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   accuracyMeters: z.number().min(0).max(100000).optional(),
+  locationAgeSeconds: z.number().min(0).max(86400).optional(),
 });
 export const locationUpdateSchema = z.object({
-  latitude: z.number().min(-90).max(90),
-  longitude: z.number().min(-180).max(180),
-  accuracyMeters: z.number().min(0).max(100000).optional(),
+  latitude: z.number().finite().min(-90).max(90),
+  longitude: z.number().finite().min(-180).max(180),
+  accuracyMeters: z.number().finite().min(0).max(100000).optional(),
+  /** Age of the fix on the device when it was sent. The server records its own receive time. */
+  locationAgeSeconds: z.number().finite().min(0).max(86400).optional(),
+  /** Increasing per session on the device; used to drop duplicates and keep points time-ordered. */
+  clientSeq: z.number().int().min(0).max(1_000_000_000).optional(),
+  speedMps: z.number().finite().min(0).max(150).optional(),
+  headingDeg: z.number().finite().min(0).max(360).optional(),
+  altitudeMeters: z.number().finite().min(-1000).max(10000).optional(),
+  /** Where the fix came from. The server computes its own quality label and never trusts the client's. */
+  source: z.enum(['gps', 'fused', 'network', 'unknown']).default('unknown'),
+  clientQuality: z.string().max(20).optional(),
 });
+/** Live location while an SOS is active (same shape as a share update). */
+export const sosLocationUpdateSchema = locationUpdateSchema;
 export const campusAlertSchema = z.object({
   title: trimmed(140).min(3),
   body: trimmed(2000).min(3),
@@ -271,8 +294,70 @@ export const userInviteSchema = z.object({
   department: trimmed(120).optional(),
   committeeIds: z.array(objectId).default([]),
 });
-export const userStatusSchema = z.object({ action: z.enum(['suspend', 'reactivate']), reason: trimmed(500).min(3) });
+export const userStatusSchema = z.object({ action: z.enum(['suspend', 'reactivate', 'deactivate', 'archive', 'verify_email']), reason: trimmed(500).min(3).optional() });
 export const userRoleSchema = z.object({ role: z.enum(ROLES), permissions: z.array(z.string().max(60)).max(60).default([]), reason: trimmed(500).min(3) });
+
+export const userProfileUpdateSchema = z.object({
+  fullName: trimmed(120).min(2).optional(),
+  phone: trimmed(30).optional().nullable(),
+  department: trimmed(120).optional().nullable(),
+  academicYear: z.coerce.number().int().min(1).max(10).optional().nullable(),
+  studentId: trimmed(60).optional().nullable(),
+  hostel: trimmed(120).optional().nullable(),
+  campusZone: trimmed(120).optional().nullable(),
+  committeeMemberships: z
+    .array(
+      z.object({
+        committeeId: objectId,
+        position: z.enum(['chair', 'member']).default('member'),
+      }),
+    )
+    .optional(),
+});
+
+export const userStatusUpdateSchema = z.object({
+  action: z.enum(['suspend', 'reactivate', 'deactivate', 'archive', 'verify_email', 'approve_counsellor', 'reject_counsellor']),
+  reason: trimmed(500).optional(),
+  reviewDate: z.coerce.date().optional().nullable(),
+});
+
+export const userCounsellorApprovalSchema = z.object({
+  approved: z.boolean(),
+  note: trimmed(500).optional().nullable(),
+  publishAllowed: z.boolean().optional(),
+});
+
+export const userCommunityMuteSchema = z.object({
+  muted: z.boolean(),
+  reason: trimmed(500).optional().nullable(),
+  until: z.coerce.date().optional().nullable(),
+});
+
+export const userDutyAssignmentSchema = z.object({
+  skills: z.array(z.enum(RESPONDER_SKILLS)).optional(),
+  responsibilities: z.array(z.enum(RESPONDER_RESPONSIBILITIES)).optional(),
+  zoneId: objectId.optional().nullable(),
+  campus: trimmed(60).default('main'),
+  eligible: z.boolean().optional(),
+});
+
+export const userBulkActionSchema = z.object({
+  userIds: z.array(objectId).min(1).max(100),
+  action: z.enum([
+    'suspend',
+    'reactivate',
+    'deactivate',
+    'archive',
+    'verify_email',
+    'revoke_sessions',
+    'assign_role',
+    'assign_department',
+  ]),
+  role: z.enum(ROLES).optional(),
+  department: trimmed(120).optional(),
+  reason: trimmed(500).optional(),
+  confirm: z.string().optional(),
+});
 export const domainSchema = z.object({
   domain: z
     .string()
@@ -398,3 +483,107 @@ export const notificationPrefsSchema = z.object(
 );
 export const dataRequestSchema = z.object({ type: z.enum(DATA_REQUEST_TYPES), reason: trimmed(500).optional() });
 export const dataRequestDecisionSchema = z.object({ decision: z.enum(['complete', 'reject']), note: trimmed(500).optional(), confirm: z.string().optional() });
+
+// ------------------------------------------------------------------ duty roster
+const coordinatePair = {
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  accuracyMeters: z.number().min(0).max(100000).optional(),
+  locationAgeSeconds: z.number().min(0).max(86400).optional(),
+};
+const bothOrNeither = (d: { latitude?: number; longitude?: number }) => (d.latitude == null) === (d.longitude == null);
+
+/** Heartbeat from an on-duty responder's phone. The server ignores any client timestamp. */
+export const heartbeatSchema = z
+  .object({
+    ...coordinatePair,
+    batteryPercent: z.number().int().min(0).max(100).optional(),
+    appVersion: trimmed(40).optional(),
+  })
+  .refine(bothOrNeither, { message: 'Send both latitude and longitude, or neither', path: ['latitude'] });
+
+/** What a responder may set for themselves. "responding" and "stale" are set only by the server. */
+export const dutySelfStatusSchema = z.object({
+  status: z.enum(['on_duty', 'on_break', 'busy', 'unavailable', 'off_duty']),
+  reason: trimmed(300).optional(),
+  shiftId: objectId.optional(),
+});
+export const dutyOverrideSchema = z.object({
+  status: z.enum(DUTY_STATUSES).refine((s) => s !== 'stale' && s !== 'responding', 'This status is set automatically'),
+  reason: trimmed(500).min(5, 'Record why you are overriding the duty status'),
+  /** Required to take a responder with open assignments off duty; their assignments are moved to other responders. */
+  force: z.boolean().default(false),
+});
+export const dutyShiftSchema = z
+  .object({
+    responderId: objectId,
+    startAt: z.coerce.date(),
+    endAt: z.coerce.date(),
+    campus: trimmed(60).min(1).default('main'),
+    zoneId: objectId.optional().nullable(),
+    notes: trimmed(500).optional(),
+    /** A supervisor assigning the shift directly (accepted on the responder's behalf) instead of offering it. */
+    assignDirectly: z.boolean().default(false),
+  })
+  .refine((d) => d.endAt.getTime() > d.startAt.getTime(), { path: ['endAt'], message: 'The shift must end after it starts' })
+  .refine((d) => d.endAt.getTime() - d.startAt.getTime() <= 16 * 3600_000, { path: ['endAt'], message: 'Shifts can be at most 16 hours' });
+export const dutyShiftUpdateSchema = z.object({
+  action: z.enum(['cancel', 'reassign', 'end']),
+  responderId: objectId.optional(),
+  reason: trimmed(500).min(5, 'Record a reason'),
+});
+export const shiftDecisionSchema = z.object({ decision: z.enum(['accept', 'decline']), reason: trimmed(300).optional() });
+export const responderProfileSchema = z.object({
+  campus: trimmed(60).min(1).optional(),
+  zoneId: objectId.optional().nullable(),
+  skills: z.array(z.enum(RESPONDER_SKILLS)).max(RESPONDER_SKILLS.length).optional(),
+  responsibilities: z.array(z.enum(RESPONDER_RESPONSIBILITIES)).max(RESPONDER_RESPONSIBILITIES.length).optional(),
+  reason: trimmed(500).min(5, 'Record a reason'),
+});
+export const responderLocationConsentSchema = z.object({ shareLocation: z.boolean() });
+export const responseZoneSchema = z.object({
+  name: trimmed(80).min(2),
+  code: z.string().trim().toLowerCase().regex(/^[a-z0-9-]{2,40}$/, 'Letters, numbers and dashes'),
+  campus: trimmed(60).min(1).default('main'),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  radiusMeters: z.coerce.number().int().min(25).max(5000),
+  description: trimmed(300).default(''),
+  active: z.boolean().default(true),
+});
+
+// ------------------------------------------------------------------ SOS dispatch
+export const alertAssignSchema = z.object({
+  /** Omit to let the dispatch algorithm choose the best eligible responder. */
+  responderId: objectId.optional(),
+  reason: trimmed(500).min(5, 'Record why you are assigning manually'),
+});
+export const alertDeclineSchema = z.object({ reason: trimmed(300).min(3, 'Tell dispatch why') });
+
+// ------------------------------------------------------------------ chat governance
+export const chatReviewRequestSchema = z.object({
+  scope: z.enum(CHAT_REVIEW_SCOPES),
+  targetId: objectId,
+  basis: z.enum(CHAT_REVIEW_BASES),
+  reason: trimmed(1000).min(20, 'Describe the specific reason for this review (at least 20 characters)'),
+  caseReference: trimmed(60).optional().or(z.literal('')),
+  durationMinutes: z.coerce.number().int().min(5).max(240).default(30),
+});
+export const chatReviewEndSchema = z.object({ note: trimmed(500).optional() });
+
+// ------------------------------------------------------------------ authenticator MFA
+const sixDigits = z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code');
+export const totpCodeSchema = z.object({ code: sixDigits });
+/** Recovery codes look like "k7d2m-9xq4p". Case, spaces and the dash are ignored. */
+export const recoveryCodeInput = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .transform((v) => v.replace(/[\s-]/g, ''))
+  .refine((v) => /^[a-z0-9]{10}$/.test(v), 'Enter a recovery code like k7d2m-9xq4p');
+export const mfaChallengeSchema = z.object({ challengeToken: z.string().min(20).max(200).optional(), code: sixDigits });
+export const mfaRecoverySchema = z.object({ challengeToken: z.string().min(20).max(200).optional(), recoveryCode: recoveryCodeInput });
+export const mfaDisableSchema = z.object({ code: sixDigits });
+
+// ------------------------------------------------------------------ console search
+export const adminSearchSchema = z.object({ q: z.string().trim().min(2, 'Type at least 2 characters').max(80) });

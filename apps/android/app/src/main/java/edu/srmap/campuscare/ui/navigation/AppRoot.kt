@@ -100,7 +100,19 @@ import edu.srmap.campuscare.ui.screens.student.BookSessionScreen
 import edu.srmap.campuscare.ui.screens.student.CampusAlertsScreen
 import edu.srmap.campuscare.ui.screens.student.CertificateScreen
 import edu.srmap.campuscare.ui.screens.student.CommitteesScreen
-import edu.srmap.campuscare.ui.screens.student.CommunityScreen
+import edu.srmap.campuscare.ui.screens.student.CommunitySpacesScreen
+import edu.srmap.campuscare.ui.screens.community.BlockedAccountsScreen
+import edu.srmap.campuscare.ui.screens.community.ChannelComposeScreen
+import edu.srmap.campuscare.ui.screens.community.ChannelDashboardScreen
+import edu.srmap.campuscare.ui.screens.community.CommunityComposeScreen
+import edu.srmap.campuscare.ui.screens.community.CommunityEventNewScreen
+import edu.srmap.campuscare.ui.screens.community.CommunityEventScreen
+import edu.srmap.campuscare.ui.screens.community.CommunityEventsScreen
+import edu.srmap.campuscare.ui.screens.community.CommunityModerationScreen
+import edu.srmap.campuscare.ui.screens.community.CommunityPostScreen
+import edu.srmap.campuscare.ui.screens.community.CommunityScreen
+import edu.srmap.campuscare.ui.screens.community.CounsellingChannelScreen
+import edu.srmap.campuscare.ui.screens.community.CounsellorChatsScreen
 import edu.srmap.campuscare.ui.screens.student.ContactsScreen
 import edu.srmap.campuscare.ui.screens.student.CounsellingScreen
 import edu.srmap.campuscare.ui.screens.student.HazardScreen
@@ -122,6 +134,8 @@ import edu.srmap.campuscare.ui.screens.student.SuggestionsScreen
 import edu.srmap.campuscare.ui.screens.student.SupportScreen
 import edu.srmap.campuscare.ui.screens.student.TrustedContactsScreen
 import edu.srmap.campuscare.ui.theme.CcColors
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /** Destinations that show the role's bottom navigation bar. */
@@ -158,14 +172,17 @@ fun AppRoot(container: AppContainer, pendingLink: String?, onLinkHandled: () -> 
         }
     }
     // Remote configuration from the Super Admin website: refreshed whenever the app comes to the
-    // foreground, so switches, banners and forced updates reach already-installed APKs.
+    // foreground, while visible, or when the server broadcasts a config:updated realtime event.
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            val cfg = container.config.refresh()
-            val here = nav.currentDestination?.route
-            if (cfg?.update?.required == true && here != Routes.UpdateRequired && here != Routes.Splash) {
-                nav.navigate(Routes.UpdateRequired) { popUpTo(0) { inclusive = true } }
+            while (isActive) {
+                val cfg = container.config.refresh()
+                val here = nav.currentDestination?.route
+                if (cfg?.update?.required == true && here != Routes.UpdateRequired && here != Routes.Splash) {
+                    nav.navigate(Routes.UpdateRequired) { popUpTo(0) { inclusive = true } }
+                }
+                delay(10_000)
             }
         }
     }
@@ -178,7 +195,7 @@ fun AppRoot(container: AppContainer, pendingLink: String?, onLinkHandled: () -> 
             }
         }
     }
-    // In-app notifications over the realtime channel.
+    // In-app notifications and instant remote config updates over the realtime channel.
     LaunchedEffect(Unit) {
         container.realtime.events.collect { e ->
             if (e.name == "notification") {
@@ -189,12 +206,37 @@ fun AppRoot(container: AppContainer, pendingLink: String?, onLinkHandled: () -> 
                 } else {
                     snack.show(title)
                 }
+            } else if (e.name == "config:updated" || e.name == "settings:updated") {
+                val cfg = container.config.refresh()
+                val here = nav.currentDestination?.route
+                if (cfg?.update?.required == true && here != Routes.UpdateRequired && here != Routes.Splash) {
+                    nav.navigate(Routes.UpdateRequired) { popUpTo(0) { inclusive = true } }
+                }
             }
         }
     }
-    // Deep links (notification taps, verification / reset links).
+    // Deep links (notification taps, verification / reset links, OAuth callback).
     LaunchedEffect(pendingLink, user?.id, route) {
         val link = pendingLink ?: return@LaunchedEffect
+        if (link.startsWith("campuscare://auth") && link.contains("token=")) {
+            val token = android.net.Uri.parse(link).getQueryParameter("token")
+            if (!token.isNullOrBlank()) {
+                scope.launch {
+                    val dummy = edu.srmap.campuscare.data.User(id = "", fullName = "User", email = "")
+                    container.session.signIn(token, dummy)
+                    val me = runCatching { container.api.auth.me() }.getOrNull()
+                    if (me != null) {
+                        container.session.updateUser(me.user)
+                        snack.show("Signed in as ${me.user.fullName}")
+                        nav.navigate(Routes.homeFor(me.user.role)) { popUpTo(0) { inclusive = true } }
+                    } else {
+                        snack.show("Sign-in failed. Please try again.")
+                    }
+                }
+            }
+            onLinkHandled()
+            return@LaunchedEffect
+        }
         if (route == null || route == Routes.Splash) return@LaunchedEffect
         val isAuthLink = link.contains("verify-email") || link.contains("reset-password") || link.contains("accept-invite")
         val target = Routes.fromLink(link, user?.role ?: "student")
@@ -278,6 +320,15 @@ private fun NavGraphBuilder.graph() {
     composable(Routes.ReportDetail, arguments = listOf(req("id"), opt("tab"))) { ReportDetailScreen(it.arg("id"), it.arg("tab").ifBlank { null }) }
     composable(Routes.Support) { SupportScreen() }
     composable(Routes.Community) { CommunityScreen() }
+    composable(Routes.CommunitySpaces) { CommunitySpacesScreen() }
+    composable(Routes.CommunityPost, arguments = listOf(req("id"))) { CommunityPostScreen(it.arg("id")) }
+    composable(Routes.CommunityCompose, arguments = listOf(opt("edit"), opt("category"))) { CommunityComposeScreen(it.arg("edit").ifBlank { null }, it.arg("category").ifBlank { null }) }
+    composable(Routes.CommunityEvents, arguments = listOf(opt("channel"))) { CommunityEventsScreen(it.arg("channel").ifBlank { null }) }
+    composable(Routes.CommunityEvent, arguments = listOf(req("id"))) { CommunityEventScreen(it.arg("id")) }
+    composable(Routes.CommunityEventNew, arguments = listOf(opt("channel"))) { CommunityEventNewScreen(it.arg("channel").ifBlank { null }) }
+    composable(Routes.BlockedAccounts) { BlockedAccountsScreen() }
+    composable(Routes.CounsellingChannel) { CounsellingChannelScreen() }
+    composable(Routes.CounsellorChats) { CounsellorChatsScreen() }
     composable(Routes.Counselling) { CounsellingScreen() }
     composable(Routes.BookSession, arguments = listOf(opt("counsellor"))) { BookSessionScreen(it.arg("counsellor").ifBlank { null }) }
     composable(Routes.SafeWalk) { SafeWalkScreen() }
@@ -312,6 +363,8 @@ private fun NavGraphBuilder.graph() {
     composable(Routes.Availability) { AvailabilityScreen() }
     composable(Routes.CounsellorStudents) { CounsellorStudentsScreen() }
     composable(Routes.Inbox) { InboxScreen() }
+    composable(Routes.ChannelDashboard) { ChannelDashboardScreen() }
+    composable(Routes.ChannelCompose, arguments = listOf(opt("edit"))) { ChannelComposeScreen(it.arg("edit").ifBlank { null }) }
 
     composable(Routes.CommitteeCases) { CommitteeCasesScreen() }
 
@@ -326,6 +379,7 @@ private fun NavGraphBuilder.graph() {
     composable(Routes.AdminAnnouncements) { AdminAnnouncementsScreen() }
     composable(Routes.AdminStaff) { AdminStaffScreen() }
     composable(Routes.Moderation) { ModerationScreen() }
+    composable(Routes.CommunityModeration) { CommunityModerationScreen() }
 }
 
 /** Helpers shared by screens. */

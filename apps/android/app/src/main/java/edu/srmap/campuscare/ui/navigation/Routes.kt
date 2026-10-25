@@ -27,6 +27,15 @@ object Routes {
     const val ReportDetail = "s/report/{id}?tab={tab}"
     const val Support = "s/support"
     const val Community = "s/community"
+    const val CommunitySpaces = "s/community/spaces"
+    const val CommunityPost = "community/post/{id}"
+    const val CommunityCompose = "community/compose?edit={edit}&category={category}"
+    const val CommunityEvents = "community/events?channel={channel}"
+    const val CommunityEvent = "community/event/{id}"
+    const val CommunityEventNew = "community/events/new?channel={channel}"
+    const val BlockedAccounts = "community/blocked"
+    const val CounsellingChannel = "community/channel/counselling"
+    const val CounsellorChats = "counselling/chats"
     const val Counselling = "s/counselling"
     const val BookSession = "s/counselling/book?counsellor={counsellor}"
     const val SafeWalk = "s/safewalk"
@@ -63,6 +72,8 @@ object Routes {
     const val Availability = "c/availability"
     const val CounsellorStudents = "c/students"
     const val Inbox = "inbox"
+    const val ChannelDashboard = "c/channel"
+    const val ChannelCompose = "c/channel/compose?edit={edit}"
 
     // committee
     const val CommitteeCases = "k/cases"
@@ -80,6 +91,7 @@ object Routes {
     const val AdminAnnouncements = "a/announcements"
     const val AdminStaff = "a/staff"
     const val Moderation = "m/home"
+    const val CommunityModeration = "m/community"
 
     fun sosStatus(id: String) = "s/sos/$id"
     fun report(category: String? = null) = "s/report" + (category?.let { "?category=$it" } ?: "")
@@ -89,6 +101,13 @@ object Routes {
     fun certificate(id: String) = "s/certificate/${Uri.encode(id)}"
     fun lostFoundItem(id: String) = "s/lostfound/item/$id"
     fun chat(id: String) = "chat/$id"
+    fun communityPost(id: String) = "community/post/$id"
+    fun communityCompose(edit: String? = null, category: String? = null) =
+        "community/compose?edit=${Uri.encode(edit ?: "")}&category=${Uri.encode(category ?: "")}"
+    fun communityEvents(channel: String? = null) = "community/events?channel=${Uri.encode(channel ?: "")}"
+    fun communityEvent(id: String) = "community/event/$id"
+    fun communityEventNew(channel: String? = null) = "community/events/new?channel=${Uri.encode(channel ?: "")}"
+    fun channelCompose(edit: String? = null) = "c/channel/compose?edit=${Uri.encode(edit ?: "")}"
     fun case(id: String) = "case/$id"
     fun appointment(id: String) = "c/appointment/$id"
     fun responderAlert(id: String) = "r/alert/$id"
@@ -105,6 +124,7 @@ object Routes {
         "security_officer" -> ResponderAlerts
         "admin" -> AdminHome
         "moderator" -> Moderation
+        "super_admin" -> CounsellorHome
         else -> Login
     }
 
@@ -118,6 +138,7 @@ object Routes {
         val first = seg.getOrNull(0)
         val second = seg.getOrNull(1)
         val third = seg.getOrNull(2)
+        val fourth = seg.getOrNull(3)
         return when {
             first == "verify-email" -> uri.getQueryParameter("token")?.let { verify(it) }
             first == "reset-password" -> uri.getQueryParameter("token")?.let { reset(it) }
@@ -134,13 +155,18 @@ object Routes {
             first == "student" && second == "hazards" -> Hazard
             first == "student" && second == "support" && third != null -> chat(third)
             first == "student" && second == "dashboard" -> homeFor(role)
+            first == "student" && second == "community" && third == "posts" && fourth != null -> communityPost(fourth)
+            first == "student" && second == "community" && third == "events" && fourth != null -> communityEvent(fourth)
+            first == "student" && second == "community" -> Community
             first == "support" && second == "threads" && third != null -> chat(third)
             first == "committee" && second == "cases" && third != null -> case(third)
             first == "committee" -> if (role == "admin") AdminTriage else CommitteeCases
             first == "security" && second == "alerts" && third != null -> responderAlert(third)
             first == "security" -> ResponderAlerts
             first == "consultancy" && second == "appointments" -> uri.getQueryParameter("focus")?.let { appointment(it) } ?: CounsellorAppointments
+            first == "consultancy" && second == "channel" -> ChannelDashboard
             first == "consultancy" -> CounsellorHome
+            first == "moderator" && second == "community" -> CommunityModeration
             first == "moderator" -> Moderation
             else -> Notifications
         }

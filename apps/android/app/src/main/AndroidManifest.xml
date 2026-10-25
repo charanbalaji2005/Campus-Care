@@ -81,11 +81,12 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
-        <!-- "On duty" mode for Campus Security responders: keeps the realtime alert channel open. -->
+        <!-- "On duty" mode for Campus Security responders: keeps the realtime alert channel open and sends
+             duty heartbeats. The location type is used only when the responder opted in to sharing their position. -->
         <service
             android:name=".services.ResponderDutyService"
             android:exported="false"
-            android:foregroundServiceType="remoteMessaging" />
+            android:foregroundServiceType="remoteMessaging|location" />
 
         <service
             android:name=".services.CampusCareMessagingService"

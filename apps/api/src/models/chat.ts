@@ -1,5 +1,5 @@
 import { Schema, model, type InferSchemaType, type HydratedDocument } from 'mongoose';
-import { CHAT_KINDS } from '@campuscare/shared';
+import { CHAT_KINDS, CHAT_REVIEW_BASES, CHAT_REVIEW_SCOPES, CHAT_REVIEW_STATUSES } from '@campuscare/shared';
 
 const chatChannelSchema = new Schema(
   {
@@ -89,3 +89,34 @@ const chatBlockSchema = new Schema(
 );
 chatBlockSchema.index({ userId: 1, blockedUserId: 1 }, { unique: true });
 export const ChatBlock = model('ChatBlock', chatBlockSchema);
+
+/**
+ * Exceptional, time-limited permission for one administrator to read one private conversation.
+ * Configuring chat never implies this. Counselling threads can never be the subject of a grant.
+ */
+const chatReviewGrantSchema = new Schema(
+  {
+    requesterId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    scope: { type: String, enum: CHAT_REVIEW_SCOPES, required: true },
+    /** support_thread → ChatChannel id; case_chat → Incident id. */
+    targetId: { type: Schema.Types.ObjectId, required: true },
+    targetLabel: { type: String, required: true },
+    basis: { type: String, enum: CHAT_REVIEW_BASES, required: true },
+    reason: { type: String, required: true, maxlength: 1000 },
+    caseReference: { type: String, default: null, maxlength: 60 },
+    status: { type: String, enum: CHAT_REVIEW_STATUSES, default: 'active' },
+    expiresAt: { type: Date, required: true },
+    endedAt: { type: Date, default: null },
+    endedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    endNote: { type: String, default: null, maxlength: 500 },
+    accessCount: { type: Number, default: 0 },
+    lastAccessedAt: { type: Date, default: null },
+    exportedAt: { type: Date, default: null },
+  },
+  { timestamps: true },
+);
+chatReviewGrantSchema.index({ requesterId: 1, status: 1, expiresAt: 1 });
+chatReviewGrantSchema.index({ status: 1, createdAt: -1 });
+chatReviewGrantSchema.index({ targetId: 1, createdAt: -1 });
+export const ChatReviewGrant = model('ChatReviewGrant', chatReviewGrantSchema);
+export type ChatReviewGrantDoc = HydratedDocument<InferSchemaType<typeof chatReviewGrantSchema>>;

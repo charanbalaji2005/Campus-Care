@@ -88,7 +88,7 @@ counsellingRouter.get(
     let filter: Record<string, unknown>;
     let view: 'student' | 'counsellor' = 'student';
     if (user.role === 'student') filter = { studentId: user._id };
-    else if (user.role === 'counsellor') { filter = { counsellorId: user._id }; view = 'counsellor'; }
+    else if (user.role === 'counsellor' || user.role === 'super_admin') { filter = { counsellorId: user._id }; view = 'counsellor'; }
     else throw new AppError(403, 'forbidden', 'Administrators see aggregate counselling statistics only.');
     if (req.query.status) filter.status = String(req.query.status);
     if (req.query.upcoming === 'true') filter.startAt = { $gte: new Date(Date.now() - 3600_000) };
@@ -141,7 +141,7 @@ async function loadAppointmentFor(user: UserDoc, id: string) {
   const appt = await Appointment.findById(id);
   if (!appt) throw notFound();
   const isStudent = String(appt.studentId) === String(user._id);
-  const isCounsellor = String(appt.counsellorId) === String(user._id);
+  const isCounsellor = String(appt.counsellorId) === String(user._id) || user.role === 'super_admin';
   if (!isStudent && !isCounsellor) throw notFound();
   return { appt, isStudent, isCounsellor };
 }
@@ -260,7 +260,7 @@ counsellingRouter.get(
   asyncHandler(async (req, res) => {
     if (!Types.ObjectId.isValid(req.params.studentId)) throw notFound();
     // Minimum necessary: only students this counsellor has appointments with.
-    const has = await Appointment.exists({ counsellorId: req.user!._id, studentId: req.params.studentId });
+    const has = req.user!.role === 'super_admin' || (await Appointment.exists({ counsellorId: req.user!._id, studentId: req.params.studentId }));
     if (!has) throw notFound();
     const s = await User.findById(req.params.studentId, { fullName: 1, studentId: 1, department: 1, academicYear: 1 }).lean();
     const history = await Appointment.find({ counsellorId: req.user!._id, studentId: req.params.studentId }).sort({ startAt: -1 }).lean();
@@ -290,7 +290,7 @@ counsellingRouter.get(
   asyncHandler(async (req, res) => {
     const subject = { role: req.user!.role as Role, permissions: req.user!.permissions };
     const match: Record<string, unknown> = {};
-    if (req.user!.role === 'counsellor') match.counsellorId = req.user!._id;
+    if (req.user!.role === 'counsellor' || req.user!.role === 'super_admin') match.counsellorId = req.user!._id;
     else if (!hasPermission(subject, 'appointments:read_aggregate')) throw new AppError(403, 'forbidden', 'Not permitted.');
     // Aggregates only — never names or notes.
     const byStatus = await Appointment.aggregate([{ $match: match }, { $group: { _id: '$status', count: { $sum: 1 } } }]);

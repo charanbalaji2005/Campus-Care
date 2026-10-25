@@ -149,14 +149,14 @@ fun SupportScreen() {
     }
 }
 
-/** Community hub: moderated channels plus community safety tools. */
+/** Community chat channels and community safety tools (the feed itself is the Campus Community screen). */
 @Composable
-fun CommunityScreen() {
+fun CommunitySpacesScreen() {
     val app = LocalApp.current
     val nav = LocalNav.current
     val config by app.config.config.collectAsState()
     val overview = rememberLoad { app.api.chat.overview() }
-    CcScreen(title = "Community", subtitle = "Moderated spaces for the campus community", onBack = { nav.popBackStack() }, refreshing = overview.refreshing, onRefresh = { overview.reload() }) {
+    CcScreen(title = "Channels & tools", subtitle = "Moderated chat channels and community safety tools", onBack = { nav.popBackStack() }, refreshing = overview.refreshing, onRefresh = { overview.reload() }) {
         val c = config.settings.community
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (c.lostFoundEnabled) CcButton("Lost & found", { nav.navigate(Routes.LostFound) }, Modifier.weight(1f), kind = ButtonKind.Soft, leadingIcon = Icons.Rounded.Inventory2)

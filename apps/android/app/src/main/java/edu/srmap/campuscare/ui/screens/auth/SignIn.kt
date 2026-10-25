@@ -1,5 +1,6 @@
 package edu.srmap.campuscare.ui.screens.auth
 
+import edu.srmap.campuscare.BuildConfig
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -82,7 +83,9 @@ fun LoginScreen() {
     val settings = app.config.config.value.settings
     val domain = settings.accountEmailDomain
     val turnstile = rememberTurnstile("login")
-    var email by rememberSaveable { mutableStateOf("") }
+    val savedEmail = remember { app.rememberedEmail ?: "" }
+    var email by rememberSaveable { mutableStateOf(savedEmail) }
+    var rememberMe by rememberSaveable { mutableStateOf(savedEmail.isNotBlank()) }
     var password by remember { mutableStateOf("") }
     var mfaCode by remember { mutableStateOf("") }
     var needMfa by remember { mutableStateOf(false) }
@@ -104,6 +107,7 @@ fun LoginScreen() {
                     if (resp.mfaRequired && resp.sessionToken == null) {
                         needMfa = true
                     } else {
+                        app.rememberedEmail = if (rememberMe) email.trim().lowercase() else null
                         completeSignIn(app, nav, resp)
                     }
                 } catch (e: ApiException) {
@@ -122,8 +126,38 @@ fun LoginScreen() {
         if (needMfa) {
             CcTextField(mfaCode, { if (it.length <= 6 && it.all(Char::isDigit)) mfaCode = it }, label = "6-digit code from your authenticator", leadingIcon = Icons.Rounded.Pin, keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done, onImeAction = { submit() })
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = { nav.navigate(Routes.Forgot) }) { Text("Forgot password?", color = CcColors.Emerald, fontWeight = FontWeight.SemiBold) }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { rememberMe = !rememberMe }
+                    .padding(vertical = 4.dp, horizontal = 2.dp)
+            ) {
+                Checkbox(
+                    checked = rememberMe,
+                    onCheckedChange = { rememberMe = it },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = CcColors.Emerald,
+                        checkmarkColor = Color.White,
+                        uncheckedColor = CcColors.InkFaint
+                    )
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = "Remember me",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = CcColors.InkSoft,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            TextButton(onClick = { nav.navigate(Routes.Forgot) }) {
+                Text("Forgot password?", color = CcColors.Emerald, fontWeight = FontWeight.SemiBold)
+            }
         }
         error?.let {
             InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, action = if (unverified) ({
@@ -132,7 +166,7 @@ fun LoginScreen() {
         }
         TurnstileNote(turnstile.enabled)
         CcButton("Sign In", { submit() }, modifier = Modifier.fillMaxWidth(), loading = busy, trailingIcon = Icons.AutoMirrored.Rounded.ArrowForward)
-        if (settings.googleSignInEnabled && GoogleSignIn.configured) {
+        if (GoogleSignIn.configured) {
             Text("or continue with", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             OutlinedButton(
                 onClick = {
@@ -144,7 +178,17 @@ fun LoginScreen() {
                             } catch (e: ApiException) {
                                 error = e.message
                             }
-                            is GoogleResult.Failed -> snack.show(r.message, long = true)
+                            is GoogleResult.Failed -> {
+                                val authUrl = "${BuildConfig.API_BASE_URL}/api/v1/auth/google?client=android"
+                                val opened = runCatching {
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(authUrl))
+                                    context.startActivity(intent)
+                                    true
+                                }.getOrDefault(false)
+                                if (!opened) {
+                                    snack.show(r.message, long = true)
+                                }
+                            }
                             GoogleResult.Cancelled -> Unit
                         }
                         googleBusy = false
@@ -157,7 +201,7 @@ fun LoginScreen() {
             ) {
                 GoogleG()
                 Spacer(Modifier.width(10.dp))
-                Text(if (googleBusy) "Connecting…" else "Continue with Google (@$domain)", color = CcColors.Ink, fontWeight = FontWeight.SemiBold)
+                Text(if (googleBusy) "Connecting…" else "Continue with Google", color = CcColors.Ink, fontWeight = FontWeight.SemiBold)
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {

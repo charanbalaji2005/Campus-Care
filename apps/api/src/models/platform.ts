@@ -129,6 +129,12 @@ const auditLogSchema = new Schema(
     ipHash: { type: String, default: null },
     /** Redacted metadata only — no message bodies, passwords, tokens or secrets. */
     meta: { type: Schema.Types.Mixed, default: {} },
+    /** Justification recorded by the actor, where the action requires one (overrides, private reviews). */
+    reason: { type: String, default: null, maxlength: 1000 },
+    /** Request id (X-Request-Id) linking this entry to the API request and server logs. */
+    correlationId: { type: String, default: null },
+    /** Hash format: 1 = original fields; 2 also covers reason and correlationId. */
+    hv: { type: Number, default: 1 },
     prevHash: { type: String, required: true },
     hash: { type: String, required: true },
     at: { type: Date, required: true },
@@ -140,12 +146,18 @@ auditLogSchema.index({ at: -1 });
 auditLogSchema.index({ actorId: 1, at: -1 });
 auditLogSchema.index({ action: 1, at: -1 });
 auditLogSchema.index({ targetType: 1, targetId: 1 });
+auditLogSchema.index({ correlationId: 1 }, { sparse: true });
 for (const op of ['updateOne', 'updateMany', 'findOneAndUpdate', 'replaceOne', 'deleteOne', 'deleteMany', 'findOneAndDelete'] as const) {
   auditLogSchema.pre(op, function blockMutation(next) {
     if ((this as unknown as { getOptions?: () => Record<string, unknown> }).getOptions?.().allowAuditRetention) return next();
     next(new Error('Audit log entries are append-only'));
   });
 }
+// Documents cannot be edited in place either (save() on an existing entry).
+auditLogSchema.pre('save', function blockEdit(next) {
+  if (!this.isNew) return next(new Error('Audit log entries are append-only'));
+  next();
+});
 export const AuditLog = model('AuditLog', auditLogSchema);
 
 // ------------------------------------------------------------------ background jobs

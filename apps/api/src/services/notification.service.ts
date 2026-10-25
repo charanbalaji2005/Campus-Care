@@ -19,6 +19,14 @@ interface NotifyInput {
   /** User-controllable category. Omit for account-security and safety messages. */
   category?: NotificationCategory;
   email?: { template: TemplateKey; vars: Record<string, string>; dedupeKey?: string };
+  /** Wait for the push provider and report its outcome (used where delivery must be recorded, e.g. SOS). */
+  awaitPush?: boolean;
+}
+
+export interface NotifyResult {
+  id: string;
+  /** null when push was not attempted (category muted) or not awaited. */
+  push: { sent: number; configured: boolean; error?: string } | null;
 }
 
 type Prefs = Partial<Record<NotificationCategory, { inApp?: boolean; email?: boolean; push?: boolean }>>;
@@ -39,15 +47,23 @@ export async function notify(input: NotifyInput) {
     readAt: showInApp ? null : new Date(),
   });
   if (showInApp) emitToUser(input.userId, 'notification', { id: String(n._id), kind: n.kind, title: n.title, body: n.body, link: n.link, priority, createdAt: n.createdAt });
+  let push: NotifyResult['push'] = null;
   if (channelAllowed(prefs, input.category, 'push', priority)) {
-    pushToUser(input.userId, { title: input.title, body: input.body, kind: input.kind, link: input.link, priority, notificationId: String(n._id) })
-      .then((r) => (r.sent ? Notification.updateOne({ _id: n._id }, { $set: { pushedAt: new Date() } }) : null))
-      .catch((err) => logger.warn({ err: (err as Error).message }, 'push failed'));
+    const pending = pushToUser(input.userId, { title: input.title, body: input.body, kind: input.kind, link: input.link, priority, notificationId: String(n._id) })
+      .then(async (r) => {
+        if (r.sent) await Notification.updateOne({ _id: n._id }, { $set: { pushedAt: new Date() } });
+        return r;
+      })
+      .catch((err) => {
+        logger.warn({ err: (err as Error).message }, 'push failed');
+        return { sent: 0, configured: true, error: (err as Error).message?.slice(0, 200) ?? 'push failed' };
+      });
+    if (input.awaitPush) push = await pending;
   }
   if (input.email && user && user.accountStatus === 'active' && user.privacy?.allowEmailNotifications !== false && channelAllowed(prefs, input.category, 'email', priority)) {
     await sendEmail(input.email.template, user.email, { name: user.fullName, ...input.email.vars }, input.email.dedupeKey);
   }
-  return n;
+  return Object.assign(n, { push });
 }
 
 export async function notifyMany(userIds: string[], input: Omit<NotifyInput, 'userId'>) {

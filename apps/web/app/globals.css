@@ -20,3 +20,14 @@
   .page-title { @apply text-2xl font-bold tracking-tight text-ink-strong; }
   .muted { @apply text-sm text-ink-soft; }
 }
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+

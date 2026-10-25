@@ -1,17 +1,20 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import {
-  SOS_ACTIVE_STATUSES, checkInSchema, hasPermission, locationShareSchema, locationUpdateSchema, safeWalkStartSchema, sosCreateSchema, sosNoteSchema, sosResolveSchema,
-  trustedContactSchema, type Role,
+  SOS_ACTIVE_STATUSES, alertDeclineSchema, checkInSchema, hasPermission, locationShareSchema, locationUpdateSchema, safeWalkStartSchema, sosCancelSchema, sosCreateSchema, sosLocationUpdateSchema, sosNoteSchema,
+  sosResolveSchema, trustedContactSchema, type Role,
 } from '@campuscare/shared';
 import { z } from 'zod';
 import { AppError, asyncHandler, notFound, ok, parse } from '../lib/http';
 import { decryptSecret, randomToken, sha256 } from '../lib/crypto';
-import { AlertDeliveryEvent, CampusAlert, EmergencyAlert, LocationShare, SafeWalkSession, SafetyCheckIn, TrustedContact } from '../models/safety';
+import { AlertAssignment, AlertDeliveryEvent, CampusAlert, EmergencyAlert, LocationShare, SafeWalkSession, SafetyCheckIn, TrustedContact } from '../models/safety';
 import { ContactConsentToken, User } from '../models/user';
 import { requireAuth, requirePermission } from '../middleware/auth';
-import { authLimiter, sosLimiter } from '../middleware/security';
-import { raiseSos, serializeAlert } from '../services/safety.service';
+import { authLimiter, locationLimiter, sosLimiter } from '../middleware/security';
+import { dispatchSos, raiseSos, serializeAlert } from '../services/safety.service';
+import { acknowledgeAlert, closeAlertAssignments, declineAssignment, transferAlert } from '../services/dispatch.service';
+import { recordInitialSosLocation, sosTrack, startLocationShare, stopLocationShare, updateLocationShare, updateSosLocation } from '../services/location.service';
+import { logger } from '../lib/logger';
 import { getSettings } from '../services/settings.service';
 import { audit } from '../services/audit.service';
 import { notify } from '../services/notification.service';
@@ -51,11 +54,35 @@ safetyRouter.post(
     const input = parse(sosCreateSchema, req.body);
     try {
       const alert = await raiseSos(String(req.user!._id), input);
+      // The fix the alert was raised with becomes the first point of its auditable location history.
+      await recordInitialSosLocation(alert).catch((err) => logger.warn({ err: (err as Error).message }, 'initial SOS location not recorded'));
       ok(res, serializeAlert(alert, false), 201);
     } catch (err) {
       if ((err as Error).message === 'conflict') throw new AppError(409, 'conflict', 'Duplicate alert key.');
       throw err;
     }
+  }),
+);
+
+/**
+ * Live location while the student's own SOS is active (pending countdown included). Owner only;
+ * 410 once the alert is closed so the app stops sending. Retries with the same clientSeq are no-ops.
+ */
+safetyRouter.post(
+  '/sos/:id/location',
+  locationLimiter,
+  requirePermission('sos:raise'),
+  asyncHandler(async (req, res) => {
+    const input = parse(sosLocationUpdateSchema, req.body);
+    ok(res, await updateSosLocation(req.user!, req.params.id, input));
+  }),
+);
+
+/** Time-ordered location history of an SOS for responders and dispatchers. Audited per read. */
+safetyRouter.get(
+  '/responder/alerts/:id/track',
+  asyncHandler(async (req, res) => {
+    ok(res, await sosTrack(req.user!, req.params.id, req));
   }),
 );
 
@@ -83,7 +110,13 @@ async function responderView(a: Record<string, unknown> & { _id: unknown; userId
     safetyCard: card,
     deliveries: deliveries.map((d) => ({ channel: d.channel, outcome: d.outcome, recipient: d.channel === 'email' ? d.recipient : undefined, at: d.createdAt })),
     respondersReached: deliveries.filter((d) => d.channel === 'in_app' && d.outcome === 'delivered').length,
+    myAssignment: await myAssignment(a._id, viewerId),
   };
+}
+
+async function myAssignment(alertId: unknown, viewerId: string) {
+  const mine = await AlertAssignment.findOne({ alertId, responderId: viewerId }).sort({ createdAt: -1 }).lean();
+  return mine ? { id: String(mine._id), status: mine.status, ackDeadlineAt: mine.ackDeadlineAt, offeredAt: mine.offeredAt } : null;
 }
 
 safetyRouter.get(
@@ -104,28 +137,64 @@ safetyRouter.get(
   }),
 );
 
+/**
+ * Cancel. Before dispatch (server countdown still running) this is one atomic compare-and-set on
+ * "pending", so the alert can never be both cancelled and sent. After dispatch the alert is kept,
+ * a cancellation event is recorded and every responder holding it is told to confirm before standing down.
+ */
 safetyRouter.post(
   '/sos/:id/cancel',
   asyncHandler(async (req, res) => {
     if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
+    const { reason } = parse(sosCancelSchema, req.body ?? {});
+    const now = new Date();
+    const beforeDispatch = await EmergencyAlert.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user!._id, status: 'pending', dispatchedAt: null },
+      { $set: { status: 'cancelled', cancelledAt: now }, $push: { events: { type: 'cancelled_before_dispatch', at: now, actorLabel: 'Student', note: reason ?? null, studentVisible: true } } },
+      { new: true },
+    );
+    if (beforeDispatch) {
+      await audit({ action: 'sos.cancelled', req, targetType: 'sos', targetId: String(beforeDispatch._id), meta: { afterDispatch: false } });
+      emitToRoom(`sos:${beforeDispatch._id}`, 'sos:updated', { id: String(beforeDispatch._id), status: 'cancelled' });
+      return ok(res, serializeAlert(beforeDispatch, false));
+    }
+
     const settings = await getSettings();
     const a = await EmergencyAlert.findOne({ _id: req.params.id, userId: req.user!._id });
     if (!a) throw notFound();
     if (['resolved', 'cancelled'].includes(a.status)) return ok(res, serializeAlert(a, false));
-    if (!settings.sos.allowCancelAfterSend && a.status !== 'queued') throw new AppError(409, 'cannot_cancel', 'This alert can no longer be cancelled. Call campus security to tell them you are safe.');
-    const dispatched = a.status !== 'queued';
-    a.status = 'cancelled';
-    a.cancelledAt = new Date();
-    // A cancellation after dispatch is recorded, never erased: responders still see the history.
-    a.events.push({ type: dispatched ? 'cancelled_after_dispatch' : 'cancelled', at: new Date(), actorLabel: 'Student', note: typeof req.body?.reason === 'string' ? req.body.reason.slice(0, 300) : null, studentVisible: true } as never);
-    await a.save();
-    emitToRoom('responders:all', 'sos:updated', { id: String(a._id), status: 'cancelled' });
-    emitToRoom(`sos:${a._id}`, 'sos:updated', { id: String(a._id), status: 'cancelled' });
-    if (dispatched && a.acknowledgedBy) {
-      await notify({ userId: String(a.acknowledgedBy), kind: 'sos', priority: 'critical', title: `SOS ${a.alertNumber} cancelled by student`, body: 'The student marked themselves safe. Confirm before standing down.', link: `/security/alerts/${a._id}` });
+    if (!settings.sos.allowCancelAfterSend) throw new AppError(409, 'cannot_cancel', 'This alert can no longer be cancelled. Call campus security to tell them you are safe.');
+    const cancelled = await EmergencyAlert.findOneAndUpdate(
+      { _id: a._id, status: { $nin: ['resolved', 'cancelled', 'pending'] } },
+      { $set: { status: 'cancelled', cancelledAt: now }, $push: { events: { type: 'cancelled_after_dispatch', at: now, actorLabel: 'Student', note: reason ?? null, studentVisible: true } } },
+      { new: true },
+    );
+    if (!cancelled) return ok(res, serializeAlert((await EmergencyAlert.findById(a._id))!, false));
+    // Responders who hold the alert are told — the alert itself stays for the record.
+    const holders = await AlertAssignment.find({ alertId: cancelled._id, open: true }, { responderId: 1 }).lean();
+    const toNotify = new Set(holders.map((h) => String(h.responderId)));
+    if (cancelled.acknowledgedBy) toNotify.add(String(cancelled.acknowledgedBy));
+    await closeAlertAssignments(cancelled._id, 'cancelled', 'Cancelled by the student after dispatch');
+    for (const uid of toNotify) {
+      await notify({ userId: uid, kind: 'sos', priority: 'critical', title: `SOS ${cancelled.alertNumber} cancelled by student`, body: 'The student marked themselves safe. Confirm before standing down.', link: `/security/alerts/${cancelled._id}` });
     }
-    await audit({ action: 'sos.cancelled', req, targetType: 'sos', targetId: String(a._id), meta: { afterDispatch: dispatched } });
-    ok(res, serializeAlert(a, false));
+    emitToRoom('responders:all', 'sos:updated', { id: String(cancelled._id), status: 'cancelled' });
+    emitToRoom(`sos:${cancelled._id}`, 'sos:updated', { id: String(cancelled._id), status: 'cancelled' });
+    await audit({ action: 'sos.cancelled', req, targetType: 'sos', targetId: String(cancelled._id), meta: { afterDispatch: true, respondersNotified: toNotify.size } });
+    ok(res, serializeAlert(cancelled, false));
+  }),
+);
+
+/** Student skips the rest of the countdown ("Send now"). */
+safetyRouter.post(
+  '/sos/:id/dispatch-now',
+  sosLimiter,
+  asyncHandler(async (req, res) => {
+    if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
+    const own = await EmergencyAlert.exists({ _id: req.params.id, userId: req.user!._id });
+    if (!own) throw notFound();
+    await dispatchSos(req.params.id, { force: true });
+    ok(res, serializeAlert((await EmergencyAlert.findById(req.params.id))!, false));
   }),
 );
 
@@ -134,7 +203,8 @@ safetyRouter.get(
   '/responder/alerts',
   requirePermission('sos:respond'),
   asyncHandler(async (req, res) => {
-    const active = req.query.all === 'true' ? {} : { status: { $in: [...SOS_ACTIVE_STATUSES] } };
+    // Pending alerts are still in the student's countdown: responders never see them.
+    const active = req.query.all === 'true' ? { status: { $ne: 'pending' } } : { status: { $in: [...SOS_ACTIVE_STATUSES] } };
     const list = await EmergencyAlert.find(active).sort({ createdAt: -1 }).limit(100).lean();
     const students = await User.find({ _id: { $in: list.map((a) => a.userId) } }, { fullName: 1, phone: 1, studentId: 1, hostel: 1 }).lean();
     const map = new Map(students.map((s) => [String(s._id), s]));
@@ -151,7 +221,7 @@ safetyRouter.get(
   asyncHandler(async (req, res) => {
     if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
     const a = await EmergencyAlert.findById(req.params.id).lean();
-    if (!a) throw notFound();
+    if (!a || a.status === 'pending') throw notFound();
     await audit({ action: 'sos.viewed', req, targetType: 'sos', targetId: String(a._id), meta: { location: a.latitude != null } });
     const view = await responderView(a as never, String(req.user!._id));
     // Every responder view of the safety card appears in the student's privacy dashboard.
@@ -171,20 +241,20 @@ safetyRouter.post(
   asyncHandler(async (req, res) => {
     if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
     const name = req.user!.fullName.split(' ')[0];
-    // Atomic: the first responder to acknowledge owns the response.
-    const a = await EmergencyAlert.findOneAndUpdate(
-      { _id: req.params.id, status: { $in: ['queued', 'sending', 'sent', 'failed'] } },
-      {
-        $set: { status: 'acknowledged', acknowledgedBy: req.user!._id, acknowledgedAt: new Date(), assignedTo: req.user!._id },
-        $push: { events: { type: 'acknowledged', at: new Date(), actorId: req.user!._id, actorLabel: `${name} (Campus Security)`, studentVisible: true } },
-      },
-      { new: true },
-    );
-    if (!a) throw new AppError(409, 'already_handled', 'This alert was already acknowledged, resolved or cancelled.');
-    await audit({ action: 'sos.acknowledged', req, targetType: 'sos', targetId: String(a._id), meta: { secondsToAck: Math.round((a.acknowledgedAt!.getTime() - a.createdAt.getTime()) / 1000) } });
-    await notify({ userId: String(a.userId), kind: 'sos', priority: 'critical', title: 'Help is responding', body: `${name} from Campus Security acknowledged your SOS.`, link: `/student/emergency?alert=${a._id}` });
-    await afterResponderChange(a, { acknowledgedByName: `${name} (Campus Security)` });
-    ok(res, await responderView(a.toObject() as never, String(req.user!._id)));
+    // Atomic: the first responder to acknowledge owns the response (see dispatch.service).
+    const a = await acknowledgeAlert(req.params.id, req.user!, req);
+    await afterResponderChange(a as never, { acknowledgedByName: `${name} (Campus Security)` });
+    ok(res, await responderView(((a as { toObject?: () => unknown }).toObject?.() ?? a) as never, String(req.user!._id)));
+  }),
+);
+
+safetyRouter.post(
+  '/responder/alerts/:id/decline',
+  requirePermission('sos:respond'),
+  asyncHandler(async (req, res) => {
+    const { reason } = parse(alertDeclineSchema, req.body);
+    await declineAssignment(req.params.id, req.user!, reason, req);
+    ok(res, { ok: true });
   }),
 );
 
@@ -212,17 +282,8 @@ safetyRouter.post(
   requirePermission('sos:respond'),
   asyncHandler(async (req, res) => {
     if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
-    const input = parse(z.object({ userId: z.string().regex(/^[a-f0-9]{24}$/i) }), req.body);
-    const target = await User.findOne({ _id: input.userId, accountStatus: 'active' }, { fullName: 1, role: 1, permissions: 1 });
-    if (!target || !hasPermission({ role: target.role as Role, permissions: target.permissions }, 'sos:respond')) throw new AppError(422, 'validation_failed', 'Choose an active responder.');
-    const a = await EmergencyAlert.findOneAndUpdate(
-      { _id: req.params.id, status: { $in: ['acknowledged', 'en_route'] } },
-      { $set: { assignedTo: target._id }, $push: { events: { type: 'reassigned', at: new Date(), actorId: req.user!._id, actorLabel: req.user!.fullName, note: `Assigned to ${target.fullName}`, studentVisible: false } } },
-      { new: true },
-    );
-    if (!a) throw new AppError(409, 'invalid_state', 'Only acknowledged alerts can be reassigned.');
-    await notify({ userId: String(target._id), kind: 'sos', priority: 'critical', title: `You now own SOS ${a.alertNumber}`, body: 'Open the alert for location and details.', link: `/security/alerts/${a._id}` });
-    await audit({ action: 'sos.reassigned', req, targetType: 'sos', targetId: String(a._id), meta: { to: String(target._id) } });
+    const input = parse(z.object({ userId: z.string().regex(/^[a-f0-9]{24}$/i), reason: z.string().trim().max(300).optional() }), req.body);
+    const a = await transferAlert(req.params.id, req.user!, input.userId, input.reason ?? '', req);
     await afterResponderChange(a);
     ok(res, await responderView(a.toObject() as never, String(req.user!._id)));
   }),
@@ -257,6 +318,7 @@ safetyRouter.post(
       { new: true },
     );
     if (!a) throw new AppError(409, 'invalid_state', 'This alert is already resolved.');
+    await closeAlertAssignments(a._id, 'completed', `Resolved: ${input.outcome}`);
     await audit({ action: 'sos.resolved', req, targetType: 'sos', targetId: String(a._id), meta: { outcome: input.outcome, hasNote: Boolean(input.note) } });
     await notify({ userId: String(a.userId), kind: 'sos', priority: 'high', title: `SOS ${a.alertNumber} resolved`, body: 'Campus Security closed your emergency alert. Reach out if you still need help.', link: `/student/emergency?alert=${a._id}` });
     await afterResponderChange(a);
@@ -402,32 +464,18 @@ safetyRouter.post(
   '/location-share',
   requirePermission('safety:self'),
   asyncHandler(async (req, res) => {
-    const settings = await getSettings();
-    if (!settings.locationSharing.enabled) throw new AppError(403, 'disabled', 'Location sharing is turned off.');
     const input = parse(locationShareSchema, req.body);
-    if (input.durationMinutes > settings.locationSharing.maxDurationMinutes) throw new AppError(422, 'validation_failed', `Share for at most ${settings.locationSharing.maxDurationMinutes} minutes.`);
-    await LocationShare.updateMany({ userId: req.user!._id, stoppedAt: null }, { $set: { stoppedAt: new Date() } });
-    const expiresAt = new Date(Date.now() + input.durationMinutes * 60_000);
-    const share = await LocationShare.create({
-      userId: req.user!._id, audience: input.audience, latitude: input.latitude, longitude: input.longitude, accuracyMeters: input.accuracyMeters ?? null,
-      expiresAt, purgeAt: new Date(expiresAt.getTime() + settings.locationSharing.retentionHours * 3600_000),
-    });
-    await audit({ action: 'location.share_started', req, targetType: 'location_share', targetId: String(share._id), meta: { audience: input.audience, minutes: input.durationMinutes } });
-    ok(res, { id: String(share._id), expiresAt }, 201);
+    const share = await startLocationShare(req.user!, input, req);
+    ok(res, { id: String(share._id), expiresAt: share.expiresAt }, 201);
   }),
 );
 
 safetyRouter.patch(
   '/location-share/:id',
+  locationLimiter,
   asyncHandler(async (req, res) => {
     const input = parse(locationUpdateSchema, req.body);
-    const share = await LocationShare.findOneAndUpdate(
-      { _id: req.params.id, userId: req.user!._id, stoppedAt: null, expiresAt: { $gt: new Date() } },
-      { $set: { latitude: input.latitude, longitude: input.longitude, accuracyMeters: input.accuracyMeters ?? null } },
-      { new: true },
-    );
-    if (!share) throw new AppError(410, 'expired', 'Location sharing has ended.');
-    if (share.audience === 'security') emitToRoom('responders:all', 'location:update', { id: String(share._id), latitude: share.latitude, longitude: share.longitude });
+    await updateLocationShare(req.user!, req.params.id, input);
     ok(res, { ok: true });
   }),
 );
@@ -435,8 +483,7 @@ safetyRouter.patch(
 safetyRouter.post(
   '/location-share/:id/stop',
   asyncHandler(async (req, res) => {
-    await LocationShare.updateOne({ _id: req.params.id, userId: req.user!._id, stoppedAt: null }, { $set: { stoppedAt: new Date() } });
-    await audit({ action: 'location.share_stopped', req, targetType: 'location_share', targetId: req.params.id });
+    await stopLocationShare(req.user!, req.params.id, req);
     ok(res, { ok: true });
   }),
 );

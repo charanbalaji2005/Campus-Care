@@ -23,13 +23,16 @@ import { audit } from '../services/audit.service';
 import { DEFAULT_TEMPLATES, TEMPLATE_KEYS, renderTemplate, type TemplateKey } from '../services/email/templates';
 import { sendEmail, verifyEmailProvider } from '../services/email/email.service';
 import { revokeAllSessions } from '../services/auth.service';
+import { removeTotp } from '../services/mfa.service';
 import { googleRedirectUri } from '../services/google.service';
 import { databaseReady } from '../db/connect';
-import { disconnectUser } from '../realtime/socket';
+import { disconnectUser, emitBroadcast } from '../realtime/socket';
 import { env, turnstileKeys } from '../config/env';
+import { superAdminUsersRouter } from './superadmin-users.routes';
 
 export const superAdminRouter = Router();
 superAdminRouter.use(requireAuth, requirePermission('super_admin:access'), requireMfaPolicy);
+superAdminRouter.use('/users', superAdminUsersRouter);
 
 /** Diff of changed setting paths only, for audit (values of secrets are never stored). */
 function changedPaths(before: unknown, after: unknown, prefix = ''): string[] {
@@ -94,6 +97,7 @@ superAdminRouter.patch(
     const { before, after } = await updateSettings(patch, String(req.user!._id));
     const paths = changedPaths(before, after);
     await audit({ action: 'settings.updated', req, targetType: 'settings', targetId: 'platform', meta: { paths } });
+    emitBroadcast('config:updated', { paths, at: new Date() });
     ok(res, { settings: after, changed: paths });
   }),
 );
@@ -354,10 +358,21 @@ superAdminRouter.post('/users/:id/revoke-sessions', requirePermission('security:
   ok(res, { ok: true });
 }));
 
+/**
+ * Administrator recovery for someone who lost their authenticator AND all recovery codes. This is not a
+ * bypass: it removes the second factor, signs the person out everywhere, forces re-enrolment at next
+ * sign-in (where policy requires MFA), notifies them, and records how their identity was verified.
+ */
 superAdminRouter.post('/users/:id/reset-mfa', requirePermission('security:manage'), requireRecentAuth, asyncHandler(async (req, res) => {
-  await User.updateOne({ _id: req.params.id }, { $set: { mfaEnabled: false, mfaSecretEnc: null, mfaPendingSecretEnc: null } });
+  if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
+  const input = parse(z.object({ verification: z.string().trim().min(10, 'Describe how you verified this person’s identity (e.g. ID card checked in person, ticket reference)').max(500) }), req.body ?? {});
+  if (String(req.params.id) === String(req.user!._id)) throw new AppError(422, 'self', 'Another administrator must reset your two-step verification.');
+  const target = await User.findById(req.params.id, { email: 1, fullName: 1 });
+  if (!target) throw notFound();
+  await removeTotp(req.params.id);
   await revokeAllSessions(req.params.id);
-  await audit({ action: 'user.mfa_reset', req, targetType: 'user', targetId: req.params.id });
+  await sendEmail('security_alert', target.email, { name: target.fullName, message: 'An administrator reset two-step verification on your account after verifying your identity. You will be asked to set up your authenticator app again. If you did not request this, contact the university IT office immediately.' });
+  await audit({ action: 'user.mfa_reset', req, targetType: 'user', targetId: req.params.id, reason: input.verification });
   ok(res, { ok: true });
 }));
 

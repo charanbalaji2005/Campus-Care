@@ -415,11 +415,14 @@ adminRouter.get(
     if (req.query.outcome) filter.outcome = String(req.query.outcome);
     if (req.query.actorId && Types.ObjectId.isValid(String(req.query.actorId))) filter.actorId = new Types.ObjectId(String(req.query.actorId));
     if (req.query.from) filter.at = { $gte: new Date(String(req.query.from)) };
+    // Exact lookups used by console search and incident review: correlation id or target id.
+    if (req.query.correlationId) filter.correlationId = String(req.query.correlationId).slice(0, 64);
+    if (req.query.targetId) filter.targetId = String(req.query.targetId).slice(0, 64);
     const [items, total] = await Promise.all([AuditLog.find(filter).sort({ seq: -1 }).skip(skip).limit(limit).lean(), AuditLog.countDocuments(filter)]);
     const actors = await User.find({ _id: { $in: items.map((i) => i.actorId).filter(Boolean) } }, { fullName: 1 }).lean();
     const names = new Map(actors.map((a) => [String(a._id), a.fullName]));
     await audit({ action: 'audit.viewed', req, meta: { page } });
-    ok(res, { items: items.map((i) => ({ id: String(i._id), seq: i.seq, at: i.at, action: i.action, outcome: i.outcome, actor: i.actorId ? names.get(String(i.actorId)) ?? 'Unknown' : 'System / anonymous', actorRole: i.actorRole, targetType: i.targetType, targetId: i.targetId, meta: i.meta })), total, page, limit });
+    ok(res, { items: items.map((i) => ({ id: String(i._id), seq: i.seq, at: i.at, action: i.action, outcome: i.outcome, actor: i.actorId ? names.get(String(i.actorId)) ?? 'Unknown' : 'System / anonymous', actorRole: i.actorRole, targetType: i.targetType, targetId: i.targetId, meta: i.meta, reason: i.reason ?? null, correlationId: i.correlationId ?? null })), total, page, limit });
   }),
 );
 

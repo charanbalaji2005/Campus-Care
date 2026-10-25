@@ -80,6 +80,7 @@ import edu.srmap.campuscare.ui.theme.CcColors
 import edu.srmap.campuscare.util.Fmt
 import java.time.Instant
 import kotlinx.coroutines.launch
+import androidx.compose.material.icons.rounded.Forum
 
 /** Administrator dashboard (mobile). Platform configuration lives on the Super Admin website. */
 @Composable
@@ -437,7 +438,14 @@ fun AdminStaffScreen() {
 @Composable
 fun ModerationScreen() {
     var tab by rememberSaveable { mutableStateOf("chat") }
+    val nav = LocalNav.current
     CcScreen(title = "Moderation", subtitle = "Keep community spaces safe") {
+        CcCard(padding = 8.dp) {
+            ListRow(
+                "Community feed", subtitle = "Held and reported posts and comments, user reports and appeals",
+                icon = Icons.Rounded.Forum, tone = Tone.Brand, onClick = { nav.navigate(Routes.CommunityModeration) },
+            )
+        }
         ChoiceChips(listOf("chat" to "Chat reports", "hazards" to "Hazards", "suggestions" to "Suggestions", "lostfound" to "Lost & found"), tab, { tab = it })
         when (tab) {
             "hazards" -> HazardQueue()

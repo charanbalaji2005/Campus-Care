@@ -56,4 +56,11 @@ class AppContainer(context: Context) {
     var onboardingSeen: Boolean
         get() = prefs.getBoolean("onboarding_seen", false)
         set(value) = prefs.edit().putBoolean("onboarding_seen", value).apply()
+
+    var rememberedEmail: String?
+        get() = prefs.getString("remembered_email", null)
+        set(value) = prefs.edit().apply {
+            if (value.isNullOrBlank()) remove("remembered_email") else putString("remembered_email", value.trim().lowercase())
+        }.apply()
 }
+

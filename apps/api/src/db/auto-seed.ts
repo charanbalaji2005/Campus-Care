@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { CATEGORY_INFO, COMMITTEE_TYPE_LABELS, INCIDENT_CATEGORIES, type CommitteeType } from '@campuscare/shared';
-import { hashPassword, randomToken } from '../lib/crypto';
+import { encryptSecret, hashPassword, randomToken } from '../lib/crypto';
 import { Committee, RoutingRule } from '../models/incident';
 import { Contact, Announcement, TrainingModule } from '../models/content';
 import { ChatChannel } from '../models/chat';
-import { EmailDomain } from '../models/platform';
+import { EmailDomain, EmailProviderConfig, IdentityProviderConfig, SystemSetting } from '../models/platform';
 import { User } from '../models/user';
 import { Availability } from '../models/counselling';
 import { createIncident } from '../services/incident.service';
@@ -12,7 +12,21 @@ import { logger } from '../lib/logger';
 
 export async function autoSeedDatabase() {
   try {
-    // 1. University email domain
+    // 0. Disable Turnstile and mandatory MFA for smooth local dev / testing
+    await SystemSetting.findOneAndUpdate(
+      { key: 'platform' },
+      {
+        $set: {
+          'value.turnstile.enabled': false,
+          'value.security.requireMfaForSuperAdmin': false,
+          'value.turnstile.forms.login': false,
+          'value.turnstile.forms.register': false,
+          'value.turnstile.forms.incidentSubmit': false,
+        },
+      },
+      { upsert: true },
+    );
+    // 1. Email domains
     await EmailDomain.findOneAndUpdate(
       { domain: 'srmap.edu.in' },
       {
@@ -27,6 +41,54 @@ export async function autoSeedDatabase() {
       },
       { upsert: true },
     );
+    await EmailDomain.findOneAndUpdate(
+      { domain: 'gmail.com' },
+      {
+        $setOnInsert: {
+          domain: 'gmail.com',
+          purpose: 'both',
+          status: 'active',
+          verifiedAt: new Date(),
+          verificationToken: randomToken(18),
+          note: 'Gmail (Auto-seeded for Google OAuth)',
+        },
+      },
+      { upsert: true },
+    );
+
+    // 1b. Active Nodemailer Email Provider Config
+    await EmailProviderConfig.findOneAndUpdate(
+      { active: true },
+      {
+        $set: {
+          type: 'nodemailer',
+          service: 'gmail',
+          fromName: 'CampusCare',
+          fromEmail: 'neelampallicharanbalaji14@gmail.com',
+          authUser: 'neelampallicharanbalaji14@gmail.com',
+          authPassEnc: encryptSecret('kcbayisleewokpbe'),
+          active: true,
+        },
+      },
+      { upsert: true },
+    );
+
+    // 1c. Google OAuth 2.0 Provider Config (read from environment, never hardcode in repository)
+    if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+      await IdentityProviderConfig.findOneAndUpdate(
+        { provider: 'google' },
+        {
+          $set: {
+            provider: 'google',
+            enabled: true,
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecretEnc: encryptSecret(process.env.GOOGLE_CLIENT_SECRET),
+            allowedDomains: [],
+          },
+        },
+        { upsert: true },
+      );
+    }
 
     // 2. Committees & Routing rules
     const committees: Record<string, { _id: unknown }> = {};
@@ -123,6 +185,23 @@ export async function autoSeedDatabase() {
         },
       },
       { upsert: true, new: true },
+    );
+
+    // Also seed neelampallicharanbalaji14@gmail.com as Super Admin
+    await User.findOneAndUpdate(
+      { email: 'neelampallicharanbalaji14@gmail.com' },
+      {
+        $set: {
+          fullName: 'Charan Balaji',
+          passwordHash: charanHash,
+          role: 'super_admin',
+          emailVerified: true,
+          emailVerifiedAt: new Date(),
+          accountStatus: 'active',
+          failedLoginCount: 0,
+        },
+      },
+      { upsert: true },
     );
 
     // Consultant / Counsellor availability for Charan

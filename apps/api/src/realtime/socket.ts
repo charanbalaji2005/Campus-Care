@@ -14,7 +14,7 @@ let io: Server | null = null;
  */
 type RoomAuthoriser = (user: UserDoc, id: string) => Promise<boolean>;
 const authorisers: Record<string, RoomAuthoriser> = {};
-export function registerRoomAuthoriser(prefix: 'case' | 'chat' | 'responders' | 'sos', fn: RoomAuthoriser) {
+export function registerRoomAuthoriser(prefix: 'case' | 'chat' | 'responders' | 'sos' | 'duty' | 'ops', fn: RoomAuthoriser) {
   authorisers[prefix] = fn;
 }
 
@@ -83,6 +83,10 @@ export function emitToRoom(room: string, event: string, payload: unknown) {
 
 export function emitToUser(userId: string, event: string, payload: unknown) {
   io?.to(`user:${userId}`).emit(event, payload);
+}
+
+export function emitBroadcast(event: string, payload: unknown = {}) {
+  io?.emit(event, payload);
 }
 
 /** Immediately disconnect a user's sockets (suspension, logout everywhere, permission change). */

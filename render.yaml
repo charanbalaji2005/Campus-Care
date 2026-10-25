@@ -51,3 +51,22 @@ services:
         sync: false
       - key: MAIL_APP_PASSWORD
         sync: false
+
+  - type: web
+    name: campuscare-web
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build -w @campuscare/shared && npm run build -w @campuscare/web
+    startCommand: npm start -w @campuscare/web
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+      - key: API_ORIGIN
+        sync: false
+      - key: NEXT_PUBLIC_REALTIME_URL
+        sync: false
+      - key: NEXT_PUBLIC_TURNSTILE_SITE_KEY
+        sync: false
+

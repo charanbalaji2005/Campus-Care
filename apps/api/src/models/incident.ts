@@ -160,7 +160,7 @@ export const CaseReadState = model('CaseReadState', caseReadStateSchema);
 // ------------------------------------------------------------------ private files (evidence and chat media)
 const evidenceSchema = new Schema(
   {
-    purpose: { type: String, enum: ['evidence', 'case_chat', 'chat', 'lost_found'], required: true },
+    purpose: { type: String, enum: ['evidence', 'case_chat', 'chat', 'lost_found', 'feed'], required: true },
     uploaderId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     uploaderTag: { type: String, default: null, select: false },
     incidentId: { type: Schema.Types.ObjectId, ref: 'Incident', default: null },

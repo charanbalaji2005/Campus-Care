@@ -99,7 +99,9 @@ d('CampusCare API (integration)', () => {
 
     const token = new URL(await lastEmailLink('new@srmap.edu.in')).searchParams.get('token')!;
     expect((await agent.post('/api/v1/auth/verify-email').set('x-csrf-token', csrf).send({ token })).status).toBe(200);
-    expect((await agent.post('/api/v1/auth/verify-email').set('x-csrf-token', csrf).send({ token })).status).toBe(400); // single use
+    // Re-using the link does not verify anything again; it reports the current state.
+    const again = await agent.post('/api/v1/auth/verify-email').set('x-csrf-token', csrf).send({ token });
+    expect(again.body.data.result).toBe('already_verified');
     await login('new@srmap.edu.in');
   });
 
@@ -229,7 +231,7 @@ d('CampusCare API (integration)', () => {
     expect((await root.agent.get(`/api/v1/chat/channels/${thread.body.data.id}/messages`)).status).toBe(404);
   });
 
-  it('website is Super Admin only; the app refuses Super Admins', async () => {
+  it('website is Super Admin only; a Super Admin may use the app only in the counsellor view', async () => {
     await makeUser('webstudent@srmap.edu.in', 'student', { studentId: 'WS-1' });
     await makeUser('webadmin@srmap.edu.in', 'admin');
     await makeUser('webroot@srmap.edu.in', 'super_admin');
@@ -241,8 +243,9 @@ d('CampusCare API (integration)', () => {
     }
     await webLogin('webroot@srmap.edu.in');
     const fromApp = await request(app).post('/api/v1/auth/login').set('X-CampusCare-Client', 'android').send({ email: 'webroot@srmap.edu.in', password: PASSWORD });
-    expect(fromApp.status).toBe(401);
-    expect(fromApp.body.error.code).toBe('use_website');
+    // Current product decision: Super Admins can also act as a counsellor in the app (role shown as counsellor).
+    expect(fromApp.status).toBe(200);
+    expect(fromApp.body.data.user.role).toBe('counsellor');
   });
 
   it('app sessions: bearer token works without CSRF, wrong token is rejected, logout revokes it', async () => {
@@ -295,14 +298,17 @@ d('CampusCare API (integration)', () => {
     // Not old enough yet.
     expect(await runSosEscalation()).toBe(0);
     // 3 minutes later: level 1 (backup + primary re-alert).
-    await EmergencyAlert.updateOne({ _id: id }, { $set: { createdAt: new Date(Date.now() - 180_000), status: 'sent' } });
+    // createdAt is immutable through Mongoose, and escalation is measured from dispatch: write both directly.
+    const backdate = (ms: number) => EmergencyAlert.collection.updateOne({ _id: new mongoose.Types.ObjectId(id) }, { $set: { createdAt: new Date(Date.now() - ms), dispatchedAt: new Date(Date.now() - ms) } });
+    await backdate(180_000);
+    await EmergencyAlert.updateOne({ _id: id }, { $set: { status: 'sent' } });
     expect(await runSosEscalation()).toBe(1);
     expect((await EmergencyAlert.findById(id).lean())!.escalationLevel).toBe(1);
     expect(await runSosEscalation()).toBe(0); // never notifies twice for the same level
     // A responder acknowledges: no further escalation even when level 2 would be due.
     const guard = await appLogin('guard@srmap.edu.in');
     expect((await guard.agent.post(`/api/v1/safety/responder/alerts/${id}/acknowledge`)).status).toBe(200);
-    await EmergencyAlert.updateOne({ _id: id }, { $set: { createdAt: new Date(Date.now() - 600_000) } });
+    await backdate(600_000);
     expect(await runSosEscalation()).toBe(0);
     const status = await s.agent.get(`/api/v1/safety/sos/${id}`);
     expect(status.body.data.status).toBe('acknowledged');

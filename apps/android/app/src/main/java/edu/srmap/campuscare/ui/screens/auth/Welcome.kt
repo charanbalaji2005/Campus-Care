@@ -92,10 +92,7 @@ fun SplashScreen() {
                 val me = app.api.auth.me()
                 app.session.updateUser(me.user)
                 when {
-                    me.user.role == "super_admin" -> {
-                        app.session.clear()
-                        Routes.Login
-                    }
+                    me.user.role == "super_admin" -> Routes.CounsellorHome
                     me.mfaRequired && !me.session.mfaVerified && me.user.mfaEnabled -> Routes.Mfa
                     me.user.role == "student" && me.user.studentId.isNullOrBlank() -> Routes.CompleteProfile
                     else -> Routes.homeFor(me.user.role)

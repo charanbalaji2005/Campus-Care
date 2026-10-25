@@ -5,3 +5,5 @@ export * from './media';
 export * from './schemas';
 export * from './casenumber';
 export * from './classifier';
+export * from './community';
+export * from './location';

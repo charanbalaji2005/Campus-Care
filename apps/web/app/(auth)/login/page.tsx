@@ -32,7 +32,10 @@ const OAUTH_ERRORS: Record<string, string> = {
 function GoogleIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
-      <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-1.6 3.9-5.5 3.9-3.3 0-6-2.7-6-6.1s2.7-6.1 6-6.1c1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.8 3.3 14.6 2.3 12 2.3 6.6 2.3 2.3 6.6 2.3 12s4.3 9.7 9.7 9.7c5.6 0 9.3-3.9 9.3-9.5 0-.6-.1-1.1-.2-1.6H12Z" />
+      <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z" />
+      <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.27v3.15C3.25 21.31 7.31 24 12 24Z" />
+      <path fill="#FBBC05" d="M5.28 14.27A7.18 7.18 0 0 1 4.9 12c0-.79.14-1.57.38-2.27V6.58H1.27A11.97 11.97 0 0 0 0 12c0 1.92.45 3.74 1.27 5.42l4.01-3.15Z" />
+      <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.25 2.69 1.27 6.58l4.01 3.15c.95-2.83 3.6-4.98 6.72-4.98Z" />
     </svg>
   );
 }
@@ -84,9 +87,9 @@ export default function LoginPage() {
 
   return (
     <AuthShell
-      title={mfaStep ? 'Two-step verification' : 'Super Admin sign in'}
-      subtitle={mfaStep ? 'Enter the 6-digit code from your authenticator app.' : 'The CampusCare website is the Super Admin control centre.'}
-      footer={<>Student or staff member? <Link href="/" className="font-semibold text-brand-700 hover:underline">Get the CampusCare app</Link></>}
+      title={mfaStep ? 'Two-step verification' : 'Sign in to CampusCare'}
+      subtitle={mfaStep ? 'Enter the 6-digit code from your authenticator app.' : 'Welcome back! Sign in to access your dashboard and safety services.'}
+      footer={<>Need an account? <Link href="/" className="font-semibold text-brand-700 hover:underline">Get started on CampusCare</Link></>}
     >
       {notice && (
         <Alert tone={notice.tone} className="mb-5">
@@ -130,11 +133,18 @@ export default function LoginPage() {
         <Button type="submit" size="lg" className="w-full" loading={form.submitting}>{mfaStep ? 'Verify' : 'Sign in'} <ArrowRight className="h-4 w-4" /></Button>
       </form>
 
-      {!mfaStep && settings?.googleSignInEnabled && (
+      {!mfaStep && (settings?.googleSignInEnabled ?? true) && (
         <>
-          <div className="my-6 flex items-center gap-3 text-xs text-ink-soft"><div className="h-px flex-1 bg-line" />or continue with<div className="h-px flex-1 bg-line" /></div>
-          <Button variant="outline" size="lg" className="w-full" asChild>
-            <a href="/api/v1/auth/google"><GoogleIcon /> Continue with Google</a>
+          <div className="my-6 flex items-center gap-3 text-xs text-ink-soft">
+            <div className="h-px flex-1 bg-line" />
+            <span className="font-medium text-ink-muted">or continue with</span>
+            <div className="h-px flex-1 bg-line" />
+          </div>
+          <Button variant="outline" size="lg" className="w-full flex items-center justify-center gap-2.5 font-semibold shadow-sm hover:bg-slate-50 border-slate-300 transition-colors" asChild>
+            <a href="/api/v1/auth/google">
+              <GoogleIcon />
+              Continue with Google
+            </a>
           </Button>
         </>
       )}

@@ -11,6 +11,8 @@ declare global {
       isMobileClient?: boolean;
       /** True when this request was authenticated with an Authorization: Bearer token. */
       bearerAuth?: boolean;
+      /** Request id echoed as X-Request-Id and stored on audit entries. */
+      correlationId?: string;
     }
   }
 }

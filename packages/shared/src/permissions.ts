@@ -19,6 +19,7 @@ export const PERMISSIONS = [
   'incidents:update_committee',
   'sos:respond',
   'safety:responder_view',
+  'duty:self', // own duty status, shift acceptance and heartbeats
   // counselling
   'appointments:manage_own',
   'counselling_notes:own',
@@ -51,6 +52,17 @@ export const PERMISSIONS = [
   'retention:manage',
   'chat:configure',
   'sos:configure',
+  // operations
+  'duty:view', // see the duty roster and responder availability
+  'duty:manage', // supervisors: create shifts, assign them and override duty status (always with a reason)
+  'sos:dispatch', // emergency operations: view alert detail and assign / reassign responders
+  'location:view_live', // live map of consented location shares (every view is audited)
+  'notifications:manage',
+  'chat:read_private', // exceptional, audited review of a private support or complaint conversation — explicit grant only
+  // community feed
+  'community:moderate', // review reported/held feed posts and comments, decide appeals — never grants private chat access
+  'community:organize_events', // publish official campus events (individual grant for organisers)
+  'community_channels:manage', // verify which counsellors may publish in the Official Counselling Support channel
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -60,12 +72,13 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   student: STUDENT,
   counsellor: ['appointments:manage_own', 'counselling_notes:own', 'chat:community', 'chat:support'],
   committee_member: ['incidents:read_committee', 'incidents:update_committee', 'chat:community', 'chat:support'],
-  moderator: ['chat:moderate', 'chat:community', 'community_safety:manage'],
-  security_officer: ['incidents:read_committee', 'incidents:update_committee', 'sos:respond', 'safety:responder_view', 'chat:community', 'chat:support'],
+  moderator: ['chat:moderate', 'chat:community', 'community_safety:manage', 'community:moderate'],
+  security_officer: ['incidents:read_committee', 'incidents:update_committee', 'sos:respond', 'safety:responder_view', 'duty:self', 'chat:community', 'chat:support'],
   admin: [
     'admin:access', 'incidents:triage', 'users:manage', 'committees:manage', 'appointments:read_aggregate',
     'announcements:manage', 'campus_alerts:manage', 'training:manage', 'contacts:manage', 'analytics:read',
-    'audit:read', 'chat:moderate', 'chat:community', 'community_safety:manage', 'safety_intel:manage',
+    'audit:read', 'chat:moderate', 'chat:community', 'community_safety:manage', 'safety_intel:manage', 'duty:view',
+    'community:moderate',
   ],
   super_admin: [
     'admin:access', 'super_admin:access', 'incidents:triage', 'users:manage', 'committees:manage',
@@ -73,11 +86,13 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'contacts:manage', 'analytics:read', 'audit:read', 'chat:moderate', 'chat:community', 'domains:manage',
     'identity_providers:manage', 'email:manage', 'roles:manage', 'routing:manage', 'security:manage',
     'settings:manage', 'retention:manage', 'chat:configure', 'sos:configure', 'community_safety:manage', 'safety_intel:manage',
+    'duty:view', 'duty:manage', 'sos:dispatch', 'location:view_live', 'notifications:manage',
+    'community:moderate', 'community_channels:manage',
   ],
 };
 
 /** Permissions that can only be granted individually and never come with a role. */
-export const EXPLICIT_ONLY_PERMISSIONS: Permission[] = ['incidents:read_sensitive', 'counselling_notes:read_all'];
+export const EXPLICIT_ONLY_PERMISSIONS: Permission[] = ['incidents:read_sensitive', 'counselling_notes:read_all', 'chat:read_private'];
 
 export interface PermissionSubject {
   role: Role;

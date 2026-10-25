@@ -12,11 +12,17 @@ export interface GoogleConfig {
 
 export async function getGoogleConfig(): Promise<GoogleConfig | null> {
   const cfg = await IdentityProviderConfig.findOne({ provider: 'google' }).select('+clientSecretEnc').lean();
-  if (!cfg?.enabled) return null;
-  const clientId = cfg.clientId || env.GOOGLE_CLIENT_ID;
-  const clientSecret = cfg.clientSecretEnc ? decryptSecret(cfg.clientSecretEnc) : env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
-  return { clientId, clientSecret, allowedDomains: cfg.allowedDomains ?? [] };
+  if (cfg) {
+    if (!cfg.enabled) return null;
+    const clientId = cfg.clientId || env.GOOGLE_CLIENT_ID;
+    const clientSecret = cfg.clientSecretEnc ? decryptSecret(cfg.clientSecretEnc) : env.GOOGLE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) return null;
+    return { clientId, clientSecret, allowedDomains: cfg.allowedDomains ?? [] };
+  }
+  if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
+    return { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET, allowedDomains: [] };
+  }
+  return null;
 }
 
 export const GOOGLE_REDIRECT_PATH = '/api/v1/auth/google/callback';
@@ -36,6 +42,7 @@ export interface OAuthStatePayload {
   codeVerifier: string;
   nonce: string;
   mode: 'login' | 'link';
+  client?: 'web' | 'android';
   exp: number;
 }
 

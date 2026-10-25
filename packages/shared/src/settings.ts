@@ -1,4 +1,4 @@
-import type { MediaScope } from './enums';
+import type { DispatchPolicy, MediaScope } from './enums';
 
 export interface MediaScopePolicy {
   images: boolean;
@@ -84,6 +84,14 @@ export interface PlatformSettings {
     lostFoundEnabled: boolean;
     suggestionsEnabled: boolean;
     hazardReportsEnabled: boolean;
+    /** Community feed (posts, comments, reactions). */
+    feedEnabled: boolean;
+    /** Hold every student post for a moderator before it is published. */
+    feedPreModeration: boolean;
+    /** Allow students to attach images to feed posts (official accounts always can). */
+    feedImagesEnabled: boolean;
+    /** Community events and RSVPs. */
+    eventsEnabled: boolean;
   };
   mobile: {
     /** Builds below this version code must update before they can be used. */
@@ -122,6 +130,51 @@ export interface PlatformSettings {
     enabled: boolean;
     allowCaseCreation: boolean;
     allowReplies: boolean;
+  };
+  duty: {
+    /** How often the app sends a heartbeat while its responder is on duty. */
+    heartbeatIntervalSeconds: number;
+    /** No heartbeat for this long → the responder is shown as stale/unreachable (never as off duty). */
+    staleThresholdSeconds: number;
+    /** When false, a responder can only go on duty inside an accepted shift. */
+    allowDutyWithoutShift: boolean;
+    /** How early a responder may start an accepted shift. */
+    shiftStartGraceMinutes: number;
+    /** Responders may share their position with dispatch while on duty, with their consent. */
+    responderLocationSharing: boolean;
+    notifySupervisorsOnStale: boolean;
+  };
+  dispatch: {
+    /** Assign each SOS to the best eligible responder automatically. */
+    autoAssign: boolean;
+    /** single = one responder at a time; group = the top N responders at once (first to acknowledge owns it). */
+    policy: DispatchPolicy;
+    groupSize: number;
+    /** An assigned responder must acknowledge within this time, or the alert moves to the next responder. */
+    ackDeadlineSeconds: number;
+    /** Assignment attempts before the alert is handed to the fallback group. */
+    maxAttempts: number;
+    maxActiveAssignmentsPerResponder: number;
+    /** Allow assigning responders who marked themselves busy (only when nobody else is free). */
+    allowBusyResponders: boolean;
+    /** Locations less precise than this are not used for proximity ranking. */
+    trustedLocationAccuracyMeters: number;
+    /** Distances are compared in bands of this size, so GPS noise cannot reorder responders. */
+    proximityBandMeters: number;
+    /** Skills every SOS responder must hold. */
+    requiredSkills: string[];
+    /** Skills that rank a responder higher. */
+    preferredSkills: string[];
+    /** How often an alert with no eligible responder is retried. */
+    unassignedRetrySeconds: number;
+  };
+  chatGovernance: {
+    /** Exceptional review of private support / complaint chats (explicit permission, reason, re-authentication). */
+    privateReviewEnabled: boolean;
+    maxReviewMinutes: number;
+    requireCaseReference: boolean;
+    /** Allow an audited export of the messages within an active review. */
+    allowExport: boolean;
   };
 }
 
@@ -200,6 +253,10 @@ export const DEFAULT_SETTINGS: PlatformSettings = {
     lostFoundEnabled: true,
     suggestionsEnabled: true,
     hazardReportsEnabled: true,
+    feedEnabled: true,
+    feedPreModeration: false,
+    feedImagesEnabled: true,
+    eventsEnabled: true,
   },
   mobile: {
     minSupportedVersionCode: 1,
@@ -237,7 +294,46 @@ export const DEFAULT_SETTINGS: PlatformSettings = {
     allowCaseCreation: false,
     allowReplies: true,
   },
+  duty: {
+    heartbeatIntervalSeconds: 45,
+    staleThresholdSeconds: 120,
+    allowDutyWithoutShift: false,
+    shiftStartGraceMinutes: 15,
+    responderLocationSharing: true,
+    notifySupervisorsOnStale: true,
+  },
+  dispatch: {
+    autoAssign: true,
+    policy: 'single',
+    groupSize: 2,
+    ackDeadlineSeconds: 60,
+    maxAttempts: 4,
+    maxActiveAssignmentsPerResponder: 1,
+    allowBusyResponders: false,
+    trustedLocationAccuracyMeters: 100,
+    proximityBandMeters: 250,
+    requiredSkills: [],
+    preferredSkills: ['first_aid'],
+    unassignedRetrySeconds: 30,
+  },
+  chatGovernance: {
+    privateReviewEnabled: true,
+    maxReviewMinutes: 30,
+    requireCaseReference: true,
+    allowExport: false,
+  },
 };
+
+/** Validated bounds for duty and dispatch settings (enforced on the server, shown in the console). */
+export const DUTY_LIMITS = {
+  heartbeatIntervalSeconds: { min: 15, max: 300 },
+  staleThresholdSeconds: { min: 60, max: 1800 },
+  ackDeadlineSeconds: { min: 15, max: 600 },
+  maxAttempts: { min: 1, max: 10 },
+  groupSize: { min: 1, max: 5 },
+  maxActiveAssignmentsPerResponder: { min: 1, max: 5 },
+  maxReviewMinutes: { min: 5, max: 240 },
+} as const;
 
 /** Settings that are safe to send to any signed-in client (no internal policy detail). */
 export interface PublicSettings {

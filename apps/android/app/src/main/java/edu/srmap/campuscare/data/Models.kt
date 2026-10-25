@@ -438,6 +438,8 @@ data class ChannelDetail(
     val mediaScope: String = "support",
     val media: MediaPolicy = MediaPolicy(),
     val limits: MediaLimits = MediaLimits(),
+    /** Counselling threads only: the counsellor and their working-hours indicator. */
+    val counsellor: ThreadCounsellor? = null,
 )
 
 @Serializable
@@ -552,7 +554,21 @@ data class SosAlert(
     val assignedToMe: Boolean = false,
     val safetyCard: SafetyCard? = null,
     val deliveries: List<DeliveryEvent> = emptyList(),
+    /** "server": the countdown runs on the server and nobody is notified until [dispatchAt]. */
+    val countdownMode: String = "client",
+    val dispatchAt: String? = null,
+    val dispatchedAt: String? = null,
+    /** Age of the student's fix when the alert was raised (device monotonic clock). */
+    val locationAgeSeconds: Double? = null,
+    /** none | offered | acknowledged | unassigned | closed */
+    val assignmentState: String = "none",
+    val unassignedSince: String? = null,
+    /** This responder's own dispatch offer for the alert (responder view only). */
+    val myAssignment: MyAssignment? = null,
 )
+
+@Serializable
+data class MyAssignment(val id: String, val status: String = "", val ackDeadlineAt: String? = null, val offeredAt: String? = null)
 
 @Serializable
 data class TrustedContact(val id: String, val name: String, val email: String, val phone: String? = null, val relationship: String? = null, val shareLocation: Boolean = false, val status: String = "pending")
@@ -584,6 +600,79 @@ data class OverdueWalk(val id: String, val student: String? = null, val phone: S
 
 @Serializable
 data class ResponderTeamMember(val id: String, val name: String, val phone: String? = null)
+
+// ------------------------------------------------------------------ responder duty (server is the source of truth)
+@Serializable
+data class DutyAvailability(
+    val userId: String = "",
+    /** on_duty | off_duty | on_break | busy | responding | unavailable | stale */
+    val status: String = "off_duty",
+    val statusBeforeStale: String? = null,
+    val staleSince: String? = null,
+    val campus: String? = null,
+    val zoneId: String? = null,
+    val skills: List<String> = emptyList(),
+    val responsibilities: List<String> = emptyList(),
+    val currentShiftId: String? = null,
+    val lastHeartbeatAt: String? = null,
+    val heartbeatAgeSeconds: Long? = null,
+    val heartbeatFresh: Boolean = false,
+    val activeAssignmentCount: Int = 0,
+    val lastAssignedAt: String? = null,
+    val locationConsent: Boolean = false,
+    val statusChangedAt: String? = null,
+)
+
+@Serializable
+data class DutyPolicy(
+    val heartbeatIntervalSeconds: Int = 45,
+    val staleThresholdSeconds: Int = 120,
+    val allowDutyWithoutShift: Boolean = false,
+    val shiftStartGraceMinutes: Int = 15,
+    val responderLocationSharing: Boolean = false,
+    val ackDeadlineSeconds: Int = 60,
+)
+
+@Serializable
+data class DutyShift(
+    val id: String,
+    val startAt: String? = null,
+    val endAt: String? = null,
+    /** offered | accepted | active | completed */
+    val status: String = "offered",
+    val campus: String? = null,
+    val zoneId: String? = null,
+    val notes: String? = null,
+)
+
+@Serializable
+data class DutyAssignment(
+    val id: String,
+    val alertId: String,
+    val alertNumber: String? = null,
+    val alertStatus: String? = null,
+    /** offered | acknowledged */
+    val status: String = "offered",
+    val ackDeadlineAt: String? = null,
+)
+
+@Serializable
+data class DutyOverview(
+    val availability: DutyAvailability = DutyAvailability(),
+    val policy: DutyPolicy = DutyPolicy(),
+    val shifts: List<DutyShift> = emptyList(),
+    val assignments: List<DutyAssignment> = emptyList(),
+    val serverTime: String? = null,
+)
+
+@Serializable
+data class HeartbeatResult(
+    val status: String = "",
+    val serverTime: String? = null,
+    val heartbeatIntervalSeconds: Int = 45,
+    val staleThresholdSeconds: Int = 120,
+    val locationAccepted: Boolean = false,
+)
 
 // ------------------------------------------------------------------ map & community
 @Serializable

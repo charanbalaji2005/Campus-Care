@@ -41,6 +41,8 @@ class Realtime(private val api: Api, private val config: ConfigRepository) {
     private val eventNames = listOf(
         "notification", "sos:new", "sos:updated", "case:updated", "case:message", "chat:message",
         "location:update", "campus_alert", "appointment:updated",
+        // Responder dispatch and duty (user room): offers addressed to this responder and server-side duty changes.
+        "sos:assigned", "sos:assignment_closed", "duty:updated",
     )
 
     fun connect() {

@@ -32,13 +32,13 @@ const button = (label: string) =>
 export const DEFAULT_TEMPLATES: Record<TemplateKey, { subject: string; html: string; text: string }> = {
   verify_email: {
     subject: 'Verify your {{platformName}} email',
-    html: layout(`<p>Hi {{name}},</p><p>Confirm your email address to activate your account. This link expires in 24 hours and can be used once.</p>${button('Verify email')}`),
-    text: 'Hi {{name}},\n\nVerify your email: {{link}}\n\nThis link expires in 24 hours.',
+    html: layout(`<p>Hi {{name}},</p><p>Confirm your email address to activate your account. This link expires in {{expiresIn}} and can be used once. Opening the link does not verify your account until you tap <strong>Verify my email</strong> on the page that opens.</p>${button('Verify email')}<p>If you didn't create a CampusCare account, you can ignore this email.</p>`),
+    text: 'Hi {{name}},\n\nVerify your email: {{link}}\n\nThis link expires in {{expiresIn}} and can be used once. If you did not create an account, ignore this email.',
   },
   password_reset: {
     subject: 'Reset your {{platformName}} password',
-    html: layout(`<p>Hi {{name}},</p><p>We received a request to reset your password. The link expires in 30 minutes and can be used once. If you didn't ask for this, you can ignore this email.</p>${button('Reset password')}`),
-    text: 'Hi {{name}},\n\nReset your password: {{link}}\n\nThe link expires in 30 minutes. If you did not request this, ignore this email.',
+    html: layout(`<p>Hi {{name}},</p><p>We received a request to reset your password. The link expires in {{expiresIn}} and can be used once. If you didn't ask for this, you can ignore this email; your password will not change.</p>${button('Reset password')}`),
+    text: 'Hi {{name}},\n\nReset your password: {{link}}\n\nThe link expires in {{expiresIn}} and can be used once. If you did not request this, ignore this email.',
   },
   password_changed: {
     subject: 'Your {{platformName}} password was changed',

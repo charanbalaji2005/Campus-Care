@@ -22,11 +22,28 @@ const userSchema = new Schema(
     permissions: { type: [String], default: [] },
     accountStatus: { type: String, enum: ACCOUNT_STATUSES, default: 'pending_verification' },
     suspendedReason: { type: String, default: null },
+    suspendedAt: { type: Date, default: null },
+    suspendedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    suspendedUntil: { type: Date, default: null },
+    deactivatedAt: { type: Date, default: null },
+    deactivatedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    archivedAt: { type: Date, default: null },
+    archivedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     studentId: { type: String, trim: true, default: null },
     department: { type: String, trim: true, default: null },
     academicYear: { type: Number, default: null },
     phone: { type: String, trim: true, default: null },
     hostel: { type: String, trim: true, default: null },
+    campusZone: { type: String, trim: true, default: null },
+    counsellorApproved: { type: Boolean, default: false },
+    counsellorApprovedAt: { type: Date, default: null },
+    counsellorApprovedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    counsellingPublishAllowed: { type: Boolean, default: false },
+    communityMuted: { type: Boolean, default: false },
+    communityMutedReason: { type: String, default: null },
+    communityMutedUntil: { type: Date, default: null },
+    responderEligible: { type: Boolean, default: false },
+    dutyZone: { type: String, trim: true, default: null },
     committeeMemberships: { type: [membershipSchema], default: [] },
     mfaEnabled: { type: Boolean, default: false },
     mfaSecretEnc: { type: String, default: null, select: false },
@@ -57,6 +74,8 @@ const userSchema = new Schema(
 userSchema.index({ email: 1 }, { unique: true });
 userSchema.index({ studentId: 1 }, { unique: true, partialFilterExpression: { studentId: { $type: 'string' } } });
 userSchema.index({ role: 1, accountStatus: 1 });
+userSchema.index({ accountStatus: 1, createdAt: -1 });
+userSchema.index({ department: 1 });
 userSchema.index({ 'committeeMemberships.committeeId': 1 });
 
 /** Never serialise secrets, even if a query accidentally selected them. */
@@ -74,7 +93,7 @@ export type UserAttrs = InferSchemaType<typeof userSchema>;
 export type UserDoc = HydratedDocument<UserAttrs>;
 export const User = model('User', userSchema);
 
-export function publicUser(u: UserDoc | (UserAttrs & { _id: Types.ObjectId })) {
+export function publicUser(u: UserDoc | (UserAttrs & { _id: Types.ObjectId; createdAt?: Date; updatedAt?: Date })) {
   return {
     id: String(u._id),
     fullName: u.fullName,
@@ -83,14 +102,31 @@ export function publicUser(u: UserDoc | (UserAttrs & { _id: Types.ObjectId })) {
     role: u.role,
     permissions: u.permissions ?? [],
     accountStatus: u.accountStatus,
+    suspendedReason: u.suspendedReason ?? null,
+    suspendedAt: u.suspendedAt ?? null,
+    suspendedBy: u.suspendedBy ? String(u.suspendedBy) : null,
+    suspendedUntil: u.suspendedUntil ?? null,
+    deactivatedAt: u.deactivatedAt ?? null,
+    archivedAt: u.archivedAt ?? null,
     studentId: u.studentId ?? null,
     department: u.department ?? null,
     academicYear: u.academicYear ?? null,
     phone: u.phone ?? null,
     hostel: u.hostel ?? null,
+    campusZone: u.campusZone ?? null,
+    counsellorApproved: Boolean(u.counsellorApproved),
+    counsellorApprovedAt: u.counsellorApprovedAt ?? null,
+    counsellingPublishAllowed: Boolean(u.counsellingPublishAllowed),
+    communityMuted: Boolean(u.communityMuted),
+    communityMutedReason: u.communityMutedReason ?? null,
+    communityMutedUntil: u.communityMutedUntil ?? null,
+    responderEligible: Boolean(u.responderEligible),
+    dutyZone: u.dutyZone ?? null,
     mfaEnabled: u.mfaEnabled,
     committeeMemberships: (u.committeeMemberships ?? []).map((m) => ({ committeeId: String(m.committeeId), position: m.position })),
     privacy: u.privacy,
+    createdAt: (u as { createdAt?: Date }).createdAt ?? null,
+    lastLoginAt: u.lastLoginAt ?? null,
   };
 }
 
@@ -146,11 +182,14 @@ const tokenFields = {
 
 const emailVerificationTokenSchema = new Schema({ ...tokenFields, email: { type: String, required: true } }, { timestamps: true });
 emailVerificationTokenSchema.index({ tokenHash: 1 }, { unique: true });
+emailVerificationTokenSchema.index({ userId: 1, createdAt: -1 });
 emailVerificationTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 7 * 24 * 3600 });
 export const EmailVerificationToken = model('EmailVerificationToken', emailVerificationTokenSchema);
 
-const passwordResetTokenSchema = new Schema({ ...tokenFields }, { timestamps: true });
+/** `email`: the address the link was sent to. If the account email changes, the link stops working. */
+const passwordResetTokenSchema = new Schema({ ...tokenFields, email: { type: String, default: null } }, { timestamps: true });
 passwordResetTokenSchema.index({ tokenHash: 1 }, { unique: true });
+passwordResetTokenSchema.index({ userId: 1, createdAt: -1 });
 passwordResetTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 24 * 3600 });
 export const PasswordResetToken = model('PasswordResetToken', passwordResetTokenSchema);
 

@@ -36,11 +36,10 @@ class MainActivity : ComponentActivity() {
         linkFrom(intent)?.let { pendingLink = it }
     }
 
-    /** Accepts App Links (https://<website>/verify-email?token=…) and internal campuscare://open?link=… */
     private fun linkFrom(intent: Intent?): String? {
         val data: Uri = intent?.data ?: return null
         return when (data.scheme) {
-            "campuscare" -> data.getQueryParameter("link")
+            "campuscare" -> data.getQueryParameter("link") ?: data.toString()
             "https", "http" -> data.path?.let { path -> path + (data.query?.let { "?$it" } ?: "") }
             else -> null
         }

@@ -11,6 +11,8 @@ import { attachmentView, storeUpload, streamFile } from '../services/files.servi
 import { audit } from '../services/audit.service';
 import { getSettings } from '../services/settings.service';
 import { User } from '../models/user';
+import { Availability } from '../models/counselling';
+import { counsellorPresence } from '../services/counsellor-availability';
 
 export const chatRouter = Router();
 chatRouter.use(requireAuth);
@@ -68,11 +70,32 @@ chatRouter.get(
     const { channel, access } = await loadChannelFor(req.user!, req.params.id);
     const settings = await getSettings();
     const scope = mediaScopeFor(channel.kind);
+    let counsellor: Record<string, unknown> | null = null;
+    if (channel.kind === 'counselling_thread') {
+      // Working-hours indicator for the student (an indicator, not a response-time promise).
+      const staff = await ChatMembership.findOne({ channelId: channel._id, role: 'staff' }, { userId: 1 }).lean();
+      const [u, a] = staff ? await Promise.all([User.findById(staff.userId, { fullName: 1, accountStatus: 1 }).lean(), Availability.findOne({ counsellorId: staff.userId }).lean()]) : [null, null];
+      const presence = counsellorPresence(a as never);
+      counsellor = u ? { id: String(u._id), name: u.fullName, availability: u.accountStatus === 'active' ? presence.status : 'away', availabilityMessage: presence.message, nextAvailableAt: presence.nextAvailableAt } : null;
+    }
     ok(res, {
       id: String(channel._id), kind: channel.kind, name: channel.name, description: channel.description, readOnly: channel.readOnly && access !== 'moderator',
       closed: channel.closed, access, mediaScope: scope, media: settings.chat.media[scope],
       limits: { maxImageMb: settings.chat.maxImageMb, maxVideoMb: settings.chat.maxVideoMb },
+      counsellor,
     });
+  }),
+);
+
+/** When the other participant of a private thread last read it ("Seen"). Not available for community channels. */
+chatRouter.get(
+  '/channels/:id/read-state',
+  asyncHandler(async (req, res) => {
+    const { channel } = await loadChannelFor(req.user!, req.params.id);
+    if (channel.kind === 'community') return ok(res, { otherSideLastReadAt: null });
+    const others = await ChatMembership.find({ channelId: channel._id, userId: { $ne: req.user!._id } }, { lastReadAt: 1 }).lean();
+    const latest = others.reduce<Date | null>((max, m) => (m.lastReadAt && m.lastReadAt.getTime() > 0 && (!max || m.lastReadAt > max) ? m.lastReadAt : max), null);
+    ok(res, { otherSideLastReadAt: latest });
   }),
 );
 

@@ -18,6 +18,7 @@ class Api(val client: ApiClient) {
     val community = CommunityApi(client)
     val admin = AdminApi(client)
     val mobile = MobileApi(client)
+    val duty = DutyApi(client)
 }
 
 class MobileApi(private val c: ApiClient) {
@@ -185,20 +186,34 @@ class CounsellingApi(private val c: ApiClient) {
 }
 
 class SafetyApi(private val c: ApiClient) {
-    suspend fun raiseSos(key: String, lat: Double?, lng: Double?, accuracy: Double?, unavailableReason: String?, notifyTrusted: Boolean): SosAlert = c.post(
+    /**
+     * Raises an SOS. With [countdownMode] "server" the alert is stored as "pending" and nobody is
+     * notified until its dispatchAt (cancel/dispatch-now act on it); without it the alert is dispatched at once.
+     * The same [key] must be reused for retries so a dropped connection never creates a second alert.
+     */
+    suspend fun raiseSos(
+        key: String, lat: Double?, lng: Double?, accuracy: Double?, unavailableReason: String?, notifyTrusted: Boolean,
+        countdownMode: String? = null, locationAgeSeconds: Double? = null,
+    ): SosAlert = c.post(
         "/safety/sos",
         mapOf(
             "idempotencyKey" to key, "latitude" to lat, "longitude" to lng, "accuracyMeters" to accuracy,
-            "locationUnavailableReason" to unavailableReason, "notifyTrustedContacts" to notifyTrusted,
+            "locationAgeSeconds" to locationAgeSeconds?.takeIf { lat != null && lng != null },
+            "locationUnavailableReason" to unavailableReason, "notifyTrustedContacts" to notifyTrusted, "countdownMode" to countdownMode,
         ).filterValues { it != null },
     )
     suspend fun mySos(): List<SosAlert> = c.get("/safety/sos/mine")
     suspend fun sos(id: String): SosAlert = c.get("/safety/sos/$id")
-    suspend fun cancelSos(id: String, reason: String?): SosAlert = c.post("/safety/sos/$id/cancel", mapOf("reason" to reason))
+    suspend fun cancelSos(id: String, reason: String?): SosAlert = c.post("/safety/sos/$id/cancel", mapOf("reason" to reason).filterValues { it != null })
+    /** Skips the rest of a server-side countdown ("Send now"). */
+    suspend fun dispatchNow(id: String): SosAlert = c.post("/safety/sos/$id/dispatch-now")
 
     suspend fun responderAlerts(all: Boolean = false): List<SosAlert> = c.get("/safety/responder/alerts" + if (all) "?all=true" else "")
     suspend fun responderAlert(id: String): SosAlert = c.get("/safety/responder/alerts/$id")
-    suspend fun acknowledge(id: String): SosAlert = c.post("/safety/responder/alerts/$id/acknowledge")
+    /** Acknowledges an alert (own offer or an open alert). 409 already_handled when someone else got there first. */
+    suspend fun acknowledge(id: String): SosAlert = c.post("/emergency-alerts/$id/acknowledge")
+    /** Declines this responder's dispatch offer so it moves on at once. 409 no_offer when there is nothing to decline. */
+    suspend fun declineAssignment(id: String, reason: String): Ignored = c.post("/emergency-alerts/$id/decline", mapOf("reason" to reason))
     suspend fun enRoute(id: String): SosAlert = c.post("/safety/responder/alerts/$id/en-route")
     suspend fun addSosNote(id: String, note: String): SosAlert = c.post("/safety/responder/alerts/$id/notes", mapOf("note" to note))
     suspend fun assignSos(id: String, userId: String): SosAlert = c.post("/safety/responder/alerts/$id/assign", mapOf("userId" to userId))
@@ -219,14 +234,50 @@ class SafetyApi(private val c: ApiClient) {
         c.post("/safety/safe-walk/$id/$action", mapOf("minutes" to minutes).filterValues { it != null })
 
     suspend fun currentShare(): LocationShareInfo? = c.get("/safety/location-share")
-    suspend fun startShare(minutes: Int, audience: String, lat: Double, lng: Double, accuracy: Double?): LocationShareInfo =
-        c.post("/safety/location-share", mapOf("durationMinutes" to minutes, "audience" to audience, "latitude" to lat, "longitude" to lng, "accuracyMeters" to accuracy).filterValues { it != null })
-    suspend fun updateShare(id: String, lat: Double, lng: Double, accuracy: Double?): Ignored =
-        c.patch("/safety/location-share/$id", mapOf("latitude" to lat, "longitude" to lng, "accuracyMeters" to accuracy).filterValues { it != null })
+    suspend fun startShare(minutes: Int, audience: String, lat: Double, lng: Double, accuracy: Double?, locationAgeSeconds: Double? = null): LocationShareInfo = c.post(
+        "/safety/location-share",
+        mapOf("durationMinutes" to minutes, "audience" to audience, "latitude" to lat, "longitude" to lng, "accuracyMeters" to accuracy, "locationAgeSeconds" to locationAgeSeconds).filterValues { it != null },
+    )
+    /** [locationAgeSeconds] is the age of the fix on the device; the server derives the fix time from its own clock. */
+    suspend fun updateShare(id: String, lat: Double, lng: Double, accuracy: Double?, locationAgeSeconds: Double? = null): Ignored = c.patch(
+        "/safety/location-share/$id",
+        mapOf("latitude" to lat, "longitude" to lng, "accuracyMeters" to accuracy, "locationAgeSeconds" to locationAgeSeconds).filterValues { it != null },
+    )
     suspend fun stopShare(id: String): Ignored = c.post("/safety/location-share/$id/stop")
 
     suspend fun campusAlerts(): List<CampusAlertSummary> = c.get("/safety/campus-alerts")
     suspend fun checkIn(alertId: String, status: String, note: String?): Ignored = c.post("/safety/campus-alerts/$alertId/check-in", mapOf("status" to status, "note" to note))
+}
+
+/** Responder self-service: server-driven duty status, heartbeats, shifts and location consent. */
+class DutyApi(private val c: ApiClient) {
+    suspend fun mine(): DutyOverview = c.get("/responders/me/duty")
+
+    /** on_duty | on_break | busy | unavailable | off_duty. Errors: 409 invalid_transition / open_assignments, 422 shift_required. */
+    suspend fun setStatus(status: String, reason: String? = null, shiftId: String? = null): DutyAvailability =
+        c.patch("/responders/me/duty-status", mapOf("status" to status, "reason" to reason, "shiftId" to shiftId).filterValues { it != null })
+
+    /** Coordinates are sent only as a pair. [locationAgeSeconds] is the fix's age, never a device timestamp. 409 not_on_duty when duty has ended. */
+    suspend fun heartbeat(lat: Double?, lng: Double?, accuracy: Double?, locationAgeSeconds: Double?, batteryPercent: Int?, appVersion: String?): HeartbeatResult {
+        val withLocation = lat != null && lng != null
+        return c.post(
+            "/responders/me/heartbeat",
+            mapOf(
+                "latitude" to lat.takeIf { withLocation }, "longitude" to lng.takeIf { withLocation },
+                "accuracyMeters" to accuracy.takeIf { withLocation }, "locationAgeSeconds" to locationAgeSeconds.takeIf { withLocation },
+                "batteryPercent" to batteryPercent, "appVersion" to appVersion,
+            ).filterValues { it != null },
+        )
+    }
+
+    /** Explicit opt-in; withdrawing deletes the stored position on the server. */
+    suspend fun setLocationConsent(share: Boolean): Ignored = c.patch("/responders/me/location-consent", mapOf("shareLocation" to share))
+    suspend fun decideShift(id: String, decision: String, reason: String? = null): StatusResponse =
+        c.post("/responders/me/shifts/$id/decision", mapOf("decision" to decision, "reason" to reason).filterValues { it != null })
+    /** Puts the responder on duty. Errors: 422 too_early / shift_ended, 409 invalid_state. */
+    suspend fun startShift(id: String): StatusResponse = c.post("/responders/me/shifts/$id/start")
+    suspend fun endShift(id: String, reason: String? = null): StatusResponse =
+        c.post("/responders/me/shifts/$id/end", mapOf("reason" to reason).filterValues { it != null })
 }
 
 class CommunityApi(private val c: ApiClient) {

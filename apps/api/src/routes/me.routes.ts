@@ -5,7 +5,7 @@ import { anonymousReporterTag, decryptSecret, encryptSecret } from '../lib/crypt
 import { ExternalIdentity, Session, User, publicUser } from '../models/user';
 import { Incident } from '../models/incident';
 import { Appointment } from '../models/counselling';
-import { EmergencyAlert, LocationShare, SafeWalkSession, TrustedContact } from '../models/safety';
+import { EmergencyAlert, LocationAccessAudit, LocationShare, SafeWalkSession, TrustedContact } from '../models/safety';
 import { AuditLog } from '../models/platform';
 import { DataRequest, HazardReport, LostFoundItem } from '../models/community';
 import { Notification, TrainingProgress } from '../models/content';
@@ -112,6 +112,10 @@ meRouter.get(
         reference: caseNumber.get(String(h.targetId)) ?? alertNumber.get(String(h.targetId)) ?? null,
         byRole: h.actorRole ?? 'staff',
       })),
+      // Every time your live location or SOS position was shown to staff (map markers and opened details).
+      locationAccess: await LocationAccessAudit.find({ subjectUserId: uid }).sort({ createdAt: -1 }).limit(50).lean().then((l) => l.map((x) => ({
+        at: x.createdAt, byRole: x.viewerRole, kind: x.subjectType, access: x.access === 'detail' ? 'Opened your details' : 'Saw your position on the live map',
+      }))),
       dataRequests: await DataRequest.find({ userId: uid }).sort({ createdAt: -1 }).limit(10).lean().then((l) => l.map((d) => ({ id: String(d._id), type: d.type, status: d.status, createdAt: d.createdAt, note: d.note }))),
     });
   }),
