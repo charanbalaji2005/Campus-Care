@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
-const API_ORIGIN = process.env.API_ORIGIN || 'http://localhost:4000';
-const REALTIME_URL = process.env.NEXT_PUBLIC_REALTIME_URL || API_ORIGIN;
+const API_ORIGIN = (process.env.API_ORIGIN || 'http://localhost:4000').replace(/\/+$/, '');
+const REALTIME_URL = (process.env.NEXT_PUBLIC_REALTIME_URL || API_ORIGIN).replace(/\/+$/, '');
 
 const csp = [
   "default-src 'self'",
