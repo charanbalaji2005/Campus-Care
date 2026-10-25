@@ -7,6 +7,18 @@ const bool = z
   .optional()
   .transform((v) => v === 'true' || v === '1');
 
+const urlField = (def: string) =>
+  z
+    .string()
+    .optional()
+    .transform((raw) => {
+      let v = (raw ?? '').trim();
+      if (!v) return def;
+      if (!/^https?:\/\//i.test(v)) v = `https://${v}`;
+      return v.replace(/\/+$/, '');
+    })
+    .pipe(z.string().url());
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(4000),
@@ -15,11 +27,11 @@ const schema = z.object({
   MONGODB_URI: z.string().min(1).default('mongodb://127.0.0.1:27017/campuscare'),
 
   /** Public origin of the web app, e.g. https://campuscare.example.edu (used for CORS, CSRF origin checks and email links). */
-  WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
+  WEB_ORIGIN: urlField('http://localhost:3000'),
   /** Extra allowed origins, comma separated. */
   EXTRA_ORIGINS: z.string().optional().default(''),
   /** Public base URL of this API (used for the Google OAuth redirect URI). */
-  API_PUBLIC_URL: z.string().url().default('http://localhost:4000'),
+  API_PUBLIC_URL: urlField('http://localhost:4000'),
   TRUST_PROXY: z.coerce.number().default(1),
 
   /** 32+ byte secrets. Generate with: openssl rand -base64 48 */
