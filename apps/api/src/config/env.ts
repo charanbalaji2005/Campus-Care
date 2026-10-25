@@ -24,7 +24,11 @@ const schema = z.object({
   PORT: z.coerce.number().default(4000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
-  MONGODB_URI: z.string().min(1).default('mongodb://127.0.0.1:27017/campuscare'),
+  MONGODB_URI: z
+    .string()
+    .trim()
+    .transform((v) => v.trim().replace(/^['"]|['"]$/g, ''))
+    .default('mongodb://127.0.0.1:27017/campuscare'),
 
   /** Public origin of the web app, e.g. https://campuscare.example.edu (used for CORS, CSRF origin checks and email links). */
   WEB_ORIGIN: urlField('http://localhost:3000'),
