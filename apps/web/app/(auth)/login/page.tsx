@@ -12,6 +12,7 @@ import { api, ApiError } from '@/lib/api';
 import { useForm } from '@/lib/form';
 import { usePublicSettings } from '@/lib/hooks';
 import { AppHandoff } from '@/components/app-handoff';
+import { safeNextPath, useCooldown } from '@/lib/auth-links';
 
 const OAUTH_ERRORS: Record<string, string> = {
   google_unavailable: 'Google sign-in is not configured.',
@@ -51,6 +52,8 @@ export default function LoginPage() {
     params.get('error') ? { tone: params.get('error') === 'use_app' ? 'amber' : 'rose', text: OAUTH_ERRORS[params.get('error')!] ?? 'Sign-in failed.', app: params.get('error') === 'use_app' } : params.get('reset') ? { tone: 'brand', text: 'Password updated. Sign in with your new password.' } : null,
   );
   const form = useForm(loginSchema, { email: '', password: '', rememberMe: true });
+  const resendCooldown = useCooldown();
+  const [resending, setResending] = React.useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -58,8 +61,7 @@ export default function LoginPage() {
       try {
         const r = await api.post<{ mfaRequired?: boolean; redirectTo?: string }>('/auth/login', { ...data, mfaCode: data.mfaCode || undefined });
         if (r.mfaRequired) { setMfaStep(true); return; }
-        const next = params.get('next');
-        router.replace(next && next.startsWith('/') && !next.startsWith('//') ? next : r.redirectTo ?? '/');
+        router.replace(safeNextPath(params.get('next'), safeNextPath(r.redirectTo, '/')));
       } catch (err) {
         turnstile.current?.reset();
         if (err instanceof ApiError && err.code === 'email_not_verified') {
@@ -77,11 +79,18 @@ export default function LoginPage() {
   }
 
   async function resend() {
+    if (resending || resendCooldown.remaining > 0) return; // no duplicate taps
+    setResending(true);
     try {
-      await api.post('/auth/resend-verification', { email: form.values.email, turnstileToken: form.values.turnstileToken });
-      setNotice({ tone: 'brand', text: 'If your account needs verification, a new link is on its way.' });
+      const r = await api.post<{ message: string; retryAfterSeconds?: number }>('/auth/resend-verification', { email: form.values.email, turnstileToken: form.values.turnstileToken });
+      setNotice({ tone: 'brand', text: r.message, resend: true });
+      resendCooldown.start(r.retryAfterSeconds ?? 60);
     } catch (err) {
-      setNotice({ tone: 'rose', text: err instanceof ApiError ? err.message : 'Could not send.' });
+      // e.g. email_unavailable: never shown as "sent".
+      setNotice({ tone: 'rose', text: err instanceof ApiError ? err.message : 'Could not request a new link.', resend: true });
+    } finally {
+      setResending(false);
+      turnstile.current?.reset();
     }
   }
 
@@ -94,7 +103,11 @@ export default function LoginPage() {
       {notice && (
         <Alert tone={notice.tone} className="mb-5">
           {notice.text}
-          {notice.resend && <button type="button" onClick={resend} className="ml-1 font-semibold underline">Resend verification email</button>}
+          {notice.resend && (
+            <button type="button" onClick={resend} disabled={resending || resendCooldown.remaining > 0} aria-busy={resending} className="ml-1 font-semibold underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60">
+              {resending ? 'Sending…' : resendCooldown.remaining > 0 ? `Resend available in ${resendCooldown.remaining}s` : 'Resend verification email'}
+            </button>
+          )}
         </Alert>
       )}
       {notice?.app && <div className="mb-5"><AppHandoff path="/login" showAdminLink={false} /></div>}

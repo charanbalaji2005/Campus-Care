@@ -6,6 +6,7 @@ import { ShieldCheck } from 'lucide-react';
 import { AuthShell } from '@/components/layout/auth-shell';
 import { Button, Field, Input } from '@/components/ui/primitives';
 import { api, ApiError } from '@/lib/api';
+import { safeNextPath } from '@/lib/auth-links';
 
 export default function MfaPage() {
   const router = useRouter();
@@ -19,7 +20,7 @@ export default function MfaPage() {
     setBusy(true);
     try {
       await api.post('/auth/mfa/verify', { code });
-      router.replace(next.startsWith('/') && !next.startsWith('//') ? next : '/');
+      router.replace(safeNextPath(next, '/'));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Verification failed.');
     } finally {
