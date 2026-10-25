@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="forest">#064E3B</color>
+    <color name="emerald">#059669</color>
+    <color name="mint">#D1FAE5</color>
+    <color name="cream">#F7F4EC</color>
+    <color name="white">#FFFFFF</color>
+    <color name="sos_red">#DC2626</color>
+</resources>

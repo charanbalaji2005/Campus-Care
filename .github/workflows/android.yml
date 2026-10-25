@@ -1,0 +1,102 @@
+# Builds the CampusCare Android app.
+#  - Every push / PR: debug APK (pointing at the API URL in the CAMPUSCARE_API_URL variable).
+#  - Manual run or tag v*: signed release APK + AAB when the signing secrets are configured.
+#
+# Repository settings → Secrets and variables → Actions:
+#   Variables: CAMPUSCARE_API_URL (https://api.example.edu), CAMPUSCARE_WEB_URL (https://campuscare.example.edu),
+#              CAMPUSCARE_GOOGLE_WEB_CLIENT_ID (optional)
+#   Secrets:   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD,
+#              GOOGLE_SERVICES_JSON (optional, enables push notifications)
+name: Android
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/android/**', '.github/workflows/android.yml']
+    tags: ['v*']
+  pull_request:
+    paths: ['apps/android/**']
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Build a signed release
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/android
+    env:
+      API_URL: ${{ vars.CAMPUSCARE_API_URL || 'http://10.0.2.2:4000' }}
+      WEB_URL: ${{ vars.CAMPUSCARE_WEB_URL || 'http://10.0.2.2:3000' }}
+      GOOGLE_WEB_CLIENT_ID: ${{ vars.CAMPUSCARE_GOOGLE_WEB_CLIENT_ID || '' }}
+      IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.release == true }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Optional Firebase config (push notifications)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then echo "$GOOGLE_SERVICES_JSON" > app/google-services.json; echo "Push enabled"; else echo "No google-services.json: push disabled (in-app + realtime still work)"; fi
+
+      - name: Release signing
+        if: env.IS_RELEASE == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then echo "::error::Signing secrets are not configured"; exit 1; fi
+          echo "$KEYSTORE_B64" | base64 -d > release.jks
+          {
+            echo "storeFile=release.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest -Pcampuscare.apiUrl="$API_URL" -Pcampuscare.webUrl="$WEB_URL"
+
+      - name: Build debug APK
+        if: env.IS_RELEASE != 'true'
+        run: ./gradlew --no-daemon assembleDebug -Pcampuscare.apiUrl="$API_URL" -Pcampuscare.webUrl="$WEB_URL" -Pcampuscare.googleWebClientId="$GOOGLE_WEB_CLIENT_ID"
+
+      - name: Build release APK and AAB
+        if: env.IS_RELEASE == 'true'
+        run: |
+          ./gradlew --no-daemon assembleRelease bundleRelease \
+            -Pcampuscare.apiUrl="$API_URL" -Pcampuscare.webUrl="$WEB_URL" -Pcampuscare.googleWebClientId="$GOOGLE_WEB_CLIENT_ID" \
+            -Pcampuscare.versionCode=${{ github.run_number }} -Pcampuscare.versionName="${GITHUB_REF_NAME#v}"
+
+      - name: Print signing certificate SHA-256 (for App Links / ANDROID_CERT_SHA256)
+        if: env.IS_RELEASE == 'true'
+        run: keytool -list -v -keystore release.jks -storepass "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | grep -E "SHA256" || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: campuscare-android-${{ env.IS_RELEASE == 'true' && 'release' || 'debug' }}
+          path: |
+            apps/android/app/build/outputs/apk/**/*.apk
+            apps/android/app/build/outputs/bundle/**/*.aab
+          if-no-files-found: error
+
+      - name: Clean up signing material
+        if: always()
+        run: rm -f release.jks keystore.properties app/google-services.json

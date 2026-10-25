@@ -1,0 +1,53 @@
+# Render blueprint for the CampusCare API. Secrets use `sync: false` — enter them in the dashboard; never commit them.
+services:
+  - type: web
+    name: campuscare-api
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build -w @campuscare/shared && npm run build -w @campuscare/api
+    preDeployCommand: npm run sync-indexes -w @campuscare/api
+    startCommand: npm start -w @campuscare/api
+    healthCheckPath: /api/v1/health
+    disk:
+      name: campuscare-files
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: TRUST_PROXY
+        value: "1"
+      - key: RUN_WORKER
+        value: "true"
+      - key: STORAGE_DIR
+        value: /var/data/private
+      - key: EMAIL_PROVIDER
+        value: nodemailer
+      - key: MAIL_SERVICE
+        value: gmail
+      - key: MONGODB_URI
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: API_PUBLIC_URL
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: APP_ENCRYPTION_KEY
+        sync: false
+      - key: ANONYMITY_KEY
+        sync: false
+      - key: TURNSTILE_SITE_KEY
+        sync: false
+      - key: TURNSTILE_SECRET
+        sync: false
+      - key: TURNSTILE_EXPECTED_HOSTNAMES
+        sync: false
+      - key: MAIL_USER
+        sync: false
+      - key: MAIL_APP_PASSWORD
+        sync: false

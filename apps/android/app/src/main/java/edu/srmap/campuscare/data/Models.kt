@@ -1,0 +1,765 @@
+package edu.srmap.campuscare.data
+
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+
+// All models mirror the CampusCare API responses. Unknown fields are ignored and missing ones fall back
+// to defaults, so an older app keeps working when the server adds data.
+
+// ------------------------------------------------------------------ auth & account
+@Serializable
+data class Membership(val committeeId: String = "", val position: String = "member")
+
+@Serializable
+data class Privacy(val showNameInCommunity: Boolean = true, val allowEmailNotifications: Boolean = true)
+
+@Serializable
+data class User(
+    val id: String,
+    val fullName: String,
+    val email: String,
+    val emailVerified: Boolean = false,
+    val role: String = "student",
+    val permissions: List<String> = emptyList(),
+    val accountStatus: String = "active",
+    val studentId: String? = null,
+    val department: String? = null,
+    val academicYear: Int? = null,
+    val phone: String? = null,
+    val hostel: String? = null,
+    val mfaEnabled: Boolean = false,
+    val committeeMemberships: List<Membership> = emptyList(),
+    val privacy: Privacy? = null,
+) {
+    val firstName: String get() = fullName.substringBefore(' ')
+    val isStudent: Boolean get() = role == "student"
+}
+
+@Serializable
+data class LoginResponse(
+    val user: User? = null,
+    val sessionToken: String? = null,
+    val mfaRequired: Boolean = false,
+    val needsMfaSetup: Boolean = false,
+    val needsStudentId: Boolean = false,
+    val created: Boolean = false,
+)
+
+@Serializable
+data class SessionInfo(val mfaVerified: Boolean = false, val method: String = "password", val expiresAt: String? = null)
+
+@Serializable
+data class MeResponse(val user: User, val session: SessionInfo = SessionInfo(), val mfaRequired: Boolean = false, val homePath: String = "/")
+
+@Serializable
+data class RegisterResponse(val requiresVerification: Boolean = true, val email: String = "")
+
+@Serializable
+data class MessageResponse(val message: String = "", val ok: Boolean = true)
+
+@Serializable
+data class VerifyResult(val result: String = "")
+
+@Serializable
+data class ValidResponse(val valid: Boolean = false)
+
+@Serializable
+data class MfaSetup(val qrDataUrl: String = "", val secret: String = "")
+
+@Serializable
+data class DeviceSession(val id: String, val current: Boolean = false, val createdAt: String? = null, val lastSeenAt: String? = null, val userAgent: String? = null, val method: String = "password", val client: String = "web", val deviceName: String? = null)
+
+@Serializable
+data class GoogleStatus(val linked: Boolean = false)
+
+// ------------------------------------------------------------------ remote configuration (managed on the Super Admin website)
+@Serializable
+data class TurnstileForms(
+    val register: Boolean = true,
+    val login: Boolean = true,
+    val forgotPassword: Boolean = true,
+    val resetPassword: Boolean = true,
+    val resendVerification: Boolean = true,
+    val incidentSubmit: Boolean = true,
+    val communityPost: Boolean = false,
+)
+
+@Serializable
+data class TurnstileConfig(val enabled: Boolean = false, val siteKey: String? = null, val forms: TurnstileForms = TurnstileForms())
+
+@Serializable
+data class MediaPolicy(val images: Boolean = false, val videos: Boolean = false)
+
+@Serializable
+data class SosPublic(val enabled: Boolean = true, val countdownSeconds: Int = 10, val allowCancelAfterSend: Boolean = true)
+
+@Serializable
+data class MapSettings(val centerLatitude: Double = 16.4636, val centerLongitude: Double = 80.5074, val zoom: Double = 16.0, val heatmapMinCount: Int = 5, val heatmapDays: Int = 90)
+
+@Serializable
+data class CommunitySettings(val lostFoundEnabled: Boolean = true, val suggestionsEnabled: Boolean = true, val hazardReportsEnabled: Boolean = true)
+
+@Serializable
+data class PublicSettings(
+    val platformName: String = "CampusCare",
+    val universityName: String = "SRM University-AP",
+    val registrationOpen: Boolean = true,
+    val turnstile: TurnstileConfig = TurnstileConfig(),
+    val googleSignInEnabled: Boolean = false,
+    val anonymousReportingEnabled: Boolean = true,
+    val anonymousCategories: List<String> = emptyList(),
+    val chatMedia: Map<String, MediaPolicy> = emptyMap(),
+    val maxImageMb: Int = 10,
+    val maxVideoMb: Int = 50,
+    val communityEnabled: Boolean = true,
+    val sos: SosPublic = SosPublic(),
+    val safeWalkEnabled: Boolean = true,
+    val locationSharingEnabled: Boolean = true,
+    val maxLocationShareMinutes: Int = 120,
+    val evidenceMaxMb: Int = 10,
+    val evidenceMaxFiles: Int = 5,
+    val passwordMinLength: Int = 10,
+    val map: MapSettings = MapSettings(),
+    val community: CommunitySettings = CommunitySettings(),
+    val maintenanceMode: Boolean = false,
+    val supportEmail: String = "",
+    val accountEmailDomain: String = "srmap.edu.in",
+)
+
+@Serializable
+data class UpdateInfo(val required: Boolean = false, val available: Boolean = false, val latestVersionName: String = "", val downloadUrl: String? = null, val message: String = "")
+
+@Serializable
+data class Banner(val message: String, val severity: String = "info")
+
+@Serializable
+data class EmergencyContact(val id: String = "", val name: String, val phone: String? = null, val category: String = "emergency", val purpose: String = "")
+
+@Serializable
+data class MobileConfig(
+    val serverTime: String? = null,
+    val settings: PublicSettings = PublicSettings(),
+    val update: UpdateInfo = UpdateInfo(),
+    val banner: Banner? = null,
+    val emergencyContacts: List<EmergencyContact> = emptyList(),
+    val pushAvailable: Boolean = false,
+    val realtimeUrl: String? = null,
+    val realtimePath: String = "/realtime",
+)
+
+// ------------------------------------------------------------------ dashboard & content
+@Serializable
+data class DashboardStats(val total: Int = 0, val active: Int = 0, val resolved: Int = 0)
+
+@Serializable
+data class ReportSummary(val id: String, val caseNumber: String, val title: String, val status: String, val category: String, val updatedAt: String? = null)
+
+@Serializable
+data class NextAppointment(val id: String, val startAt: String, val status: String, val mode: String)
+
+@Serializable
+data class CampusAlertSummary(
+    val id: String,
+    val title: String,
+    val body: String = "",
+    val severity: String = "info",
+    val createdAt: String? = null,
+    val requestCheckIn: Boolean = false,
+    val expiresAt: String? = null,
+    val myCheckIn: String? = null,
+)
+
+@Serializable
+data class Announcement(
+    val id: String,
+    val title: String,
+    val body: String,
+    val pinned: Boolean = false,
+    val kind: String = "notice",
+    val eventAt: String? = null,
+    val venue: String? = null,
+    val safetyContact: String? = null,
+    val published: Boolean = true,
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class TrainingSummary(val total: Int = 0, val completed: Int = 0)
+
+@Serializable
+data class StudentDashboard(
+    val stats: DashboardStats = DashboardStats(),
+    val recentReports: List<ReportSummary> = emptyList(),
+    val nextAppointment: NextAppointment? = null,
+    val campusAlerts: List<CampusAlertSummary> = emptyList(),
+    val announcements: List<Announcement> = emptyList(),
+    val unreadNotifications: Int = 0,
+    val training: TrainingSummary = TrainingSummary(),
+)
+
+@Serializable
+data class AppNotification(
+    val id: String,
+    val kind: String,
+    val title: String,
+    val body: String,
+    val link: String? = null,
+    val priority: String = "normal",
+    val readAt: String? = null,
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class NotificationPage(val items: List<AppNotification> = emptyList(), val unread: Int = 0)
+
+@Serializable
+data class Contact(
+    val id: String,
+    val name: String,
+    val purpose: String = "",
+    val category: String = "other",
+    val verified: Boolean = false,
+    val emergency: Boolean = false,
+    val phone: String? = null,
+    val email: String? = null,
+    val location: String? = null,
+    val hours: String? = null,
+)
+
+@Serializable
+data class Committee(val id: String, val name: String, val type: String = "", val mandate: String = "", val contactEmail: String? = null, val contactPhone: String? = null, val categories: List<String> = emptyList())
+
+@Serializable
+data class TrainingModuleSummary(
+    val id: String,
+    val title: String,
+    val category: String = "",
+    val summary: String = "",
+    val durationMinutes: Int = 10,
+    val questionCount: Int = 0,
+    val completed: Boolean = false,
+    val bestScore: Int? = null,
+    val certificateId: String? = null,
+)
+
+@Serializable
+data class TrainingSection(val heading: String = "", val body: String = "")
+
+@Serializable
+data class QuizQuestion(val question: String, val options: List<String>)
+
+@Serializable
+data class TrainingModule(
+    val id: String,
+    val title: String,
+    val category: String = "",
+    val summary: String = "",
+    val durationMinutes: Int = 10,
+    val passPercent: Int = 70,
+    val sections: List<TrainingSection> = emptyList(),
+    val quiz: List<QuizQuestion> = emptyList(),
+    val completed: Boolean = false,
+    val bestScore: Int? = null,
+)
+
+@Serializable
+data class QuizResultItem(val correct: Boolean)
+
+@Serializable
+data class QuizResult(val score: Int, val passed: Boolean, val correct: Int, val total: Int, val completed: Boolean = false, val certificateId: String? = null, val results: List<QuizResultItem> = emptyList())
+
+@Serializable
+data class Certificate(val certificateId: String, val holder: String, val module: String, val category: String? = null, val completedAt: String? = null, val score: Int = 0)
+
+// ------------------------------------------------------------------ incidents
+@Serializable
+data class Attachment(val id: String, val name: String, val mimeType: String, val sizeBytes: Long = 0, val kind: String? = null, val sha256: String? = null)
+
+@Serializable
+data class CommitteeRef(val id: String, val name: String, val type: String = "")
+
+@Serializable
+data class PersonRef(val id: String = "", val name: String = "")
+
+@Serializable
+data class ReporterInfo(val id: String = "", val name: String = "", val email: String? = null, val studentId: String? = null, val department: String? = null, val phone: String? = null)
+
+@Serializable
+data class Incident(
+    val id: String,
+    val caseNumber: String,
+    val category: String,
+    val status: String,
+    val statusLabel: String = "",
+    val severity: String = "medium",
+    val priority: String = "normal",
+    val urgent: Boolean = false,
+    val anonymous: Boolean = false,
+    val committee: CommitteeRef? = null,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+    val incidentDate: String? = null,
+    val dueAcknowledgeAt: String? = null,
+    val dueResolveAt: String? = null,
+    val acknowledgedAt: String? = null,
+    val resolvedAt: String? = null,
+    val closedAt: String? = null,
+    val accessLevel: String = "reporter",
+    val title: String = "",
+    val description: String? = null,
+    val location: String? = null,
+    val involvedParties: String? = null,
+    val preferredContact: String? = null,
+    val evidence: List<Attachment> = emptyList(),
+    val assignee: PersonRef? = null,
+    val reporter: ReporterInfo? = null,
+    val resolutionSummary: String? = null,
+    val unreadMessages: Int = 0,
+    val redacted: Boolean = false,
+)
+
+@Serializable
+data class TimelineItem(
+    val id: String,
+    val type: String,
+    val fromStatus: String? = null,
+    val toStatus: String? = null,
+    val body: String? = null,
+    val actor: String = "",
+    val createdAt: String? = null,
+    val studentVisible: Boolean = true,
+)
+
+@Serializable
+data class CasePermissions(val canChat: Boolean = false, val canUpdateStatus: Boolean = false, val canAssign: Boolean = false, val canAddNotes: Boolean = false)
+
+@Serializable
+data class IncidentDetail(val incident: Incident, val timeline: List<TimelineItem> = emptyList(), val permissions: CasePermissions = CasePermissions())
+
+@Serializable
+data class IncidentListItem(
+    val id: String,
+    val caseNumber: String,
+    val title: String,
+    val category: String,
+    val status: String,
+    val statusLabel: String = "",
+    val severity: String = "medium",
+    val priority: String = "normal",
+    val urgent: Boolean = false,
+    val anonymous: Boolean = false,
+    val committeeId: String? = null,
+    val assignedTo: String? = null,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+    val dueResolveAt: String? = null,
+    val lastMessageAt: String? = null,
+    val overdue: Boolean = false,
+)
+
+@Serializable
+data class Page<T>(val items: List<T> = emptyList(), val total: Int = 0, val page: Int = 1, val limit: Int = 20)
+
+@Serializable
+data class CreatedCase(val id: String, val caseNumber: String, val status: String)
+
+@Serializable
+data class CategorySuggestion(
+    val category: String,
+    val label: String,
+    val confidence: Double = 0.0,
+    val matched: List<String> = emptyList(),
+    val looksUrgent: Boolean = false,
+    val showCrisisSupport: Boolean = false,
+    val disclaimer: String = "",
+)
+
+@Serializable
+data class ChatMessage(
+    val id: String,
+    val senderLabel: String = "",
+    val senderKind: String? = null,
+    val senderId: String? = null,
+    val mine: Boolean = false,
+    val body: String = "",
+    val hidden: Boolean = false,
+    val deleted: Boolean = false,
+    val attachments: List<Attachment> = emptyList(),
+    val clientMessageId: String? = null,
+    val createdAt: String? = null,
+    val canReport: Boolean = false,
+)
+
+@Serializable
+data class MessagePage(val items: List<ChatMessage> = emptyList(), val hasMore: Boolean = false, val nextCursor: String? = null, val lastReadAt: String? = null, val readOnly: Boolean = false)
+
+@Serializable
+data class PostedMessage(val message: ChatMessage, val duplicate: Boolean = false)
+
+@Serializable
+data class InternalNote(val id: String, val body: String, val author: String = "Staff", val createdAt: String? = null)
+
+@Serializable
+data class StaffMember(val id: String, val name: String, val role: String = "", val email: String? = null)
+
+@Serializable
+data class ReadState(val otherSideLastReadAt: String? = null)
+
+// ------------------------------------------------------------------ chat
+@Serializable
+data class ChannelSummary(val id: String, val name: String, val slug: String? = null, val description: String = "", val readOnly: Boolean = false)
+
+@Serializable
+data class ServiceSummary(val id: String, val name: String, val description: String = "", val serviceRole: String? = null)
+
+@Serializable
+data class ThreadSummary(val id: String, val kind: String, val name: String, val closed: Boolean = false, val lastMessageAt: String? = null, val unread: Int = 0, val studentName: String? = null, val assigned: Boolean = false)
+
+@Serializable
+data class ChatOverview(
+    val community: List<ChannelSummary> = emptyList(),
+    val services: List<ServiceSummary> = emptyList(),
+    val threads: List<ThreadSummary> = emptyList(),
+    val media: Map<String, MediaPolicy> = emptyMap(),
+)
+
+@Serializable
+data class MediaLimits(val maxImageMb: Int = 10, val maxVideoMb: Int = 50)
+
+@Serializable
+data class ChannelDetail(
+    val id: String,
+    val kind: String,
+    val name: String,
+    val description: String = "",
+    val readOnly: Boolean = false,
+    val closed: Boolean = false,
+    val access: String = "member",
+    val mediaScope: String = "support",
+    val media: MediaPolicy = MediaPolicy(),
+    val limits: MediaLimits = MediaLimits(),
+)
+
+@Serializable
+data class IdResponse(val id: String)
+
+@Serializable
+data class ModerationReport(val id: String, val reason: String, val status: String, val createdAt: String? = null, val channel: String? = null, val message: ModeratedMessage? = null)
+
+@Serializable
+data class ModeratedMessage(val id: String, val body: String, val senderLabel: String, val hidden: Boolean = false, val createdAt: String? = null)
+
+// ------------------------------------------------------------------ counselling
+@Serializable
+data class Counsellor(val id: String, val name: String, val title: String = "Counsellor", val bio: String = "", val acceptingRequests: Boolean = false)
+
+@Serializable
+data class SlotList(val slots: List<String> = emptyList(), val slotMinutes: Int = 50, val timezone: String? = null)
+
+@Serializable
+data class AppointmentStudent(val id: String, val name: String, val studentId: String? = null, val department: String? = null)
+
+@Serializable
+data class Appointment(
+    val id: String,
+    val startAt: String,
+    val endAt: String? = null,
+    val mode: String = "in_person",
+    val status: String,
+    val statusReason: String? = null,
+    val reason: String? = null,
+    val meetingLink: String? = null,
+    val threadId: String? = null,
+    val counsellor: PersonRef? = null,
+    val student: AppointmentStudent? = null,
+    val followUpAt: String? = null,
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class CounsellingNote(val id: String, val body: String, val supportPlan: String? = null, val followUpAt: String? = null, val createdAt: String? = null)
+
+@Serializable
+data class WeeklyWindow(val weekday: Int, val start: String, val end: String)
+
+@Serializable
+data class Availability(
+    val weekly: List<WeeklyWindow> = emptyList(),
+    val slotMinutes: Int = 50,
+    val timezone: String = "Asia/Kolkata",
+    val blockedDates: List<String> = emptyList(),
+    val acceptingRequests: Boolean = false,
+    val title: String? = "Counsellor",
+    val bio: String? = "",
+)
+
+@Serializable
+data class CounsellorStudent(val id: String, val name: String, val studentId: String? = null, val department: String? = null, val lastSession: String? = null, val sessions: Int = 0, val followUpAt: String? = null)
+
+@Serializable
+data class MonthCount(val month: String, val count: Int)
+
+@Serializable
+data class CounsellingStats(val byStatus: Map<String, Int> = emptyMap(), val byMonth: List<MonthCount> = emptyList(), val today: Int = 0, val pending: Int = 0)
+
+// ------------------------------------------------------------------ safety
+@Serializable
+data class SosTimelineEntry(val type: String, val at: String? = null, val actorLabel: String? = null, val note: String? = null)
+
+@Serializable
+data class StudentRef(val fullName: String = "", val phone: String? = null, val studentId: String? = null, val hostel: String? = null)
+
+@Serializable
+data class SafetyCard(
+    val bloodGroup: String = "unknown",
+    val allergies: String = "",
+    val medicalConditions: String = "",
+    val medications: String = "",
+    val accessibilityNeeds: String = "",
+    val emergencyNote: String = "",
+    val shareWithResponders: Boolean = false,
+    val updatedAt: String? = null,
+)
+
+@Serializable
+data class DeliveryEvent(val channel: String, val outcome: String, val recipient: String? = null, val at: String? = null)
+
+@Serializable
+data class SosAlert(
+    val id: String,
+    val alertNumber: String,
+    val status: String,
+    val createdAt: String? = null,
+    val sentAt: String? = null,
+    val acknowledgedAt: String? = null,
+    val resolvedAt: String? = null,
+    val cancelledAt: String? = null,
+    val enRouteAt: String? = null,
+    val locationAvailable: Boolean = false,
+    val locationUnavailableReason: String? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val accuracyMeters: Double? = null,
+    val mapLink: String? = null,
+    val note: String? = null,
+    val lastDeliveryError: String? = null,
+    val escalationLevel: Int = 0,
+    val resolutionOutcome: String? = null,
+    val timeline: List<SosTimelineEntry> = emptyList(),
+    val student: StudentRef? = null,
+    val acknowledgedByName: String? = null,
+    val respondersReached: Int = 0,
+    val assignedToMe: Boolean = false,
+    val safetyCard: SafetyCard? = null,
+    val deliveries: List<DeliveryEvent> = emptyList(),
+)
+
+@Serializable
+data class TrustedContact(val id: String, val name: String, val email: String, val phone: String? = null, val relationship: String? = null, val shareLocation: Boolean = false, val status: String = "pending")
+
+@Serializable
+data class SafeWalkCheckIn(val at: String? = null, val note: String? = null)
+
+@Serializable
+data class SafeWalk(
+    val id: String,
+    val destination: String = "",
+    val expectedArrivalAt: String = "",
+    val status: String,
+    val arrivedAt: String? = null,
+    val checkIns: List<SafeWalkCheckIn> = emptyList(),
+    val trustedContactIds: List<String> = emptyList(),
+    val createdAt: String? = null,
+    val verifiedContacts: Int = 0,
+)
+
+@Serializable
+data class LocationShareInfo(val id: String, val audience: String = "security", val startedAt: String? = null, val expiresAt: String = "", val updatedAt: String? = null)
+
+@Serializable
+data class SharedLocation(val id: String, val student: String? = null, val phone: String? = null, val latitude: Double? = null, val longitude: Double? = null, val accuracyMeters: Double? = null, val updatedAt: String? = null, val expiresAt: String? = null)
+
+@Serializable
+data class OverdueWalk(val id: String, val student: String? = null, val phone: String? = null, val destination: String = "", val expectedArrivalAt: String? = null, val status: String = "")
+
+@Serializable
+data class ResponderTeamMember(val id: String, val name: String, val phone: String? = null)
+
+// ------------------------------------------------------------------ map & community
+@Serializable
+data class MapCenter(val latitude: Double, val longitude: Double, val zoom: Double = 16.0)
+
+@Serializable
+data class Place(val id: String, val name: String, val kind: String, val latitude: Double, val longitude: Double, val description: String = "", val phone: String? = null, val hours: String? = null)
+
+@Serializable
+data class MapHazard(val id: String, val category: String, val locationLabel: String, val latitude: Double? = null, val longitude: Double? = null, val status: String, val note: String? = null, val reportedAt: String? = null)
+
+@Serializable
+data class HeatCell(val latitude: Double, val longitude: Double, val count: Int)
+
+@Serializable
+data class Heatmap(val cellDegrees: Double = 0.0015, val minCount: Int = 5, val days: Int = 90, val cells: List<HeatCell> = emptyList())
+
+@Serializable
+data class SafetyMap(
+    val center: MapCenter,
+    val places: List<Place> = emptyList(),
+    val hazards: List<MapHazard> = emptyList(),
+    val alerts: List<CampusAlertSummary> = emptyList(),
+    val heatmap: Heatmap = Heatmap(),
+)
+
+@Serializable
+data class Hazard(
+    val id: String,
+    val category: String,
+    val description: String = "",
+    val locationLabel: String = "",
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val status: String,
+    val publicNote: String? = null,
+    val anonymous: Boolean = false,
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class LostFoundItem(
+    val id: String,
+    val type: String,
+    val title: String,
+    val description: String = "",
+    val category: String = "other",
+    val location: String = "",
+    val occurredAt: String? = null,
+    val status: String = "open",
+    val createdAt: String? = null,
+    val mine: Boolean = false,
+    val photoIds: List<String> = emptyList(),
+    val claims: List<LostFoundClaim> = emptyList(),
+)
+
+@Serializable
+data class ContactCard(val name: String = "", val email: String? = null, val phone: String? = null)
+
+@Serializable
+data class LostFoundClaim(val id: String, val status: String, val message: String? = null, val createdAt: String? = null, val claimant: ContactCard? = null, val poster: ContactCard? = null)
+
+@Serializable
+data class LostFoundPage(val items: List<LostFoundItem> = emptyList(), val total: Int = 0, val disabled: Boolean = false)
+
+@Serializable
+data class Suggestion(val id: String, val category: String, val text: String, val status: String, val response: String? = null, val anonymous: Boolean = false, val createdAt: String? = null)
+
+@Serializable
+data class SuggestionsResponse(val mine: List<Suggestion> = emptyList(), val youSaidWeDid: List<Suggestion> = emptyList())
+
+@Serializable
+data class StatusResponse(val id: String? = null, val status: String = "", val ok: Boolean = true)
+
+// ------------------------------------------------------------------ privacy & preferences
+@Serializable
+data class ChannelPrefs(val inApp: Boolean = true, val email: Boolean = true, val push: Boolean = true)
+
+@Serializable
+data class AccessEntry(val at: String? = null, val description: String, val reference: String? = null, val byRole: String = "staff")
+
+@Serializable
+data class PrivacyShare(val id: String, val audience: String, val startedAt: String? = null, val expiresAt: String? = null)
+
+@Serializable
+data class PrivacyWalk(val id: String, val destination: String, val expectedArrivalAt: String? = null, val status: String)
+
+@Serializable
+data class PrivacyContact(val name: String, val status: String, val canSeeLocation: Boolean = false)
+
+@Serializable
+data class PrivacySession(val id: String, val client: String = "web", val deviceName: String? = null, val lastSeenAt: String? = null)
+
+@Serializable
+data class PrivacyCard(val sharedWithResponders: Boolean = false, val updatedAt: String? = null)
+
+@Serializable
+data class LinkedAccounts(val google: Boolean = false)
+
+@Serializable
+data class DataRequestInfo(val id: String, val type: String, val status: String, val createdAt: String? = null, val note: String? = null)
+
+@Serializable
+data class PrivacyDashboard(
+    val locationSharing: List<PrivacyShare> = emptyList(),
+    val activeSafeWalk: PrivacyWalk? = null,
+    val linkedAccounts: LinkedAccounts = LinkedAccounts(),
+    val sessions: List<PrivacySession> = emptyList(),
+    val trustedContacts: List<PrivacyContact> = emptyList(),
+    val safetyCard: PrivacyCard = PrivacyCard(),
+    val communityNameVisible: Boolean = true,
+    val accessHistory: List<AccessEntry> = emptyList(),
+    val dataRequests: List<DataRequestInfo> = emptyList(),
+)
+
+// ------------------------------------------------------------------ admin
+@Serializable
+data class AdminUsersCount(val students: Int = 0, val staff: Int = 0, val pendingStaff: Int = 0)
+
+@Serializable
+data class AdminIncidentCounts(
+    val today: Int = 0,
+    val thisWeek: Int = 0,
+    val thisMonth: Int = 0,
+    val pending: Int = 0,
+    val assigned: Int = 0,
+    val inProgress: Int = 0,
+    val resolved: Int = 0,
+    val total: Int = 0,
+    val overdue: Int = 0,
+    val unacknowledged: Int = 0,
+)
+
+@Serializable
+data class AdminAlertsCount(val activeSos: Int = 0)
+
+@Serializable
+data class AdminActivity(val id: String, val action: String, val at: String? = null, val targetType: String? = null)
+
+@Serializable
+data class AdminOverview(
+    val users: AdminUsersCount = AdminUsersCount(),
+    val incidents: AdminIncidentCounts = AdminIncidentCounts(),
+    val alerts: AdminAlertsCount = AdminAlertsCount(),
+    val recentActivity: List<AdminActivity> = emptyList(),
+)
+
+@Serializable
+data class CheckInCounts(val safe: Int = 0, val need_help: Int = 0)
+
+@Serializable
+data class AdminCampusAlert(
+    val id: String,
+    val title: String,
+    val body: String,
+    val severity: String,
+    val requestCheckIn: Boolean = false,
+    val createdAt: String? = null,
+    val expiresAt: String? = null,
+    val checkIns: CheckInCounts = CheckInCounts(),
+    val recipients: Int? = null,
+)
+
+@Serializable
+data class AdminUser(
+    val id: String,
+    val fullName: String,
+    val email: String,
+    val role: String,
+    val accountStatus: String,
+    val department: String? = null,
+    val studentId: String? = null,
+    val mfaEnabled: Boolean = false,
+    val lastLoginAt: String? = null,
+    val createdAt: String? = null,
+)
+
+/** Raw JSON for endpoints whose result the app does not need to inspect. */
+typealias Ignored = JsonElement

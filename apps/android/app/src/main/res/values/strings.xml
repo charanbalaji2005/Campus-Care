@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="channel_emergency">Emergency alerts</string>
+    <string name="channel_emergency_desc">SOS alerts, responder updates and urgent campus safety alerts</string>
+    <string name="channel_safety">Safety</string>
+    <string name="channel_safety_desc">Safe Walk, live location and check-in reminders</string>
+    <string name="channel_updates">Case and appointment updates</string>
+    <string name="channel_updates_desc">Updates on your reports, appointments and training</string>
+    <string name="channel_messages">Messages</string>
+    <string name="channel_messages_desc">New messages in support, case and counselling chats</string>
+    <string name="channel_service">Background services</string>
+    <string name="channel_service_desc">Shown while location sharing or on-duty mode is running</string>
+</resources>
