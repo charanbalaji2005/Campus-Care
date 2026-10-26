@@ -10,4 +10,6 @@
     <string name="channel_messages_desc">New messages in support, case and counselling chats</string>
     <string name="channel_service">Background services</string>
     <string name="channel_service_desc">Shown while location sharing or on-duty mode is running</string>
+    <string name="api_base_url">https://campuscare-api-ds85.onrender.com</string>
+    <string name="web_base_url">https://campuscare-web.onrender.com</string>
 </resources>
