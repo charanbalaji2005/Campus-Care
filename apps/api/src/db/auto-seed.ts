@@ -1,3 +1,4 @@
+import { env } from '../config/env';
 import { randomUUID } from 'node:crypto';
 import { CATEGORY_INFO, COMMITTEE_TYPE_LABELS, INCIDENT_CATEGORIES, type CommitteeType } from '@campuscare/shared';
 import { encryptSecret, hashPassword, randomToken } from '../lib/crypto';
@@ -57,16 +58,18 @@ export async function autoSeedDatabase() {
     );
 
     // 1b. Active Nodemailer Email Provider Config
+    const mailUser = env.MAIL_USER || 'neelampallicharanbalaji14@gmail.com';
+    const mailPass = env.MAIL_APP_PASSWORD || 'hwipnbegmfaoxfju';
     await EmailProviderConfig.findOneAndUpdate(
       { active: true },
       {
         $set: {
           type: 'nodemailer',
-          service: 'gmail',
-          fromName: 'CampusCare',
-          fromEmail: 'neelampallicharanbalaji14@gmail.com',
-          authUser: 'neelampallicharanbalaji14@gmail.com',
-          authPassEnc: encryptSecret('kcbayisleewokpbe'),
+          service: env.MAIL_SERVICE || 'gmail',
+          fromName: env.EMAIL_FROM_NAME || 'CampusCare',
+          fromEmail: env.EMAIL_FROM || mailUser,
+          authUser: mailUser,
+          authPassEnc: encryptSecret(mailPass),
           active: true,
         },
       },

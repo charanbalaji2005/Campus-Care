@@ -53,7 +53,7 @@ async function requireEmailReady() {
 }
 /** Holds the restricted MFA challenge for browser sign-ins, so the token never has to sit in page script or a URL. */
 const MFA_COOKIE = 'cc_mfa';
-const MFA_COOKIE_PATH = '/api/v1/auth/mfa';
+const MFA_COOKIE_PATH = '/';
 
 function setMfaCookie(res: Response, token: string, expiresAt: Date) {
   res.cookie(MFA_COOKIE, token, { httpOnly: true, secure: env.COOKIE_SECURE, sameSite: 'strict', path: MFA_COOKIE_PATH, expires: expiresAt });

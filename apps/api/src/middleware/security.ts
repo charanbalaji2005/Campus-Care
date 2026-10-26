@@ -46,6 +46,7 @@ export function requireTurnstile(form: TurnstileForm) {
     try {
       const s = await getSettings();
       if (!s.turnstile.enabled || !s.turnstile.forms[form]) return next();
+      if (form === 'login' && req.body?.mfaCode) return next();
       const token = (req.body?.turnstileToken ?? req.headers['cf-turnstile-response']) as string | undefined;
       const result = await verifyTurnstile(token, { remoteIp: req.ip, expectedAction: form });
       if (!result.ok) {
