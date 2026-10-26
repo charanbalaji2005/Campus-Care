@@ -1,7 +1,7 @@
-# Render blueprint for CampusCare. Secrets use `sync: false` — enter them in the dashboard; never commit them.
+# Render blueprint for CampusCare. Secrets use `sync: false` â€” enter them in the dashboard; never commit them.
 services:
   - type: web
-    name: campuscare-api-ds85
+    name: campuscare-api-gywg
     runtime: node
     plan: starter
     buildCommand: npm ci --include=dev && npm run build -w @campuscare/shared && npm run build -w @campuscare/api
@@ -32,7 +32,7 @@ services:
       - key: WEB_ORIGIN
         value: https://campuscare-web.onrender.com
       - key: API_PUBLIC_URL
-        value: https://campuscare-api-ds85.onrender.com
+        value: https://campuscare-api-gywg.onrender.com
       - key: MONGODB_URI
         sync: false
       - key: SESSION_SECRET
@@ -46,7 +46,7 @@ services:
       - key: TURNSTILE_SECRET
         sync: false
       - key: TURNSTILE_EXPECTED_HOSTNAMES
-        value: campuscare-web.onrender.com,campuscare-api-ds85.onrender.com
+        value: campuscare-web.onrender.com,campuscare-api-gywg.onrender.com
       - key: MAIL_USER
         sync: false
       - key: MAIL_APP_PASSWORD
@@ -64,8 +64,8 @@ services:
       - key: NODE_VERSION
         value: "20"
       - key: API_ORIGIN
-        value: https://campuscare-api-ds85.onrender.com
+        value: https://campuscare-api-gywg.onrender.com
       - key: NEXT_PUBLIC_REALTIME_URL
-        value: https://campuscare-api-ds85.onrender.com
+        value: https://campuscare-api-gywg.onrender.com
       - key: NEXT_PUBLIC_TURNSTILE_SITE_KEY
         sync: false
