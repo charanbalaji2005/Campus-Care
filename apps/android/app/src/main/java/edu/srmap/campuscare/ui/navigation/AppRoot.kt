@@ -65,6 +65,7 @@ import edu.srmap.campuscare.ui.screens.auth.LoginScreen
 import edu.srmap.campuscare.ui.screens.auth.MfaScreen
 import edu.srmap.campuscare.ui.screens.auth.OfflineEmergencyScreen
 import edu.srmap.campuscare.ui.screens.auth.OnboardingScreen
+import edu.srmap.campuscare.ui.screens.auth.GetStartedScreen
 import edu.srmap.campuscare.ui.screens.auth.RegisterScreen
 import edu.srmap.campuscare.ui.screens.auth.ResetPasswordScreen
 import edu.srmap.campuscare.ui.screens.auth.SplashScreen
@@ -301,6 +302,7 @@ private fun NavGraphBuilder.graph() {
 
     composable(Routes.Splash) { SplashScreen() }
     composable(Routes.Onboarding) { OnboardingScreen() }
+    composable(Routes.GetStarted) { GetStartedScreen() }
     composable(Routes.Login) { LoginScreen() }
     composable(Routes.Register) { RegisterScreen() }
     composable(Routes.Forgot) { ForgotPasswordScreen() }

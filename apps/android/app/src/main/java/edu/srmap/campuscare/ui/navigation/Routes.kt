@@ -7,6 +7,7 @@ object Routes {
     // auth & system
     const val Splash = "splash"
     const val Onboarding = "onboarding"
+    const val GetStarted = "get-started"
     const val Login = "login"
     const val Register = "register"
     const val Forgot = "forgot"
