@@ -39,6 +39,11 @@ android {
         buildConfigField("String", "WEB_BASE_URL", "\"$webUrl\"")
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${prop("campuscare.googleWebClientId")}\"")
         buildConfigField("String", "ACCOUNT_EMAIL_DOMAIN", "\"srmap.edu.in\"")
+        // Map tiles: empty = the OpenStreetMap standard tiles (fine for low volume with attribution, per the
+        // OSM tile usage policy). Production should point this at a tile host it is licensed to use,
+        // e.g. -Pcampuscare.mapTileUrl=https://tiles.example.edu/{z}/{x}/{y}.png
+        buildConfigField("String", "MAP_TILE_URL", "\"${prop("campuscare.mapTileUrl")}\"")
+        buildConfigField("String", "MAP_ATTRIBUTION", "\"${prop("campuscare.mapAttribution", "© OpenStreetMap contributors")}\"")
         manifestPlaceholders["webHost"] = webHost
         vectorDrawables { useSupportLibrary = true }
     }

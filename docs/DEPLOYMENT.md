@@ -48,7 +48,7 @@ Set the environment variables from `apps/api/.env.example`. In production you mu
 - `MONGODB_URI`.
 - Android: `ANDROID_PACKAGE_NAME=in.edu.srmap.campuscare` and `ANDROID_CERT_SHA256=<release certificate SHA-256>` (see section 9).
 - Push (optional): `FCM_SERVICE_ACCOUNT_JSON` — the Firebase service-account JSON (one line). Without it the app still receives alerts in-app and over realtime.
-- Email (Nodemailer): `EMAIL_PROVIDER=nodemailer`, `MAIL_SERVICE=gmail`, `MAIL_USER` and `MAIL_APP_PASSWORD`. Or leave these unset and add the mailbox later in **Super Admin → Email**. The `console` provider is rejected in production.
+- Email (Nodemailer): `EMAIL_PROVIDER=nodemailer`, `MAIL_SERVICE=gmail`, `MAIL_USER` and `MAIL_APP_PASSWORD`. Or leave these unset and add the mailbox later in **Super Admin → Email**. The `console` provider is rejected in production. Optional: `PASSWORD_RESET_TTL_MINUTES`, `EMAIL_VERIFICATION_TTL_HOURS`, `AUTH_GENERIC_RESPONSE_MS` (see section 6).
 
 The background worker (email retries, SOS delivery, Safe Walk overdue checks, reminders) runs in the API process when `RUN_WORKER=true`. If you scale to several instances, set `RUN_WORKER=true` on exactly one of them. Jobs are claimed atomically, so a second worker is safe but unnecessary.
 
@@ -104,6 +104,37 @@ In development, Cloudflare's documented test keys are used automatically: site k
   - Gmail caps daily sending (about 500 messages for personal Gmail, about 2,000 for Workspace). For a large campus, use a dedicated Workspace mailbox and watch **Email → Delivery log**.
   - The From address must be the mailbox itself or a verified "Send mail as" alias. SPF, DKIM and DMARC for your domain must cover Google.
 - **Inbound (optional):** point your provider's inbound webhook at `https://<api-domain>/api/v1/webhooks/inbound-email`. Set the same `INBOUND_EMAIL_WEBHOOK_SECRET` there and on Render. Requests must carry the header `x-campuscare-signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">` and be no more than 5 minutes old. Most providers need a small relay (for example, a serverless function) to add this signature.
+
+### Account emails: verification, password reset, resend
+
+These emails carry single-use links. Configure them with the variables below (API, Render).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `EMAIL_PROVIDER` | `console` | `nodemailer` sends through a real mailbox. `console` is for development only: it writes each email to `DEV_MAIL_DIR` and is refused in production. |
+| `MAIL_SERVICE` | `gmail` | Nodemailer well-known service. |
+| `MAIL_USER` / `MAIL_APP_PASSWORD` | – | Mailbox and app password. Both are required when `EMAIL_PROVIDER=nodemailer`. A mailbox saved in **Super Admin → Email** takes priority over these. |
+| `EMAIL_FROM` / `EMAIL_FROM_NAME` | `MAIL_USER` / `CampusCare` | Sender. Gmail accepts only the mailbox itself or a verified alias. |
+| `DEV_MAIL_DIR` | `.dev-mail` | Development only. Emails written here contain live links: keep the folder private and never commit it. |
+| `WEB_ORIGIN` | `http://localhost:3000` | Public origin used to build every link (`/verify-email?token=…`, `/reset-password?token=…`). It must be `https://` in production (the API refuses to start otherwise) and must be the same host the Android app was built with (`campuscare.webUrl`), so App Links open the app. |
+| `PASSWORD_RESET_TTL_MINUTES` | `30` | Reset link lifetime, 15–30 minutes. |
+| `EMAIL_VERIFICATION_TTL_HOURS` | `24` | Verification link lifetime, 1–72 hours. |
+| `AUTH_GENERIC_RESPONSE_MS` | `400` | Minimum response time of forgot-password and resend-verification, so timing does not reveal whether an account exists. |
+
+There is no separate `APP_PUBLIC_URL`: the website at `WEB_ORIGIN` is both the App Link host and the fallback page when the app is not installed.
+
+How the flows behave:
+
+- **Links.** Each link contains only the token: no email address or other personal data. Only a SHA-256 hash of the token is stored. A newer link replaces older ones.
+- **Opening a link never uses it.** Email security scanners often open links. The website and the app first check the link (read-only), then wait for the person to press **Verify my email** or **Update password**, which sends the token with a POST.
+- **App or web.** On Android with the app installed, `https://<WEB_ORIGIN host>/verify-email` and `/reset-password` open the app (App Links, verified by `/.well-known/assetlinks.json`; see section 9). Without the app, or on a computer, the same link opens the website page, which does the same job.
+- **Generic answers.** Forgot-password and resend-verification give the same answer whether or not the address has an account. They say a link "is on its way", not that it was delivered, because delivery is queued and retried.
+- **Rate limits.** Per IP: 6 email requests an hour (shared by forgot-password and resend). Per account: one email a minute and at most 5 an hour. Over the per-account limit the answer stays the same, but no email is sent. The app and website show a countdown before **Send again** is enabled.
+- **When email cannot be sent**, these endpoints return `503 email_unavailable` and the screens show an error, never "sent". This happens when no provider is usable (console in production, or a mail service without credentials) or when the last 3 delivery attempts in the past 10 minutes all failed. The check looks only at the mail service, never at the requested account, so it does not reveal whether an address is registered. It clears by itself after the next successful delivery (queued emails keep retrying) or after 10 minutes. Registration that needs verification is refused in the same way, so no account gets stuck waiting for an email that cannot be sent. Watch **Super Admin → Email → Delivery log** for failures.
+- **After a password reset** every session and pending sign-in is ended, other reset links stop working, and a "password changed" email (without the password) is sent. Nobody is signed in automatically: the person signs in again, and two-step verification still applies. The reset link also counts as proof of the email address, so a pending account becomes verified.
+- `GET /api/v1/auth/verification-status` returns the signed-in account's own verification state.
+
+**Local development.** With `EMAIL_PROVIDER=console`, open the newest file in `apps/api/.dev-mail/` and copy the link into a browser. Debug builds of the app use `http://10.0.2.2:3000` as the web URL, and App Links need HTTPS, so in development open links in the browser, or send one to the emulator: `adb shell am start -a android.intent.action.VIEW -d "campuscare://open?link=/verify-email?token=<token>"`.
 
 ## 7. First Super Admin (no default passwords)
 

@@ -36,6 +36,8 @@ class AuthApi(private val c: ApiClient) {
 
     suspend fun register(body: Map<String, Any?>): RegisterResponse = c.post("/auth/register", body)
     suspend fun verifyEmail(token: String): VerifyResult = c.post("/auth/verify-email", mapOf("token" to token))
+    /** Read-only: never consumes the token (only [verifyEmail] does, after the person taps Verify). */
+    suspend fun checkVerifyEmail(token: String): VerifyCheck = c.post("/auth/verify-email/check", mapOf("token" to token))
     suspend fun resendVerification(email: String, turnstile: String?): MessageResponse = c.post("/auth/resend-verification", mapOf("email" to email, "turnstileToken" to turnstile))
     suspend fun forgotPassword(email: String, turnstile: String?): MessageResponse = c.post("/auth/forgot-password", mapOf("email" to email, "turnstileToken" to turnstile))
     suspend fun checkReset(token: String): ValidResponse = c.post("/auth/reset-password/check", mapOf("token" to token))

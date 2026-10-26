@@ -111,6 +111,19 @@ import edu.srmap.campuscare.util.composeSms
 import edu.srmap.campuscare.util.dial
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import edu.srmap.campuscare.ui.components.AccuracyCircle
+import edu.srmap.campuscare.ui.components.LocationQualityPanel
+import edu.srmap.campuscare.ui.components.LocationRationaleDialog
+import edu.srmap.campuscare.util.LocationPermissions
+import edu.srmap.campuscare.util.LocationQuality
+import edu.srmap.campuscare.util.LocationQualityRules
+import edu.srmap.campuscare.util.LocationTracking
+import edu.srmap.campuscare.util.PermissionLevel
+import edu.srmap.campuscare.util.RawFix
+import edu.srmap.campuscare.util.ageLabel
+import edu.srmap.campuscare.util.ageSeconds
+import edu.srmap.campuscare.util.rememberLiveFix
+import androidx.compose.material3.TextButton
 
 private val ACTIVE_SOS = setOf("queued", "sending", "sent", "acknowledged", "en_route", "failed")
 
@@ -135,18 +148,26 @@ fun SosScreen() {
     var phase by remember { mutableStateOf(SosPhase.Idle) }
     var secondsLeft by remember { mutableIntStateOf(settings.sos.countdownSeconds) }
     var notifyTrusted by remember { mutableStateOf(true) }
-    var fix by remember { mutableStateOf<Fix?>(null) }
-    var locationAllowed by remember { mutableStateOf(LocationHelper.hasPermission(context)) }
+    var permission by remember { mutableStateOf(LocationPermissions.level(context)) }
+    val locationAllowed = permission != PermissionLevel.None
+    var locationOn by remember { mutableStateOf(LocationPermissions.locationEnabled(context)) }
+    var rationale by remember { mutableStateOf(false) }
+    // High-accuracy updates while this screen is open; the newest valid fix always replaces older ones.
+    val live by rememberLiveFix(enabled = locationAllowed)
+    var oneShot by remember { mutableStateOf<RawFix?>(null) }
+    val fix: RawFix? = live?.raw ?: oneShot
     var failure by remember { mutableStateOf<String?>(null) }
     // One idempotency key per SOS attempt, so retries after a network blip never create duplicates.
     var attemptKey by remember { mutableStateOf(newIdempotencyKey()) }
 
-    val requestLocation = rememberLocationRequest { granted ->
-        locationAllowed = granted
-        if (granted) scope.launch { fix = LocationHelper.current(context) }
-    }
+    val requestLocation = rememberLocationRequest { _ -> permission = LocationPermissions.level(context) }
+    // Permission and the location switch can change in Settings while this screen is open.
     LaunchedEffect(Unit) {
-        if (!locationAllowed) requestLocation() else fix = LocationHelper.current(context)
+        while (true) {
+            permission = LocationPermissions.level(context)
+            locationOn = LocationPermissions.locationEnabled(context)
+            delay(3_000)
+        }
     }
 
     // An SOS that is already active is shown instead of starting a new one.
@@ -156,13 +177,25 @@ fun SosScreen() {
     fun send() {
         phase = SosPhase.Sending
         scope.launch {
-            val f = fix ?: LocationHelper.current(context, timeoutMs = 4_000)
+            // Never wait for a perfect fix: use the newest valid one (if not stale), else try briefly, else send without.
+            val f = fix?.takeIf { it.ageSeconds() <= LocationQualityRules.SOS_STALE_SECONDS }
+                ?: LocationHelper.current(context, timeoutMs = 4_000)?.let { c ->
+                    RawFix(c.latitude, c.longitude, c.accuracy, c.elapsedRealtimeNanos?.div(1_000_000) ?: android.os.SystemClock.elapsedRealtime(), provider = "fused")
+                }
             try {
                 val alert = app.api.safety.raiseSos(
-                    attemptKey, f?.latitude, f?.longitude, f?.accuracy,
-                    if (f == null) (if (locationAllowed) "no_fix" else "permission_denied") else null,
+                    attemptKey, f?.latitude, f?.longitude, f?.accuracyMeters,
+                    when {
+                        f != null -> null
+                        !locationAllowed -> "permission_denied"
+                        !locationOn -> "location_off"
+                        else -> "no_fix"
+                    },
                     notifyTrusted,
+                    locationAgeSeconds = f?.ageSeconds(),
                 )
+                // Keep sending live location to responders until the alert is closed.
+                LocationShareService.startSos(context, alert.id)
                 if (a11y.haptics) view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                 nav.navigate(Routes.sosStatus(alert.id)) { popUpTo(Routes.Sos) { inclusive = true } }
             } catch (e: ApiException) {
@@ -256,7 +289,7 @@ fun SosScreen() {
                             CcButton(
                                 "Text for help",
                                 {
-                                    val loc = fix?.let { " My location: https://maps.google.com/?q=${it.latitude},${it.longitude}" } ?: ""
+                                    val loc = fix?.let { " My location (±${it.accuracyMeters?.toInt() ?: "?"} m): https://www.openstreetmap.org/?mlat=${it.latitude}&mlon=${it.longitude}" } ?: ""
                                     context.composeSms(listOfNotNull(security?.phone), "SOS — I need help urgently.$loc")
                                 },
                                 Modifier.weight(1f), kind = ButtonKind.Outline, leadingIcon = Icons.Rounded.Sms,
@@ -267,27 +300,27 @@ fun SosScreen() {
             }
         }
 
-        // Location status
+        // Location status: quality, age and permission state, in words.
         CcCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconBadge(if (fix != null) Icons.Rounded.LocationOn else Icons.Rounded.LocationOff, if (fix != null) Tone.Brand else Tone.Amber, size = 40.dp, iconSize = 20.dp)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(if (fix != null) "Location ready" else "Location not available", style = MaterialTheme.typography.titleSmall, color = CcColors.Ink)
-                    Text(
-                        when {
-                            fix != null -> "Accurate to about ${fix?.accuracy?.toInt() ?: "?"} m. Shared only with responders for this alert."
-                            !locationAllowed -> "Allow location so responders can find you. You can still send an SOS without it."
-                            else -> "Trying to get a fix… your SOS will still be sent."
-                        },
-                        style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft,
-                    )
+            LocationQualityPanel(
+                fix = fix, staleSeconds = LocationQualityRules.SOS_STALE_SECONDS, permission = permission, locationEnabled = locationOn,
+                audienceNote = "Shared only with Campus Security responders for this alert. Your SOS is sent even without a perfect fix.",
+                onRequestPermission = { rationale = true },
+            )
+            if (locationAllowed && fix == null && locationOn) {
+                TextButton(onClick = { scope.launch { oneShot = LocationHelper.current(context)?.let { c -> RawFix(c.latitude, c.longitude, c.accuracy, c.elapsedRealtimeNanos?.div(1_000_000) ?: android.os.SystemClock.elapsedRealtime(), provider = "fused") } } }) {
+                    Text("Try again")
                 }
-                if (!locationAllowed) CcButton("Allow", { requestLocation() }, kind = ButtonKind.Soft)
-                else if (fix == null) CcButton("Retry", { scope.launch { fix = LocationHelper.current(context) } }, kind = ButtonKind.Soft, leadingIcon = Icons.Rounded.MyLocation)
             }
             Divider(Modifier.padding(vertical = 8.dp))
             SwitchRow("Also alert my trusted contacts", notifyTrusted, { notifyTrusted = it }, description = "Verified trusted contacts get an email with your alert and location link.")
+        }
+
+        if (rationale) {
+            LocationRationaleDialog(
+                "In an emergency, responders use your precise location to reach you quickly. It is sent only while your SOS is active.",
+                onContinue = { rationale = false; requestLocation() }, onDismiss = { rationale = false },
+            )
         }
 
         SectionHeader("Call directly")
@@ -392,14 +425,17 @@ fun SosStatusScreen(id: String) {
     val alert = rememberLoad(id) { app.api.safety.sos(id) }
     var cancelOpen by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var sharing by remember { mutableStateOf(false) }
+    val tracking by LocationTracking.state.collectAsState()
+    var permission by remember { mutableStateOf(LocationPermissions.level(context)) }
+    var rationale by remember { mutableStateOf(false) }
+    val requestLocation = rememberLocationRequest { _ -> permission = LocationPermissions.level(context) }
 
     DisposableEffect(id) {
         app.realtime.subscribe("sos:$id")
         onDispose { app.realtime.unsubscribe("sos:$id") }
     }
     LaunchedEffect(id) {
-        app.realtime.events.collect { e -> if (e.name == "sos:updated" && e.payload.optString("id") == id) alert.reload() }
+        app.realtime.events.collect { e -> if ((e.name == "sos:updated" || e.name == "sos:location") && e.payload.optString("id") == id) alert.reload() }
     }
     // Polling fallback while the alert is active (realtime can drop on poor networks).
     LaunchedEffect(id) {
@@ -409,6 +445,15 @@ fun SosStatusScreen(id: String) {
         }
     }
     val security = config.emergencyContacts.firstOrNull { (it.category == "security" || it.category == "emergency") && !it.phone.isNullOrBlank() }
+    // Live location runs for exactly as long as the alert is active (also resumes after the app was closed).
+    val activeAlert = alert.data?.status?.let { it in ACTIVE_SOS && it != "failed" }
+    LaunchedEffect(activeAlert, permission) {
+        when (activeAlert) {
+            true -> if (permission != PermissionLevel.None) LocationShareService.startSos(context, id)
+            false -> if (tracking.sosId == id) LocationShareService.stopSos(context)
+            null -> Unit
+        }
+    }
 
     CcScreen(
         title = "SOS status",
@@ -431,40 +476,39 @@ fun SosStatusScreen(id: String) {
                 }
                 SosSteps(a)
 
+                if (a.status in ACTIVE_SOS) {
+                    CcCard {
+                        LocationQualityPanel(
+                            fix = tracking.raw.takeIf { tracking.sosId == id }, staleSeconds = LocationQualityRules.SOS_STALE_SECONDS,
+                            permission = permission, locationEnabled = tracking.locationEnabled, acquiring = tracking.sosId == id,
+                            audienceNote = "Sent live to Campus Security responders until this alert is closed.",
+                            uploadNote = when {
+                                tracking.sosId != id -> null
+                                tracking.pendingUploads > 0 -> "${tracking.lastUploadError ?: "Sending"} · ${tracking.pendingUploads} update(s) waiting"
+                                tracking.lastUploadOkAtMs != null -> "Last update reached responders ${ageLabel((android.os.SystemClock.elapsedRealtime() - tracking.lastUploadOkAtMs!!) / 1000.0)}"
+                                else -> null
+                            },
+                            onRequestPermission = { rationale = true },
+                        )
+                    }
+                }
                 if (a.locationAvailable && a.latitude != null && a.longitude != null) {
+                    val q = a.locationQuality?.let { runCatching { LocationQuality.valueOf(it.replaceFirstChar { c -> c.uppercase() }) }.getOrNull() }
                     CcCard(padding = 0.dp) {
                         OsmMap(
                             centerLat = a.latitude, centerLng = a.longitude, zoom = 17.0,
-                            pins = listOf(MapPin("me", a.latitude, a.longitude, "Your SOS location", color = CcColors.Sos, label = "SOS")),
-                            modifier = Modifier.fillMaxWidth().height(180.dp),
+                            pins = listOf(MapPin("me", a.latitude, a.longitude, "Location responders see", color = CcColors.Sos, label = "SOS")),
+                            circles = a.accuracyMeters?.let { listOf(AccuracyCircle(a.latitude, a.longitude, it, CcColors.Sos)) } ?: emptyList(),
+                            modifier = Modifier.fillMaxWidth().height(200.dp),
                         )
                         Text(
-                            "Shared with responders for this alert only · ±${a.accuracyMeters?.toInt() ?: "?"} m",
+                            "What responders see: ${LocationQualityRules.formatCoordinates(a.latitude, a.longitude, a.accuracyMeters)} · ±${a.accuracyMeters?.toInt() ?: "?"} m" +
+                                (q?.let { " · ${it.label}" } ?: "") + (a.locationAt?.let { " · captured ${Fmt.ago(it)}" } ?: ""),
                             style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft, modifier = Modifier.padding(12.dp),
                         )
                     }
                 } else {
-                    InfoBanner("Your location wasn't available. Tell Campus Security where you are when they call.", tone = Tone.Amber, icon = Icons.Rounded.LocationOff)
-                }
-
-                if (a.status in ACTIVE_SOS && config.settings.locationSharingEnabled) {
-                    CcButton(
-                        if (sharing) "Sharing live location with Security" else "Share my live location (60 min)",
-                        {
-                            scope.launch {
-                                val f = LocationHelper.current(context) ?: run { snack.show("Location is unavailable. Turn on location and try again."); return@launch }
-                                try {
-                                    val share = app.api.safety.startShare(60, "security", f.latitude, f.longitude, f.accuracy)
-                                    LocationShareService.start(context, share.id, share.expiresAt, share.audience)
-                                    sharing = true
-                                    snack.show("Live location shared with Campus Security for 60 minutes.")
-                                } catch (e: ApiException) {
-                                    snack.error(e)
-                                }
-                            }
-                        },
-                        Modifier.fillMaxWidth(), kind = ButtonKind.Soft, enabled = !sharing, leadingIcon = Icons.Rounded.MyLocation,
-                    )
+                    InfoBanner("Responders don't have your location yet. Tell Campus Security where you are when they call.", tone = Tone.Amber, icon = Icons.Rounded.LocationOff)
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -494,6 +538,12 @@ fun SosStatusScreen(id: String) {
                     }
                 }
             }
+            if (rationale) {
+                LocationRationaleDialog(
+                    "Responders use your precise location to reach you. It is sent only while this alert is active.",
+                    onContinue = { rationale = false; requestLocation() }, onDismiss = { rationale = false },
+                )
+            }
             if (cancelOpen) {
                 InputDialog(
                     title = "Mark yourself safe?",
@@ -505,7 +555,7 @@ fun SosStatusScreen(id: String) {
                             busy = true
                             try {
                                 alert.set(app.api.safety.cancelSos(id, reason.ifBlank { null }))
-                                LocationShareService.stop(context)
+                                LocationShareService.stopAll(context)
                                 cancelOpen = false
                                 snack.show("Alert cancelled. Stay safe.")
                             } catch (e: ApiException) {

@@ -46,6 +46,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -53,6 +56,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import edu.srmap.campuscare.data.ApiException
+import edu.srmap.campuscare.data.MessageResponse
 import edu.srmap.campuscare.ui.components.ButtonKind
 import edu.srmap.campuscare.ui.components.CcButton
 import edu.srmap.campuscare.ui.components.CcSelect
@@ -71,6 +75,7 @@ import edu.srmap.campuscare.ui.navigation.Routes
 import edu.srmap.campuscare.ui.theme.CcColors
 import edu.srmap.campuscare.util.GoogleResult
 import edu.srmap.campuscare.util.GoogleSignIn
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -314,6 +319,21 @@ fun RegisterScreen() {
     TurnstileHost(turnstile)
 }
 
+/** Seconds left on a "send again" cooldown; ticks down once a second while above zero. */
+@Composable
+private fun rememberCooldown(): androidx.compose.runtime.MutableIntState {
+    val left = rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
+    LaunchedEffect(left.intValue > 0) {
+        while (left.intValue > 0) {
+            delay(1000)
+            left.intValue = (left.intValue - 1).coerceAtLeast(0)
+        }
+    }
+    return left
+}
+
+private val politeLiveRegion = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+
 @Composable
 fun ForgotPasswordScreen() {
     val app = LocalApp.current
@@ -322,33 +342,54 @@ fun ForgotPasswordScreen() {
     val domain = app.config.config.value.settings.accountEmailDomain
     val turnstile = rememberTurnstile("forgotPassword")
     var email by rememberSaveable { mutableStateOf("") }
-    var sent by remember { mutableStateOf<String?>(null) }
+    var sent by remember { mutableStateOf<MessageResponse?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    AuthLayout("Forgot password?", "We'll email you a secure reset link.", onBack = { nav.popBackStack() }) {
-        if (sent != null) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { IconBadge(Icons.Rounded.MarkEmailRead, Tone.Brand, size = 72.dp, iconSize = 34.dp) }
-            InfoBanner(sent ?: "", tone = Tone.Brand, title = "Check your inbox")
-            Text("The link works once and expires in 30 minutes. Open it on this phone to continue in the app.", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
-            CcButton("Back to sign in", { nav.popBackStack() }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Outline)
-        } else {
-            CcTextField(email, { email = it; error = null }, label = "University email", placeholder = "you@$domain", leadingIcon = Icons.Rounded.Email, keyboardType = KeyboardType.Email, error = error, imeAction = ImeAction.Done)
-            TurnstileNote(turnstile.enabled)
-            CcButton("Send reset link", {
-                error = universityEmailError(email, domain)
-                if (error == null) turnstile.run { token ->
-                    scope.launch {
-                        busy = true
-                        try {
-                            sent = app.api.auth.forgotPassword(email.trim().lowercase(), token).message
-                        } catch (e: ApiException) {
-                            error = e.message
-                        } finally {
-                            busy = false
-                        }
-                    }
+    var problem by remember { mutableStateOf<String?>(null) }
+    val cooldown = rememberCooldown()
+
+    fun submit() {
+        if (busy || cooldown.intValue > 0) return // no duplicate taps
+        error = universityEmailError(email, domain)
+        if (error != null) return
+        turnstile.run { token ->
+            scope.launch {
+                busy = true
+                problem = null
+                try {
+                    val r = app.api.auth.forgotPassword(email.trim().lowercase(), token)
+                    sent = r
+                    cooldown.intValue = r.retryAfterSeconds.coerceAtLeast(30)
+                } catch (e: ApiException) {
+                    // e.g. email_unavailable: the email could not be sent. Never shown as "sent".
+                    if (e.fields["email"] != null) error = e.fields["email"] else problem = e.message
+                } finally {
+                    busy = false
                 }
-            }, modifier = Modifier.fillMaxWidth(), loading = busy)
+            }
+        }
+    }
+
+    AuthLayout("Forgot password?", "We'll email you a secure reset link.", onBack = { nav.popBackStack() }) {
+        val result = sent
+        if (result != null) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { IconBadge(Icons.Rounded.MarkEmailRead, Tone.Brand, size = 72.dp, iconSize = 34.dp) }
+            InfoBanner(result.message, tone = Tone.Brand, title = "Check your inbox", modifier = politeLiveRegion)
+            Text(
+                "The link works once and expires in ${result.expiresInMinutes ?: 30} minutes. Open it on this phone to continue in the app. Only the newest link works.",
+                style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft,
+            )
+            problem?.let { InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion) }
+            CcButton(
+                if (cooldown.intValue > 0) "Send again in ${cooldown.intValue}s" else "Send another link",
+                { submit() }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Outline, loading = busy, enabled = cooldown.intValue == 0,
+            )
+            CcButton("Back to sign in", { nav.popBackStack() }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Ghost)
+        } else {
+            CcTextField(email, { email = it; error = null }, label = "University email", placeholder = "you@$domain", leadingIcon = Icons.Rounded.Email, keyboardType = KeyboardType.Email, error = error, imeAction = ImeAction.Done, onImeAction = { submit() })
+            problem?.let { InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion) }
+            TurnstileNote(turnstile.enabled)
+            CcButton("Send reset link", { submit() }, modifier = Modifier.fillMaxWidth(), loading = busy)
         }
     }
     TurnstileHost(turnstile)
@@ -362,106 +403,242 @@ fun ResetPasswordScreen(token: String) {
     val scope = rememberCoroutineScope()
     val minLen = app.config.config.value.settings.passwordMinLength
     val turnstile = rememberTurnstile("resetPassword")
-    var valid by remember { mutableStateOf<Boolean?>(null) }
+    /** null while checking; otherwise valid | expired | used | invalid | offline. */
+    var linkState by remember { mutableStateOf<String?>(null) }
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(token) {
-        valid = token.isNotBlank() && runCatching { app.api.auth.checkReset(token).valid }.getOrDefault(false)
+    var confirmError by remember { mutableStateOf<String?>(null) }
+    var general by remember { mutableStateOf<String?>(null) }
+    var attempt by remember { mutableStateOf(0) }
+    // Read-only check: opening the screen never uses up the link. Only "Update password" does.
+    LaunchedEffect(token, attempt) {
+        linkState = null
+        linkState = if (token.isBlank()) "invalid" else try {
+            val r = app.api.auth.checkReset(token)
+            r.state ?: if (r.valid) "valid" else "invalid"
+        } catch (e: ApiException) {
+            if (e.status == 0 || e.status >= 500) "offline" else "invalid"
+        } catch (e: Exception) {
+            "offline"
+        }
     }
-    AuthLayout("Set a new password", "Choose a strong password you don't use anywhere else.", onBack = { nav.navigate(Routes.Login) { popUpTo(0) } }) {
-        when (valid) {
-            null -> Text("Checking your link…", color = CcColors.InkSoft)
-            false -> {
-                InfoBanner("This reset link is invalid, expired or already used.", tone = Tone.Danger, icon = Icons.Rounded.Warning)
-                CcButton("Request a new link", { nav.navigate(Routes.Forgot) }, modifier = Modifier.fillMaxWidth())
-            }
-            true -> {
-                CcTextField(password, { password = it }, label = "New password", leadingIcon = Icons.Rounded.Lock, password = true, error = error)
-                PasswordStrength(password, minLen)
-                CcTextField(confirm, { confirm = it }, label = "Confirm new password", leadingIcon = Icons.Rounded.Lock, password = true, error = if (confirm.isNotEmpty() && confirm != password) "Passwords do not match" else null)
-                TurnstileNote(turnstile.enabled)
-                CcButton("Update password", {
-                    error = passwordError(password, minLen)
-                    if (error == null && confirm == password) turnstile.run { t ->
-                        scope.launch {
-                            busy = true
-                            try {
-                                app.api.auth.resetPassword(token, password, confirm, t)
-                                snack.show("Password updated. Sign in with your new password.", long = true)
-                                app.session.clear()
-                                nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } }
-                            } catch (e: ApiException) {
-                                error = e.message
-                            } finally {
-                                busy = false
-                            }
+    fun submit() {
+        if (busy) return // no duplicate taps
+        error = passwordError(password, minLen)
+        confirmError = if (confirm != password) "Passwords do not match" else null
+        if (error != null || confirmError != null) return
+        turnstile.run { t ->
+            scope.launch {
+                busy = true
+                general = null
+                try {
+                    app.api.auth.resetPassword(token, password, confirm, t)
+                    // No session is created: sign in again (two-step verification still applies).
+                    snack.show("Password updated and all devices signed out. Sign in with your new password.", long = true)
+                    app.session.clear()
+                    nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } }
+                } catch (e: ApiException) {
+                    when (e.code) {
+                        "expired_token" -> linkState = "expired"
+                        "invalid_token" -> linkState = "used"
+                        else -> {
+                            error = e.fields["password"]
+                            confirmError = e.fields["confirmPassword"]
+                            if (error == null && confirmError == null) general = e.message
                         }
                     }
-                }, modifier = Modifier.fillMaxWidth(), loading = busy)
+                } finally {
+                    busy = false
+                }
+            }
+        }
+    }
+    AuthLayout("Set a new password", "Choose a strong password you don't use anywhere else.", onBack = { nav.navigate(Routes.Login) { popUpTo(0) } }) {
+        when (linkState) {
+            null -> Text("Checking your link...", color = CcColors.InkSoft, modifier = politeLiveRegion)
+            "offline" -> {
+                InfoBanner("We couldn't check this link. Check your connection and try again.", tone = Tone.Amber, icon = Icons.Rounded.Warning, modifier = politeLiveRegion)
+                CcButton("Try again", { attempt++ }, modifier = Modifier.fillMaxWidth())
+            }
+            "valid" -> {
+                CcTextField(password, { password = it; error = null }, label = "New password", leadingIcon = Icons.Rounded.Lock, password = true, error = error, hint = "At least $minLen characters, with upper and lower case letters and a number")
+                PasswordStrength(password, minLen)
+                CcTextField(
+                    confirm, { confirm = it; confirmError = null }, label = "Confirm new password", leadingIcon = Icons.Rounded.Lock, password = true,
+                    error = confirmError ?: if (confirm.isNotEmpty() && confirm != password) "Passwords do not match" else null,
+                    imeAction = ImeAction.Done, onImeAction = { submit() },
+                )
+                general?.let { InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion) }
+                TurnstileNote(turnstile.enabled)
+                CcButton("Update password", { submit() }, modifier = Modifier.fillMaxWidth(), loading = busy)
                 Text("For your security, you'll be signed out on all devices.", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
+            }
+            else -> {
+                val msg = when (linkState) {
+                    "expired" -> "This reset link has expired. Reset links work for a short time only."
+                    "used" -> "This reset link was already used or replaced by a newer one."
+                    else -> "This reset link is invalid."
+                }
+                InfoBanner(msg, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion)
+                CcButton("Request a new link", { nav.navigate(Routes.Forgot) { popUpTo(Routes.Login) } }, modifier = Modifier.fillMaxWidth())
+                CcButton("Back to sign in", { nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } } }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Ghost)
             }
         }
     }
     TurnstileHost(turnstile)
 }
 
-/** Post-registration "check your inbox" screen, and the landing screen for verification links. */
+/**
+ * Post-registration "check your inbox" screen, and the landing screen for verification links.
+ * Opening a link never verifies the account: the screen checks it (read-only) and the person taps
+ * "Verify my email", which sends the token to the server. Only the server's answer changes the state.
+ */
 @Composable
 fun VerifyEmailScreen(token: String, email: String) {
     val app = LocalApp.current
     val nav = LocalNav.current
-    val snack = LocalSnack.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    fun openEmailApp() {
+        val intent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+            addCategory(android.content.Intent.CATEGORY_APP_EMAIL)
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            context.startActivity(android.content.Intent.createChooser(intent, "Open email app"))
+        } catch (_: Exception) {
+            try {
+                context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("mailto:")))
+            } catch (_: Exception) {}
+        }
+    }
+    val domain = app.config.config.value.settings.accountEmailDomain
     val turnstile = rememberTurnstile("resendVerification")
-    var state by remember { mutableStateOf(if (token.isBlank()) "sent" else "verifying") }
+    // sent | checking | ready | verifying | verified | already | expired | invalid
+    var state by remember { mutableStateOf(if (token.isBlank()) "sent" else "checking") }
     var message by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
+    var resendEmail by rememberSaveable { mutableStateOf(email) }
+    var resendEmailError by remember { mutableStateOf<String?>(null) }
+    var resendNotice by remember { mutableStateOf<Pair<Boolean, String>?>(null) } // ok? to text
+    var resending by remember { mutableStateOf(false) }
+    val cooldown = rememberCooldown()
+
     LaunchedEffect(token) {
         if (token.isBlank()) return@LaunchedEffect
         state = try {
-            val r = app.api.auth.verifyEmail(token)
-            if (r.result == "already_verified") "already" else "verified"
-        } catch (e: ApiException) {
-            message = e.message
-            if (e.code == "expired_token") "expired" else "invalid"
+            when (app.api.auth.checkVerifyEmail(token).state) {
+                "already_verified" -> "already"
+                "expired" -> "expired"
+                "invalid" -> "invalid"
+                else -> "ready"
+            }
+        } catch (e: Exception) {
+            "ready" // the explicit verify call gives the authoritative answer
         }
     }
+
+    fun verify() {
+        if (state == "verifying") return
+        scope.launch {
+            state = "verifying"
+            message = null
+            state = try {
+                val r = app.api.auth.verifyEmail(token)
+                if (r.result == "already_verified") "already" else "verified"
+            } catch (e: ApiException) {
+                when (e.code) {
+                    "expired_token" -> "expired"
+                    "invalid_token" -> "invalid"
+                    else -> { message = e.message; "ready" }
+                }
+            }
+        }
+    }
+
+    fun resend() {
+        if (resending || cooldown.intValue > 0) return // no duplicate taps
+        resendEmailError = universityEmailError(resendEmail, domain)
+        if (resendEmailError != null) return
+        turnstile.run { t ->
+            scope.launch {
+                resending = true
+                resendNotice = null
+                try {
+                    val r = app.api.auth.resendVerification(resendEmail.trim().lowercase(), t)
+                    resendNotice = true to r.message
+                    cooldown.intValue = r.retryAfterSeconds.coerceAtLeast(30)
+                } catch (e: ApiException) {
+                    // e.g. email_unavailable or rate_limited: say so honestly, never "sent".
+                    resendNotice = false to (e.message ?: "We couldn't request a new link. Try again.")
+                    if (e.code == "rate_limited") cooldown.intValue = 60
+                } finally {
+                    resending = false
+                }
+            }
+        }
+    }
+
+    val problem = state == "invalid" || state == "expired"
     AuthLayout(
-        title = when (state) { "verified", "already" -> "Email verified"; "verifying" -> "Verifying…"; "sent" -> "Check your inbox"; else -> "Link problem" },
+        title = when (state) {
+            "verified", "already" -> "Email verified"
+            "checking", "verifying" -> "One moment..."
+            "ready" -> "Verify your email"
+            "sent" -> "Check your inbox"
+            "expired" -> "Link expired"
+            else -> "Link problem"
+        },
         subtitle = when (state) {
-            "sent" -> "We sent a verification link to ${email.ifBlank { "your university email" }}."
+            "sent" -> "Open the verification link we email to ${email.ifBlank { "your university email" }}. Need a new one? Request it below."
+            "ready" -> "Tap the button to confirm this is your email address."
             "verified" -> "Your account is active. You can sign in now."
             "already" -> "This email was already verified. You can sign in."
-            "verifying" -> "One moment please."
-            else -> message ?: "This verification link can't be used."
+            "checking" -> "Checking your link."
+            "verifying" -> "Verifying your email."
+            "expired" -> "This verification link has expired. Request a new one below."
+            else -> "This link is invalid or was replaced by a newer one. Request a new one below."
         },
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-            IconBadge(if (state == "invalid" || state == "expired") Icons.Rounded.Warning else Icons.Rounded.MarkEmailRead, if (state == "invalid" || state == "expired") Tone.Amber else Tone.Brand, size = 80.dp, iconSize = 38.dp)
+            IconBadge(if (problem) Icons.Rounded.Warning else Icons.Rounded.MarkEmailRead, if (problem) Tone.Amber else Tone.Brand, size = 80.dp, iconSize = 38.dp)
         }
-        if (state == "verified" || state == "already") {
-            CcButton("Sign in", { nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } } }, modifier = Modifier.fillMaxWidth())
-        } else if (state != "verifying") {
-            Text("The link is valid for 24 hours and works once. Didn't get it? Check spam, or resend.", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
-            if (email.isNotBlank()) {
-                CcButton("Resend verification email", {
-                    turnstile.run { t ->
-                        scope.launch {
-                            busy = true
-                            try { snack.show(app.api.auth.resendVerification(email, t).message, long = true) } catch (e: ApiException) { snack.error(e) } finally { busy = false }
-                        }
-                    }
-                }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Outline, loading = busy)
+        when (state) {
+            "verified", "already" -> CcButton("Sign in", { nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } } }, modifier = Modifier.fillMaxWidth())
+            "checking" -> Unit
+            "ready", "verifying" -> {
+                message?.let { InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion) }
+                CcButton("Verify my email", { verify() }, modifier = Modifier.fillMaxWidth(), loading = state == "verifying")
             }
-            CcButton("Back to sign in", { nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } } }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Ghost)
+            else -> {
+                if (state == "sent") {
+                    CcButton("Open email app", { openEmailApp() }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Primary, leadingIcon = Icons.Rounded.Email)
+                }
+                Text(
+                    "Verification links work once and expire after a limited time. Only the newest link works. Didn't get it? Check spam, or send a new one.",
+                    style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft,
+                )
+                if (email.isBlank() || problem) {
+                    CcTextField(resendEmail, { resendEmail = it; resendEmailError = null }, label = "University email", placeholder = "you@$domain", leadingIcon = Icons.Rounded.Email, keyboardType = KeyboardType.Email, error = resendEmailError, imeAction = ImeAction.Done, onImeAction = { resend() })
+                }
+                resendNotice?.let { (good, text) ->
+                    InfoBanner(text, tone = if (good) Tone.Brand else Tone.Danger, icon = if (good) Icons.Rounded.MarkEmailRead else Icons.Rounded.Warning, modifier = politeLiveRegion)
+                }
+                TurnstileNote(turnstile.enabled)
+                CcButton(
+                    if (cooldown.intValue > 0) "Resend available in ${cooldown.intValue}s" else "Resend verification email",
+                    { resend() }, modifier = Modifier.fillMaxWidth(), kind = if (problem) ButtonKind.Primary else ButtonKind.Outline,
+                    loading = resending, enabled = cooldown.intValue == 0,
+                )
+                CcButton("Back to sign in", { nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } } }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Ghost)
+            }
         }
     }
     TurnstileHost(turnstile)
 }
 
-/** Staff invitation: set the first password (link from the invitation email). */
 @Composable
 fun AcceptInviteScreen(token: String) {
     val app = LocalApp.current

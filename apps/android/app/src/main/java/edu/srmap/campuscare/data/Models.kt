@@ -55,13 +55,24 @@ data class MeResponse(val user: User, val session: SessionInfo = SessionInfo(), 
 data class RegisterResponse(val requiresVerification: Boolean = true, val email: String = "")
 
 @Serializable
-data class MessageResponse(val message: String = "", val ok: Boolean = true)
+data class MessageResponse(
+    val message: String = "",
+    val ok: Boolean = true,
+    /** Account-email endpoints: seconds before the same address may ask again (drives the cooldown). */
+    val retryAfterSeconds: Int = 0,
+    val expiresInMinutes: Int? = null,
+    val expiresInHours: Int? = null,
+)
 
 @Serializable
 data class VerifyResult(val result: String = "")
 
 @Serializable
-data class ValidResponse(val valid: Boolean = false)
+data class ValidResponse(val valid: Boolean = false, /** valid | expired | used | invalid */ val state: String? = null)
+
+/** Read-only state of a verification link: valid | expired | invalid | already_verified. */
+@Serializable
+data class VerifyCheck(val state: String = "")
 
 @Serializable
 data class MfaSetup(val qrDataUrl: String = "", val secret: String = "")
@@ -542,6 +553,10 @@ data class SosAlert(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val accuracyMeters: Double? = null,
+    /** When the current coordinates were captured (server clock) and the server's quality label for them. */
+    val locationAt: String? = null,
+    val locationQuality: String? = null,
+    val locationUpdateCount: Int = 0,
     val mapLink: String? = null,
     val note: String? = null,
     val lastDeliveryError: String? = null,

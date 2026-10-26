@@ -446,6 +446,11 @@ safetyRouter.post(
       walk.status = 'cancelled';
     }
     await walk.save();
+    if (action === 'arrived' || action === 'cancel') {
+      // Ending the walk revokes the live share started for it: nobody keeps seeing a position after the walk.
+      const shares = await LocationShare.find({ userId: req.user!._id, stoppedAt: null, startedAt: { $gte: new Date(walk.createdAt.getTime() - 60_000) } }, { _id: 1 }).lean();
+      for (const sh of shares) await stopLocationShare(req.user!, String(sh._id), req);
+    }
     await audit({ action: `safe_walk.${action}`, req, targetType: 'safe_walk', targetId: String(walk._id) });
     ok(res, { id: String(walk._id), status: walk.status, expectedArrivalAt: walk.expectedArrivalAt });
   }),

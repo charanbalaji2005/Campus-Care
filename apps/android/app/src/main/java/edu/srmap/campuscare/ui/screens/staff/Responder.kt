@@ -206,7 +206,7 @@ fun ResponderAlertScreen(id: String) {
         app.realtime.subscribe("sos:$id")
         onDispose { app.realtime.unsubscribe("sos:$id") }
     }
-    LaunchedEffect(id) { app.realtime.events.collect { e -> if (e.name == "sos:updated" && e.payload.optString("id") == id) alert.reload() } }
+    LaunchedEffect(id) { app.realtime.events.collect { e -> if ((e.name == "sos:updated" || e.name == "sos:location") && e.payload.optString("id") == id) alert.reload() } }
     LaunchedEffect(Unit) { while (true) { delay(1_000); now = System.currentTimeMillis() } }
 
     fun act(name: String, block: suspend () -> SosAlert) {
@@ -251,11 +251,22 @@ fun ResponderAlertScreen(id: String) {
                         OsmMap(
                             a.latitude, a.longitude, 17.5,
                             pins = listOf(MapPin(a.id, a.latitude, a.longitude, a.student?.fullName ?: "SOS", "±${a.accuracyMeters?.toInt() ?: "?"} m", CcColors.Sos, "SOS")),
+                            circles = a.accuracyMeters?.let { listOf(edu.srmap.campuscare.ui.components.AccuracyCircle(a.latitude, a.longitude, it, CcColors.Sos)) } ?: emptyList(),
                             modifier = Modifier.fillMaxWidth().height(220.dp), showMyLocation = true,
                         )
+                        // Measured position with its uncertainty and age — the student may be anywhere inside the circle.
+                        val q = a.locationQuality?.let { runCatching { edu.srmap.campuscare.util.LocationQuality.valueOf(it.replaceFirstChar { c -> c.uppercase() }) }.getOrNull() }
+                        Text(
+                            "${edu.srmap.campuscare.util.LocationQualityRules.formatCoordinates(a.latitude, a.longitude, a.accuracyMeters)} · ±${a.accuracyMeters?.toInt() ?: "?"} m" +
+                                (q?.let { " · ${it.label}" } ?: "") + (a.locationAt?.let { " · captured ${Fmt.ago(it)}" } ?: "") +
+                                if (a.locationUpdateCount > 1) " · live (${a.locationUpdateCount} updates)" else "",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (q == edu.srmap.campuscare.util.LocationQuality.Stale || q == edu.srmap.campuscare.util.LocationQuality.Poor) CcColors.Sos else CcColors.InkSoft,
+                            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp),
+                        )
                         Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            CcButton("Navigate", { context.openUrl("https://www.google.com/maps/dir/?api=1&destination=${a.latitude},${a.longitude}&travelmode=walking") }, Modifier.weight(1f), kind = ButtonKind.Primary, leadingIcon = Icons.Rounded.Navigation)
-                            Text("±${a.accuracyMeters?.toInt() ?: "?"} m", style = MaterialTheme.typography.labelMedium, color = CcColors.InkSoft, modifier = Modifier.align(Alignment.CenterVertically))
+                            // geo: URI opens whichever maps app the responder has (OsmAnd, Organic Maps, Google Maps…).
+                            CcButton("Navigate", { context.openUrl("geo:${a.latitude},${a.longitude}?q=${a.latitude},${a.longitude}(SOS)") }, Modifier.weight(1f), kind = ButtonKind.Primary, leadingIcon = Icons.Rounded.Navigation)
                         }
                     }
                 } else {
@@ -394,7 +405,7 @@ fun ResponderLocationsScreen() {
     LaunchedEffect(Unit) {
         app.realtime.events.collect { e ->
             when (e.name) {
-                "sos:new", "sos:updated" -> alerts.reload()
+                "sos:new", "sos:updated", "sos:location" -> alerts.reload()
                 "location:update" -> shares.reload()
             }
         }
@@ -411,6 +422,8 @@ fun ResponderLocationsScreen() {
         Box(Modifier.weight(1f)) {
             OsmMap(
                 m.centerLatitude, m.centerLongitude, m.zoom, pins, Modifier.fillMaxSize(), showMyLocation = true,
+                circles = activeSos.mapNotNull { a -> a.accuracyMeters?.let { edu.srmap.campuscare.ui.components.AccuracyCircle(a.latitude ?: 0.0, a.longitude ?: 0.0, it, CcColors.Sos) } } +
+                    live.mapNotNull { l -> l.accuracyMeters?.let { edu.srmap.campuscare.ui.components.AccuracyCircle(l.latitude ?: 0.0, l.longitude ?: 0.0, it, CcColors.Sky) } },
                 onPinClick = { p -> if (p.id.startsWith("s:")) nav.navigate(Routes.responderAlert(p.id.removePrefix("s:"))) },
             )
             Column(

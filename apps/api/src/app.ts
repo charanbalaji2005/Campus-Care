@@ -69,20 +69,22 @@ export function createApp() {
     const qs = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
     res.redirect(`/api/v1/auth/google${qs}`);
   });
-  app.get('/api/v1/health', (_req, res) => res.json({ status: 'ok', uptime: Math.round(process.uptime()) }));
+  app.get(['/health', '/api/health', '/api/v1/health'], (_req, res) =>
+    res.json({ success: true, status: 'ok', service: 'CampusCare API', uptime: Math.round(process.uptime()), timestamp: new Date().toISOString() }),
+  );
   app.get('/api/v1/ready', (_req, res) => {
     const ready = databaseReady();
     res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database: ready ? 'connected' : 'disconnected' });
   });
 
   // Webhooks authenticate with signatures, not cookies, so they sit before CSRF.
-  app.use('/api/v1/webhooks', webhooksRouter);
+  app.use(['/api/v1/webhooks', '/api/webhooks'], webhooksRouter);
 
-  app.use('/api/v1', apiLimiter, loadSession, csrfProtection);
+  app.use(['/api/v1', '/api'], apiLimiter, loadSession, csrfProtection);
 
   // Maintenance mode: blocks student write actions (reports, chat, bookings). Sign-in, reading,
   // SOS / Safe Walk / location sharing and all staff actions keep working — safety is never paused.
-  app.use('/api/v1', async (req, _res, next) => {
+  app.use(['/api/v1', '/api'], async (req, _res, next) => {
     try {
       const safetyPath = ['/auth/', '/safety/', '/mobile/', '/location-shares', '/responders/', '/emergency-alerts/'].some((p) => req.path.startsWith(p));
       const exempt = safetyPath || req.method === 'GET' || req.method === 'HEAD';
@@ -95,7 +97,7 @@ export function createApp() {
     }
   });
 
-  app.use('/api/v1/auth', authRouter);
+  app.use(['/api/v1/auth', '/api/auth'], authRouter);
   app.use('/api/v1/mobile', mobileRouter);
   app.use('/api/v1/me', meRouter);
   // Community feed, official channel and events are mounted before the safety-map / lost & found router.

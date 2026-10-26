@@ -107,6 +107,21 @@ import java.time.Duration
 import java.time.Instant
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import edu.srmap.campuscare.data.liveLocation
+import edu.srmap.campuscare.ui.components.AccuracyCircle
+import edu.srmap.campuscare.ui.components.LocationQualityPanel
+import edu.srmap.campuscare.ui.components.LocationRationaleDialog
+import edu.srmap.campuscare.ui.components.MapPin
+import edu.srmap.campuscare.ui.components.OsmMap
+import edu.srmap.campuscare.util.LocationPermissions
+import edu.srmap.campuscare.util.LocationQualityRules
+import edu.srmap.campuscare.util.LocationTracking
+import edu.srmap.campuscare.util.PermissionLevel
+import edu.srmap.campuscare.util.RawFix
+import edu.srmap.campuscare.util.ageLabel
+import edu.srmap.campuscare.util.ageSeconds
+import edu.srmap.campuscare.util.rememberLiveFix
+import androidx.compose.material.icons.rounded.LocationOff
 
 private val ACTIVE_WALK = setOf("active", "overdue", "escalated")
 
@@ -148,6 +163,16 @@ private fun StartWalk(onStarted: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val requestLocation = rememberLocationRequest { granted -> if (!granted) share = false }
+    var rationale by remember { mutableStateOf(false) }
+    // While sharing is switched on, warm up a fresh high-accuracy fix so the share starts with a live position.
+    val live by rememberLiveFix(enabled = share && LocationPermissions.level(context) != PermissionLevel.None)
+
+    if (rationale) {
+        LocationRationaleDialog(
+            "During your walk, Campus Security can see your live location so they can find you if you don't arrive. Sharing ends when you arrive or cancel.",
+            onContinue = { rationale = false; requestLocation() }, onDismiss = { rationale = false; share = false },
+        )
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         CcCard(color = CcColors.TealSoft.copy(alpha = 0.5f)) {
@@ -193,7 +218,7 @@ private fun StartWalk(onStarted: () -> Unit) {
         if (config.settings.locationSharingEnabled) {
             SwitchRow(
                 "Share my live location with Campus Security", share,
-                { on -> share = on; if (on && !LocationHelper.hasPermission(context)) requestLocation() },
+                { on -> share = on; if (on && !LocationHelper.hasPermission(context)) rationale = true },
                 description = "Only during this walk. A notification shows while sharing, and you can stop any time.",
             )
         }
@@ -211,11 +236,15 @@ private fun StartWalk(onStarted: () -> Unit) {
                         val eta = Instant.now().plus(Duration.ofMinutes(mins)).toString()
                         app.api.safety.startSafeWalk(destination.trim(), eta, chosen.toList())
                         if (share) {
-                            LocationHelper.current(context)?.let { f ->
-                                runCatching { app.api.safety.startShare((mins + 15).toInt().coerceAtMost(config.settings.maxLocationShareMinutes), "security", f.latitude, f.longitude, f.accuracy) }
+                            val f = live?.raw?.takeIf { it.ageSeconds() <= LocationQualityRules.SHARE_STALE_SECONDS }
+                                ?: LocationHelper.current(context)?.let { c -> RawFix(c.latitude, c.longitude, c.accuracy, c.elapsedRealtimeNanos?.div(1_000_000) ?: android.os.SystemClock.elapsedRealtime(), provider = "fused") }
+                            if (f != null) {
+                                runCatching { app.api.liveLocation.startShare((mins + 15).toInt().coerceAtMost(config.settings.maxLocationShareMinutes), "security", f) }
                                     .onSuccess { s -> LocationShareService.start(context, s.id, s.expiresAt, s.audience) }
                                     .onFailure { snack.show("Safe Walk started, but live location could not be shared.") }
-                            } ?: snack.show("Safe Walk started. Location unavailable, so live sharing is off.")
+                            } else {
+                                snack.show("Safe Walk started. Location unavailable, so live sharing is off.")
+                            }
                         }
                         onStarted()
                     } catch (e: ApiException) {
@@ -311,6 +340,7 @@ private fun ActiveWalk(w: SafeWalk, onChanged: () -> Unit) {
                 }
             }
         }
+        WalkLiveLocation()
         CcButton("I've arrived safely", { act("arrived") }, Modifier.fillMaxWidth(), kind = ButtonKind.Brand, loading = busy == "arrived", leadingIcon = Icons.Rounded.Flag)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             CcButton("Check in", { act("check-in") }, Modifier.weight(1f), kind = ButtonKind.Soft, loading = busy == "check-in", leadingIcon = Icons.Rounded.Done)
@@ -326,6 +356,56 @@ private fun ActiveWalk(w: SafeWalk, onChanged: () -> Unit) {
             "Cancel Safe Walk?", "No one will be alerted for this walk. Live location sharing (if on) stops too.",
             confirmLabel = "Cancel walk", destructive = true, loading = busy == "cancel",
             onConfirm = { confirmCancel = false; act("cancel") }, onDismiss = { confirmCancel = false },
+        )
+    }
+}
+
+/** Live location during a walk: who sees it, until when, how good it is, and an obvious Stop control. */
+@Composable
+private fun WalkLiveLocation() {
+    val app = LocalApp.current
+    val snack = LocalSnack.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val tracking by LocationTracking.state.collectAsState()
+    var stopping by remember { mutableStateOf(false) }
+    val id = tracking.shareId ?: return
+    CcCard {
+        LocationQualityPanel(
+            fix = tracking.raw, staleSeconds = LocationQualityRules.SHARE_STALE_SECONDS, permission = tracking.permission, locationEnabled = tracking.locationEnabled,
+            audienceNote = "Visible to ${if (tracking.shareAudience == "trusted_contacts") "your trusted contacts" else "Campus Security"} until ${Fmt.time(tracking.shareExpiresAt)} — or until you arrive, cancel or stop.",
+            uploadNote = when {
+                tracking.pendingUploads > 0 -> "${tracking.lastUploadError ?: "Sending"} · ${tracking.pendingUploads} waiting"
+                tracking.lastUploadOkAtMs != null -> "Last update delivered ${ageLabel((android.os.SystemClock.elapsedRealtime() - tracking.lastUploadOkAtMs!!) / 1000.0)}"
+                else -> null
+            },
+        )
+        val est = tracking.estimate
+        if (est != null) {
+            Spacer(Modifier.height(10.dp))
+            OsmMap(
+                centerLat = est.latitude, centerLng = est.longitude, zoom = 17.0,
+                pins = listOf(MapPin("me", est.latitude, est.longitude, "You (smoothed for display)", color = CcColors.Teal, label = "Y")),
+                route = tracking.trail.map { it.latitude to it.longitude },
+                circles = listOf(AccuracyCircle(est.latitude, est.longitude, est.accuracyMeters, CcColors.Teal)),
+                modifier = Modifier.fillMaxWidth().height(180.dp).clip(RoundedCornerShape(16.dp)),
+            )
+            Text(
+                "The marker is smoothed to reduce jitter; Security receives your measured positions with their accuracy.",
+                style = MaterialTheme.typography.labelSmall, color = CcColors.InkFaint, modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        CcButton(
+            "Stop sharing location", {
+                scope.launch {
+                    stopping = true
+                    runCatching { app.api.safety.stopShare(id) }.onFailure { snack.show("Stopped on this phone. The server will end the share at its expiry if it couldn't be reached.") }
+                    LocationShareService.stop(context)
+                    stopping = false
+                    snack.show("Location sharing stopped.")
+                }
+            },
+            Modifier.fillMaxWidth().padding(top = 10.dp), kind = ButtonKind.Danger, loading = stopping, leadingIcon = Icons.Rounded.LocationOff,
         )
     }
 }

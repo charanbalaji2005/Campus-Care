@@ -26,14 +26,16 @@ Base path: `/api/v1`. In production the browser calls the API through the web ap
 | GET | `/api/v1/auth/csrf` |  |
 | GET | `/api/v1/auth/public-settings` |  |
 | POST | `/api/v1/auth/register` | Turnstile |
-| POST | `/api/v1/auth/verify-email` |  |
+| POST | `/api/v1/auth/verify-email/check` | Read-only; never consumes the token |
+| POST | `/api/v1/auth/verify-email` | Consumes the token (explicit user action) |
 | POST | `/api/v1/auth/resend-verification` | Turnstile |
 | POST | `/api/v1/auth/login` | Turnstile |
 | POST | `/api/v1/auth/logout` |  |
 | POST | `/api/v1/auth/logout-all` |  |
 | GET | `/api/v1/auth/me` |  |
+| GET | `/api/v1/auth/verification-status` | Signed in (own account only) |
 | POST | `/api/v1/auth/forgot-password` | Turnstile |
-| POST | `/api/v1/auth/reset-password/check` |  |
+| POST | `/api/v1/auth/reset-password/check` | Read-only; returns `state`: valid, expired, used, invalid |
 | POST | `/api/v1/auth/reset-password` | Turnstile |
 | POST | `/api/v1/auth/accept-invite` |  |
 | PATCH | `/api/v1/auth/me` |  |

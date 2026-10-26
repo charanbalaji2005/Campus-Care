@@ -269,7 +269,9 @@ d('Super Admin User Management Module (integration)', () => {
       .set('x-csrf-token', superAdmin1.csrf)
       .send({});
     expect(res.status).toBe(200);
-    expect(res.body.data.message).toMatch(/Password reset link sent/);
+    // Queued (not claimed as delivered): delivery happens in the background job with retries.
+    expect(res.body.data.message).toMatch(/Password reset link queued/);
+    expect(res.body.data.outcome).toBe('queued');
   });
 
   it('resets MFA and enforces re-enrollment without revealing secret', async () => {

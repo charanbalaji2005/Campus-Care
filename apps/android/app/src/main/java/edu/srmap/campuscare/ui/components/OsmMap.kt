@@ -15,10 +15,14 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import edu.srmap.campuscare.BuildConfig
+import org.osmdroid.tileprovider.tilesource.ITileSource
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.CopyrightOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
@@ -33,6 +37,25 @@ data class MapPin(
     val color: Color,
     val label: String = "",
 )
+
+/**
+ * A measured position drawn with its reported uncertainty. [measured] = raw device GPS; never set it
+ * for a map-matched or estimated point (those are drawn dashed and labelled as estimates).
+ */
+data class AccuracyCircle(val latitude: Double, val longitude: Double, val radiusMeters: Double, val color: Color, val measured: Boolean = true)
+
+/**
+ * Tile source from build config (campuscare.mapTileUrl). Empty = OpenStreetMap standard tiles,
+ * which are fine for light use with attribution; heavy/production use needs a licensed tile host.
+ * Tiles are cached only by osmdroid's normal on-demand cache — never bulk-downloaded.
+ */
+private fun tileSource(): ITileSource {
+    val url = BuildConfig.MAP_TILE_URL.trim()
+    if (url.isEmpty() || !url.contains("{z}")) return TileSourceFactory.MAPNIK
+    val base = url.substringBefore("{z}")
+    val ext = url.substringAfterLast("{y}").removePrefix(".").ifBlank { "png" }
+    return object : XYTileSource("CampusCareTiles", 0, 19, 256, ".$ext", arrayOf(base), BuildConfig.MAP_ATTRIBUTION) {}
+}
 
 data class HeatSpot(val latitude: Double, val longitude: Double, val radiusMeters: Double, val intensity: Float)
 
@@ -50,13 +73,14 @@ fun OsmMap(
     heat: List<HeatSpot> = emptyList(),
     showMyLocation: Boolean = false,
     route: List<Pair<Double, Double>> = emptyList(),
+    circles: List<AccuracyCircle> = emptyList(),
     onPinClick: (MapPin) -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val map = remember {
         MapView(context).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
+            setTileSource(tileSource())
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             controller.setZoom(zoom)
@@ -91,6 +115,17 @@ fun OsmMap(
             }
             view.overlays.add(circle)
         }
+        circles.forEach { c ->
+            val ring = Polygon(view).apply {
+                setPoints(Polygon.pointsAsCircle(GeoPoint(c.latitude, c.longitude), c.radiusMeters.coerceAtLeast(3.0)))
+                fillPaint.color = c.color.copy(alpha = 0.16f).toArgb()
+                outlinePaint.color = c.color.copy(alpha = 0.6f).toArgb()
+                outlinePaint.strokeWidth = 3f
+                if (!c.measured) outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(14f, 10f), 0f)
+                setOnClickListener { _, _, _ -> true }
+            }
+            view.overlays.add(ring)
+        }
         if (route.size >= 2) {
             val line = org.osmdroid.views.overlay.Polyline(view).apply {
                 setPoints(route.map { GeoPoint(it.first, it.second) })
@@ -114,6 +149,8 @@ fun OsmMap(
             }
             view.overlays.add(m)
         }
+        // Attribution required by OpenStreetMap's licence (and most tile hosts).
+        view.overlays.add(CopyrightOverlay(view.context).apply { setCopyrightNotice(BuildConfig.MAP_ATTRIBUTION) })
         if (showMyLocation) {
             val me = MyLocationNewOverlay(GpsMyLocationProvider(view.context), view)
             me.enableMyLocation()
