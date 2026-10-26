@@ -23,6 +23,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -31,47 +34,58 @@ import edu.srmap.campuscare.ui.theme.CcColors
 import edu.srmap.campuscare.ui.theme.DisplayFamily
 import edu.srmap.campuscare.ui.theme.LocalReducedMotion
 
-/** The CampusCare shield-and-heart mark, drawn as vector so it stays crisp at any size. */
+/** The CampusCare open-shield-and-care mark: shield 'C', heart-person, and arrival spark. */
 @Composable
 fun ShieldMark(size: Dp = 48.dp, modifier: Modifier = Modifier, light: Boolean = false) {
     Canvas(modifier.size(size)) {
         val w = this.size.width
         val h = this.size.height
-        val shield = Path().apply {
-            moveTo(w * 0.5f, h * 0.04f)
-            lineTo(w * 0.9f, h * 0.18f)
-            lineTo(w * 0.9f, h * 0.48f)
-            cubicTo(w * 0.9f, h * 0.74f, w * 0.72f, h * 0.9f, w * 0.5f, h * 0.98f)
-            cubicTo(w * 0.28f, h * 0.9f, w * 0.1f, h * 0.74f, w * 0.1f, h * 0.48f)
-            lineTo(w * 0.1f, h * 0.18f)
-            close()
-        }
-        drawPath(shield, if (light) Color.White else CcColors.Forest)
-        val inner = Path().apply {
-            moveTo(w * 0.5f, h * 0.14f)
-            lineTo(w * 0.8f, h * 0.25f)
-            lineTo(w * 0.8f, h * 0.48f)
-            cubicTo(w * 0.8f, h * 0.68f, w * 0.67f, h * 0.81f, w * 0.5f, h * 0.88f)
-            cubicTo(w * 0.33f, h * 0.81f, w * 0.2f, h * 0.68f, w * 0.2f, h * 0.48f)
-            lineTo(w * 0.2f, h * 0.25f)
-            close()
-        }
-        drawPath(inner, if (light) CcColors.Mint else CcColors.Emerald)
-        drawHeart(Offset(w * 0.5f, h * 0.52f), w * 0.34f, if (light) CcColors.Forest else Color.White)
-    }
-}
 
-private fun DrawScope.drawHeart(center: Offset, width: Float, color: Color) {
-    val x = center.x
-    val y = center.y
-    val s = width / 2f
-    val p = Path().apply {
-        moveTo(x, y + s * 0.9f)
-        cubicTo(x - s * 1.4f, y - s * 0.1f, x - s * 0.7f, y - s * 1.1f, x, y - s * 0.35f)
-        cubicTo(x + s * 0.7f, y - s * 1.1f, x + s * 1.4f, y - s * 0.1f, x, y + s * 0.9f)
-        close()
+        // 1. Open Shield 'C'
+        val shield = Path().apply {
+            moveTo(w * 0.68f, h * 0.205f)
+            lineTo(w * 0.45f, h * 0.13f)
+            lineTo(w * 0.20f, h * 0.205f)
+            lineTo(w * 0.20f, h * 0.50f)
+            cubicTo(w * 0.20f, h * 0.67f, w * 0.32f, h * 0.80f, w * 0.45f, h * 0.86f)
+            cubicTo(w * 0.545f, h * 0.815f, w * 0.615f, h * 0.745f, w * 0.64f, h * 0.665f)
+        }
+        drawPath(
+            path = shield,
+            color = if (light) Color.White else CcColors.Forest,
+            style = Stroke(width = w * 0.125f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        )
+
+        // 2. Person Head
+        val personColor = if (light) CcColors.Mint else CcColors.Emerald
+        drawCircle(
+            color = personColor,
+            radius = w * 0.078f,
+            center = Offset(w * 0.45f, h * 0.335f)
+        )
+
+        // 3. Person Body (Heart)
+        val heart = Path().apply {
+            moveTo(w * 0.45f, h * 0.465f)
+            cubicTo(w * 0.43f, h * 0.425f, w * 0.32f, h * 0.385f, w * 0.29f, h * 0.455f)
+            cubicTo(w * 0.25f, h * 0.54f, w * 0.34f, h * 0.635f, w * 0.45f, h * 0.725f)
+            cubicTo(w * 0.56f, h * 0.635f, w * 0.65f, h * 0.54f, w * 0.61f, h * 0.455f)
+            cubicTo(w * 0.58f, h * 0.385f, w * 0.47f, h * 0.425f, w * 0.45f, h * 0.465f)
+            close()
+        }
+        drawPath(heart, personColor)
+
+        // 4. Spark (Help Arrives)
+        val spark = Path().apply {
+            moveTo(w * 0.71f, h * 0.34f)
+            quadraticTo(w * 0.71f, h * 0.43f, w * 0.80f, h * 0.43f)
+            quadraticTo(w * 0.71f, h * 0.43f, w * 0.71f, h * 0.52f)
+            quadraticTo(w * 0.71f, h * 0.43f, w * 0.62f, h * 0.43f)
+            quadraticTo(w * 0.71f, h * 0.43f, w * 0.71f, h * 0.34f)
+            close()
+        }
+        drawPath(spark, CcColors.Spark)
     }
-    drawPath(p, color)
 }
 
 /** Logo lock-up: mark + "CampusCare" wordmark (serif, two-tone as in the mockups). */
@@ -82,7 +96,7 @@ fun Wordmark(modifier: Modifier = Modifier, light: Boolean = false, markSize: Dp
             ShieldMark(markSize, light = light)
             Spacer(Modifier.width(8.dp))
         }
-        Text("Campus", style = MaterialTheme.typography.headlineMedium, fontFamily = DisplayFamily, fontWeight = FontWeight.Bold, color = if (light) Color.White else CcColors.Forest)
+        Text("Campus", style = MaterialTheme.typography.headlineMedium, fontFamily = DisplayFamily, fontWeight = FontWeight.ExtraBold, color = if (light) Color.White else CcColors.Ink)
         Text("Care", style = MaterialTheme.typography.headlineMedium, fontFamily = DisplayFamily, fontWeight = FontWeight.Bold, color = if (light) CcColors.Emerald400 else CcColors.Emerald)
     }
 }
@@ -154,8 +168,8 @@ fun LeafDecoration(modifier: Modifier = Modifier, color: Color = CcColors.Mint) 
         fun leaf(cx: Float, cy: Float, r: Float, alpha: Float) {
             val p = Path().apply {
                 moveTo(cx, cy - r)
-                quadraticBezierTo(cx + r, cy - r * 0.2f, cx, cy + r)
-                quadraticBezierTo(cx - r, cy - r * 0.2f, cx, cy - r)
+                quadraticTo(cx + r, cy - r * 0.2f, cx, cy + r)
+                quadraticTo(cx - r, cy - r * 0.2f, cx, cy - r)
                 close()
             }
             drawPath(p, color.copy(alpha = alpha))

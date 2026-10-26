@@ -1,8 +1,11 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="forest">#064E3B</color>
-    <color name="emerald">#059669</color>
-    <color name="mint">#D1FAE5</color>
+    <color name="emerald">#10B981</color>
+    <color name="mint">#A7F3D0</color>
+    <color name="spark">#F59E0B</color>
+    <color name="ink">#082A20</color>
+    <color name="night">#04090A</color>
     <color name="cream">#F7F4EC</color>
     <color name="white">#FFFFFF</color>
     <color name="sos_red">#DC2626</color>
