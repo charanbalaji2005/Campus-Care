@@ -18,11 +18,14 @@ export async function autoSeedDatabase() {
       { key: 'platform' },
       {
         $set: {
-          'value.turnstile.enabled': false,
+          'value.turnstile.enabled': Boolean(env.TURNSTILE_SECRET && env.TURNSTILE_SECRET !== '1x0000000000000000000000000000000AA'),
           'value.security.requireMfaForSuperAdmin': false,
-          'value.turnstile.forms.login': false,
-          'value.turnstile.forms.register': false,
-          'value.turnstile.forms.incidentSubmit': false,
+          'value.turnstile.forms.login': true,
+          'value.turnstile.forms.register': true,
+          'value.turnstile.forms.forgotPassword': true,
+          'value.turnstile.forms.resetPassword': true,
+          'value.turnstile.forms.resendVerification': true,
+          'value.turnstile.forms.incidentSubmit': true,
         },
       },
       { upsert: true },

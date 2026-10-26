@@ -53,15 +53,44 @@ mobileRouter.get('/turnstile', (req, res) => {
     'Content-Security-Policy',
     "default-src 'none'; script-src 'unsafe-inline' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'unsafe-inline'; connect-src https://challenges.cloudflare.com; frame-ancestors 'none'",
   );
-  res.setHeader('Cache-Control', 'no-store');
-  res.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>html,body{margin:0;background:transparent;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif}</style>
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=ccLoad&render=explicit" async defer></script></head>
-<body><div id="w"></div><script>
-function send(kind, value){ try { window.CampusCareAndroid && window.CampusCareAndroid[kind](value || ''); } catch(e){} }
-function ccLoad(){ turnstile.render('#w', { sitekey: ${JSON.stringify(siteKey)}, action: ${JSON.stringify(action)}, theme: 'light', size: 'flexible',
-  callback: function(t){ send('onToken', t); }, 'expired-callback': function(){ send('onExpired'); }, 'error-callback': function(e){ send('onError', String(e)); } }); }
-</script></body></html>`);
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>
+  html,body{margin:0;padding:0;background:transparent;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-user-select:none;user-select:none}
+  #w{display:flex;justify-content:center;align-items:center;min-height:65px;min-width:300px}
+</style>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=ccLoad&render=explicit" async defer onerror="ccErr('script_load_error')"></script>
+</head>
+<body>
+  <div id="w"></div>
+  <script>
+    function send(kind, value){
+      try {
+        if (window.CampusCareAndroid && typeof window.CampusCareAndroid[kind] === 'function') {
+          window.CampusCareAndroid[kind](value !== undefined ? String(value) : '');
+        }
+      } catch(e) {}
+    }
+    function ccErr(msg){ send('onError', msg || 'turnstile_error'); }
+    function ccLoad(){
+      try {
+        if (!window.turnstile) { ccErr('turnstile_not_available'); return; }
+        send('onLoaded', '');
+        turnstile.render('#w', {
+          sitekey: ${JSON.stringify(siteKey)},
+          action: ${JSON.stringify(action)},
+          theme: 'light',
+          size: 'flexible',
+          callback: function(token){ send('onToken', token); },
+          'expired-callback': function(){ send('onExpired', ''); },
+          'error-callback': function(code){ send('onError', String(code || 'challenge_failed')); }
+        });
+      } catch(e) {
+        ccErr(e && e.message ? e.message : 'render_failed');
+      }
+    }
+  </script>
+</body></html>`);
 });
 
 mobileRouter.post(
