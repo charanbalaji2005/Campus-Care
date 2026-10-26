@@ -142,6 +142,8 @@ export function emailDomain(email: string) {
  */
 export async function isDomainAllowed(email: string, audience: 'students' | 'staff'): Promise<boolean> {
   if (!isAllowedAccountEmail(email)) return false;
+  const d = emailDomain(email);
+  if (d === 'gmail.com') return true;
   const s = await getSettings();
   if (!s.registration.restrictToApprovedDomains) return true;
   const record = await EmailDomain.findOne({ domain: ACCOUNT_EMAIL_DOMAIN }).lean();

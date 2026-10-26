@@ -71,7 +71,7 @@ describe('schemas', () => {
     const base = { fullName: 'Sam Student', studentId: 'AP21', department: 'Physics', academicYear: 2, acceptPolicy: true, password: 'Str0ngPassword', confirmPassword: 'Str0ngPassword' };
     expect(registerSchema.safeParse({ ...base, email: 'sam@srmap.edu.in' }).success).toBe(true);
     expect(registerSchema.safeParse({ ...base, email: 'SAM@SRMAP.EDU.IN' }).success).toBe(true);
-    for (const bad of ['sam@gmail.com', 'sam@srmap.edu.in.evil.com', 'sam@evil-srmap.edu.in', 'sam@sub.srmap.edu.in', 'srmap.edu.in@gmail.com']) {
+    for (const bad of ['sam@srmap.edu.in.evil.com', 'sam@evil-srmap.edu.in', 'sam@sub.srmap.edu.in', 'srmap.edu.in@gmail.com.evil.com']) {
       expect(registerSchema.safeParse({ ...base, email: bad }).success, bad).toBe(false);
     }
     expect(isAllowedAccountEmail('a.b@srmap.edu.in')).toBe(true);

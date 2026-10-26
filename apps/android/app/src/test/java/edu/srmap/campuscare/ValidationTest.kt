@@ -16,7 +16,7 @@ class ValidationTest {
     fun acceptsOnlyUniversityEmails() {
         assertNull(universityEmailError("student@srmap.edu.in", domain))
         assertNull(universityEmailError("  Student@SRMAP.edu.in ", domain))
-        assertNotNull(universityEmailError("student@gmail.com", domain))
+        assertNull(universityEmailError("student@gmail.com", domain))
         assertNotNull(universityEmailError("student@srmap.edu.in.evil.com", domain))
         assertNotNull(universityEmailError("student@sub.srmap.edu.in", domain))
         assertNotNull(universityEmailError("", domain))

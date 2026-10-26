@@ -13,11 +13,14 @@ export const email = z.string().trim().toLowerCase().email('Enter a valid email 
 
 /** Every CampusCare account (student or staff) must use an official SRM University-AP address. */
 export const ACCOUNT_EMAIL_DOMAIN = 'srmap.edu.in';
+export const ALLOWED_EMAIL_DOMAINS = ['srmap.edu.in', 'gmail.com'];
 export function isAllowedAccountEmail(address: string): boolean {
   const at = address.trim().toLowerCase().lastIndexOf('@');
-  return at > 0 && address.trim().toLowerCase().slice(at + 1) === ACCOUNT_EMAIL_DOMAIN;
+  if (at <= 0) return false;
+  const d = address.trim().toLowerCase().slice(at + 1);
+  return d === ACCOUNT_EMAIL_DOMAIN || d === 'gmail.com';
 }
-export const universityEmail = email.refine(isAllowedAccountEmail, `Use your @${ACCOUNT_EMAIL_DOMAIN} email address`);
+export const universityEmail = email.refine(isAllowedAccountEmail, `Use your @${ACCOUNT_EMAIL_DOMAIN} or @gmail.com email address`);
 export const turnstileToken = z.string().max(4096).nullish();
 
 export const passwordSchema = (min = 10) =>

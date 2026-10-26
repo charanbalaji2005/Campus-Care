@@ -123,7 +123,8 @@ fun universityEmailError(email: String, domain: String): String? {
     val e = email.trim().lowercase()
     if (e.isEmpty()) return "Enter your university email"
     if (!Regex("^[^@\\s]+@[^@\\s]+$").matches(e)) return "Enter a valid email address"
-    if (e.substringAfterLast('@') != domain) return "Use your @$domain email address"
+    val d = e.substringAfterLast('@')
+    if (d != domain && d != "gmail.com") return "Use your @$domain or @gmail.com email address"
     return null
 }
 
