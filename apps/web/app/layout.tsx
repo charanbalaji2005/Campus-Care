@@ -6,7 +6,7 @@ import './globals.css';
 import { Providers } from '@/components/providers';
 
 export const metadata: Metadata = {
-  title: { default: 'CampusCare', template: '%s · CampusCare' },
+  title: { default: 'Campus Care', template: '%s · Campus Care' },
   description: 'University campus safety, incident reporting, grievance and counselling support.',
   robots: { index: false, follow: false },
 };

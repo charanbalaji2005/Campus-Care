@@ -62,13 +62,13 @@ android {
     buildTypes {
         debug {
             versionNameSuffix = "-debug"
-            resValue("string", "app_name", "CampusCare (debug)")
+            resValue("string", "app_name", "Campus Care")
         }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            resValue("string", "app_name", "CampusCare")
+            resValue("string", "app_name", "Campus Care")
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             if (!apiUrl.startsWith("https://")) {
                 logger.warn("CampusCare: release build uses a non-HTTPS API URL ($apiUrl). Set -Pcampuscare.apiUrl=https://…")
