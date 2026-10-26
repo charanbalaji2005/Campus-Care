@@ -53,6 +53,8 @@ const schema = z.object({
 
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_ANDROID_CLIENT_ID: z.string().optional(),
+  GOOGLE_PROJECT_ID: z.string().optional(),
 
   /** console = development only (writes to DEV_MAIL_DIR). nodemailer = send through a mail service account. */
   EMAIL_PROVIDER: z.enum(['console', 'nodemailer']).default('console'),

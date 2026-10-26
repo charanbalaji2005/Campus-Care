@@ -121,8 +121,9 @@ export async function exchangeGoogleCode(cfg: GoogleConfig, code: string, state:
  * google-auth-library; the nonce (if the app sent one) must match.
  */
 export async function verifyGoogleIdToken(cfg: GoogleConfig, idToken: string, expectedNonce?: string): Promise<GoogleIdentity> {
+  const allowedAudiences = Array.from(new Set([cfg.clientId, env.GOOGLE_ANDROID_CLIENT_ID].filter(Boolean))) as string[];
   const c = new OAuth2Client({ clientId: cfg.clientId });
-  const ticket = await c.verifyIdToken({ idToken, audience: cfg.clientId });
+  const ticket = await c.verifyIdToken({ idToken, audience: allowedAudiences });
   const p = ticket.getPayload();
   if (!p) throw new Error('Invalid ID token');
   if (p.iss !== 'https://accounts.google.com' && p.iss !== 'accounts.google.com') throw new Error('Unexpected issuer');
