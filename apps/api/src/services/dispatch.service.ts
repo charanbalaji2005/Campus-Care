@@ -126,6 +126,39 @@ async function notifyAssignee(assignment: AlertAssignmentDoc, alert: { _id: unkn
   } catch (err) {
     await AlertDeliveryEvent.create({ alertId: alert._id, assignmentId: assignment._id, channel: 'in_app', recipient: responderId, outcome: 'failed', error: (err as Error).message.slice(0, 200) });
   }
+
+  // Priority On-Duty Alert Email: send specifically to the chosen on-duty responder who holds the assignment
+  try {
+    const responderUser = await User.findById(responderId, { email: 1, fullName: 1 }).lean();
+    if (responderUser?.email) {
+      const fullAlert = await EmergencyAlert.findById(alert._id, { alertNumber: 1, createdAt: 1, latitude: 1, longitude: 1, accuracyMeters: 1 }).lean();
+      const locationText = fullAlert?.latitude != null
+        ? `${fullAlert.latitude.toFixed(5)}, ${fullAlert.longitude!.toFixed(5)} (±${Math.round(fullAlert.accuracyMeters ?? 0)} m)`
+        : 'Unavailable';
+      await sendEmail(
+        'sos_alert',
+        responderUser.email,
+        {
+          alertNumber: alert.alertNumber,
+          time: (fullAlert?.createdAt ?? new Date()).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+          studentName: 'A student',
+          locationText,
+          link: appLink(`/security/alerts/${alert._id}`),
+        },
+        `sos-assigned:${alert._id}:${responderUser.email}`,
+      );
+      await AlertDeliveryEvent.create({
+        alertId: alert._id,
+        assignmentId: assignment._id,
+        channel: 'email',
+        recipient: responderUser.email.replace(/^(.).*@/, '$1***@'),
+        outcome: 'accepted',
+      });
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, responderId }, 'Could not send on-duty priority alert email to assigned responder');
+  }
+
   emitToUser(responderId, 'sos:assigned', { alertId: String(alert._id), alertNumber: alert.alertNumber, assignmentId: String(assignment._id), ackDeadlineAt: assignment.ackDeadlineAt });
 }
 

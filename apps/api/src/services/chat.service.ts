@@ -28,7 +28,13 @@ export async function channelAccess(user: UserDoc, channel: ChatChannelDoc): Pro
   switch (channel.kind) {
     case 'community': {
       if (!channel.published) return hasPermission(subjectOf(user), 'chat:moderate') ? 'moderator' : 'none';
-      if (hasPermission(subjectOf(user), 'chat:moderate') || channel.moderatorIds?.some((m) => String(m) === uid)) return 'moderator';
+      if (
+        hasPermission(subjectOf(user), 'chat:moderate') ||
+        hasPermission(subjectOf(user), 'announcements:manage') ||
+        user.role === 'super_admin' ||
+        user.role === 'admin' ||
+        channel.moderatorIds?.some((m) => String(m) === uid)
+      ) return 'moderator';
       return hasPermission(subjectOf(user), 'chat:community') ? 'participant' : 'none';
     }
     case 'support_service':

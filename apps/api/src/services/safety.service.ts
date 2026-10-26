@@ -1,6 +1,6 @@
 import { LOCATION_STALE_SECONDS, classifyLocationQuality, formatSosNumber, hasPermission, type Role } from '@campuscare/shared';
 import { Types } from 'mongoose';
-import { AlertDeliveryEvent, EmergencyAlert, EmergencyRecipient, SafeWalkSession, TrustedContact, type EmergencyAlertDoc } from '../models/safety';
+import { AlertAssignment, AlertDeliveryEvent, EmergencyAlert, EmergencyRecipient, SafeWalkSession, TrustedContact, type EmergencyAlertDoc } from '../models/safety';
 import { nextSequence } from '../models/incident';
 import { User } from '../models/user';
 import { enqueueJob, registerJob, registerPeriodic } from './jobs.service';
@@ -214,14 +214,17 @@ registerJob('sos.deliver', async (payload) => {
   emitToRoom('responders:all', 'sos:new', serializeAlert(alert, true, student ? { fullName: student.fullName, phone: student.phone, studentId: student.studentId, hostel: student.hostel } : undefined));
 
   if (settings.sos.emailRecipients) {
-    const responderUsers = await User.find({ _id: { $in: userIds } }, { email: 1 }).lean();
-    const allEmails = new Set([...emails, ...responderUsers.map((u) => u.email)]);
-    for (const to of allEmails) {
-      const d = await sendEmail('sos_alert', to, {
-        alertNumber: alert.alertNumber, time: alert.createdAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }), studentName: student?.fullName ?? 'Student',
-        locationText, link: appLink(`/security/alerts/${alert._id}`),
-      }, `sos:${alert._id}:${to}`);
-      await AlertDeliveryEvent.create({ alertId: alert._id, channel: 'email', recipient: to.replace(/^(.).*@/, '$1***@'), outcome: 'accepted', error: d ? null : 'already queued' });
+    // Check if an on-duty responder has already been assigned based on priority
+    const hasAssigned = await AlertAssignment.exists({ alertId: alert._id, open: true, status: { $in: ['offered', 'acknowledged'] } });
+    if (!hasAssigned) {
+      // If no on-duty responder is assigned yet, alert the emergency recipients/control room
+      for (const to of new Set(emails)) {
+        const d = await sendEmail('sos_alert', to, {
+          alertNumber: alert.alertNumber, time: alert.createdAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }), studentName: student?.fullName ?? 'Student',
+          locationText, link: appLink(`/security/alerts/${alert._id}`),
+        }, `sos:${alert._id}:${to}`);
+        await AlertDeliveryEvent.create({ alertId: alert._id, channel: 'email', recipient: to.replace(/^(.).*@/, '$1***@'), outcome: 'accepted', error: d ? null : 'already queued' });
+      }
     }
   }
   if (alert.deliveryAttempts === 1) await AlertDeliveryEvent.create({ alertId: alert._id, channel: 'sms', recipient: 'gateway', outcome: 'not_configured' });

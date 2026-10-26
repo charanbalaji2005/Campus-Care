@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.DirectionsWalk
 import androidx.compose.material.icons.automirrored.rounded.HelpOutline
@@ -163,17 +165,37 @@ fun CommunitySpacesScreen() {
             if (c.suggestionsEnabled) CcButton("Suggestions", { nav.navigate(Routes.Suggestions) }, Modifier.weight(1f), kind = ButtonKind.Soft, leadingIcon = Icons.Rounded.EmojiObjects)
         }
         if (c.hazardReportsEnabled) CcButton("Report a hazard on campus", { nav.navigate(Routes.Hazard) }, Modifier.fillMaxWidth(), kind = ButtonKind.Outline, leadingIcon = Icons.Rounded.Warning)
-        SectionHeader("Channels")
+        SectionHeader("Official Announcements & Notices")
         LoadContent(overview) { o ->
-            if (o.community.isEmpty()) {
-                EmptyState("No community channels", message = if (!config.settings.communityEnabled) "Community chat is turned off." else "Channels will appear here when published.", icon = Icons.Rounded.Groups)
+            val official = o.community.filter { it.readOnly || it.slug == "official" }
+            val other = o.community.filterNot { it.readOnly || it.slug == "official" }
+
+            if (official.isNotEmpty()) {
+                CcCard(padding = 8.dp, color = CcColors.Mint50) {
+                    official.forEachIndexed { i, ch ->
+                        if (i > 0) Divider()
+                        ListRow(
+                            ch.name,
+                            subtitle = ch.description.ifBlank { "Important university updates and official safety broadcasts." },
+                            icon = Icons.Rounded.Campaign,
+                            tone = Tone.Brand,
+                            trailing = { StatusChip("Official", Tone.Brand, dot = true) },
+                            onClick = { nav.navigate(Routes.chat(ch.id)) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+            }
+
+            SectionHeader("Community Discussions")
+            if (other.isEmpty()) {
+                EmptyState("No open discussion channels", message = if (!config.settings.communityEnabled) "Community chat is currently off." else "Channels will appear here when published.", icon = Icons.Rounded.Groups)
             } else {
                 CcCard(padding = 8.dp) {
-                    o.community.forEachIndexed { i, ch ->
+                    other.forEachIndexed { i, ch ->
                         if (i > 0) Divider()
                         ListRow(
                             "# ${ch.name}", subtitle = ch.description.ifBlank { null }, icon = Icons.Rounded.Groups, tone = Tone.Sky,
-                            trailing = { if (ch.readOnly) StatusChip("Announcements", Tone.Neutral) },
                             onClick = { nav.navigate(Routes.chat(ch.id)) },
                         )
                     }

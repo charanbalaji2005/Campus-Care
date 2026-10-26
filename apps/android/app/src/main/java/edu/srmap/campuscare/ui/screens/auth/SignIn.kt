@@ -390,6 +390,7 @@ fun ForgotPasswordScreen() {
             problem?.let { InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion) }
             TurnstileNote(turnstile.enabled)
             CcButton("Send reset link", { submit() }, modifier = Modifier.fillMaxWidth(), loading = busy)
+
         }
     }
     TurnstileHost(turnstile)
@@ -717,7 +718,15 @@ fun CompleteProfileScreen() {
     var year by rememberSaveable { mutableStateOf(user?.academicYear?.toString()) }
     var busy by remember { mutableStateOf(false) }
     var errors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    AuthLayout("Complete your profile", "Committees need your student ID to process reports. It can't be changed later.") {
+    AuthLayout(
+        title = "Complete your profile",
+        subtitle = "Committees need your student ID to process reports. It can't be changed later.",
+        onBack = {
+            if (!nav.popBackStack()) {
+                app.session.clear()
+            }
+        },
+    ) {
         CcTextField(studentId, { studentId = it.uppercase() }, label = "Student ID / Roll number", leadingIcon = Icons.Rounded.Badge, error = errors["studentId"], capitalization = KeyboardCapitalization.Characters)
         CcSelect("Department", Catalog.departments.map { it to it }, department, { department = it }, leadingIcon = Icons.Rounded.School, error = errors["department"])
         CcSelect("Academic year", (1..6).map { "$it" to "Year $it" }, year, { year = it }, leadingIcon = Icons.Rounded.CalendarMonth, error = errors["academicYear"])
@@ -740,6 +749,12 @@ fun CompleteProfileScreen() {
                 }
             }
         }, modifier = Modifier.fillMaxWidth(), loading = busy)
+        TextButton(
+            onClick = { app.session.clear() },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Back to sign in / Switch account", color = CcColors.Forest700)
+        }
     }
     Spacer(Modifier.padding(0.dp))
 }

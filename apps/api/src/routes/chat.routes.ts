@@ -23,9 +23,16 @@ chatRouter.get(
   asyncHandler(async (req, res) => {
     const user = req.user!;
     const settings = await getSettings();
-    const community = settings.chat.communityEnabled
-      ? await ChatChannel.find({ kind: 'community', published: true }).sort({ order: 1 }).lean()
+    // Official announcements are always visible to all roles; interactive community channels respect the setting
+    const officialChannels = await ChatChannel.find({ kind: 'community', published: true, readOnly: true }).sort({ order: 1 }).lean();
+    const otherCommunity = settings.chat.communityEnabled
+      ? await ChatChannel.find({ kind: 'community', published: true, readOnly: false }).sort({ order: 1 }).lean()
       : [];
+    const communityMap = new Map();
+    for (const c of [...officialChannels, ...otherCommunity]) {
+      communityMap.set(String(c._id), c);
+    }
+    const community = Array.from(communityMap.values());
     const services = await ChatChannel.find({ kind: 'support_service', published: true }).sort({ order: 1 }).lean();
     let threads: Record<string, unknown>[] = [];
     if (user.role === 'student') {
