@@ -1,3 +1,4 @@
+import { ResponseZone } from '../models/duty';
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import dns from 'node:dns/promises';
@@ -63,7 +64,7 @@ superAdminRouter.get(
       domains: Object.fromEntries(domains.map((d) => [d._id, d.count])),
       health: {
         database: databaseReady() ? 'ok' : 'down',
-        emailProvider: provider ? (provider.type === 'nodemailer' ? `Nodemailer · ${provider.service}` : 'console') : env.EMAIL_PROVIDER === 'nodemailer' ? `Nodemailer · ${env.MAIL_SERVICE}` : 'console',
+        emailProvider: provider ? (provider.type === 'nodemailer' ? `Nodemailer Â· ${provider.service}` : 'console') : env.EMAIL_PROVIDER === 'nodemailer' ? `Nodemailer Â· ${env.MAIL_SERVICE}` : 'console',
         emailFailures24h: failedEmails,
         jobsPending: pendingJobs,
         jobsFailed: failedJobs,
@@ -192,7 +193,7 @@ superAdminRouter.get(
     const g = await IdentityProviderConfig.findOne({ provider: 'google' }).select('+clientSecretEnc').lean();
     ok(res, [{
       provider: 'google', enabled: g?.enabled ?? false, clientId: g?.clientId ?? env.GOOGLE_CLIENT_ID ?? '',
-      clientSecret: g?.clientSecretEnc ? '••••••••(stored)' : env.GOOGLE_CLIENT_SECRET ? '••••••••(from environment)' : null,
+      clientSecret: g?.clientSecretEnc ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢(stored)' : env.GOOGLE_CLIENT_SECRET ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢(from environment)' : null,
       allowedDomains: g?.allowedDomains ?? [], redirectUri: googleRedirectUri(), authorizedOrigin: env.WEB_ORIGIN,
     }]);
   }),
@@ -365,7 +366,7 @@ superAdminRouter.post('/users/:id/revoke-sessions', requirePermission('security:
  */
 superAdminRouter.post('/users/:id/reset-mfa', requirePermission('security:manage'), requireRecentAuth, asyncHandler(async (req, res) => {
   if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
-  const input = parse(z.object({ verification: z.string().trim().min(10, 'Describe how you verified this person’s identity (e.g. ID card checked in person, ticket reference)').max(500) }), req.body ?? {});
+  const input = parse(z.object({ verification: z.string().trim().min(10, 'Describe how you verified this personâ€™s identity (e.g. ID card checked in person, ticket reference)').max(500) }), req.body ?? {});
   if (String(req.params.id) === String(req.user!._id)) throw new AppError(422, 'self', 'Another administrator must reset your two-step verification.');
   const target = await User.findById(req.params.id, { email: 1, fullName: 1 });
   if (!target) throw notFound();
@@ -392,7 +393,7 @@ superAdminRouter.put('/case-routing', requirePermission('routing:manage'), requi
   ok(res, { ok: true });
 }));
 
-// ------------------------------------------------------------------ chat channels (configuration only — no message access)
+// ------------------------------------------------------------------ chat channels (configuration only â€” no message access)
 superAdminRouter.get('/chat/channels', requirePermission('chat:configure'), asyncHandler(async (_req, res) => {
   const list = await ChatChannel.find({ kind: { $in: ['community', 'support_service'] } }).sort({ kind: 1, order: 1 }).lean();
   const counts = await ChatChannel.aggregate([{ $match: { kind: 'support_thread' } }, { $group: { _id: '$serviceId', threads: { $sum: 1 } } }]);
@@ -505,8 +506,8 @@ superAdminRouter.get('/integrations', requirePermission('settings:manage'), asyn
   const s = await getSettings();
   ok(res, [
     { key: 'mongodb', name: 'MongoDB Atlas', status: databaseReady() ? 'connected' : 'disconnected' },
-    { key: 'email', name: 'Outbound email (Nodemailer)', status: provider ? (provider.type === 'nodemailer' ? `Nodemailer · ${provider.service} · ${provider.authUser} (console)` : 'console (development)') : env.EMAIL_PROVIDER === 'nodemailer' ? `Nodemailer · ${env.MAIL_SERVICE} (environment)` : 'console (development)', needsCredentials: (provider?.type ?? env.EMAIL_PROVIDER) === 'console' },
-    { key: 'turnstile', name: 'Cloudflare Turnstile', status: env.TURNSTILE_SECRET ? 'configured' : 'test keys — set TURNSTILE_SITE_KEY / TURNSTILE_SECRET', needsCredentials: !env.TURNSTILE_SECRET, enabled: s.turnstile.enabled },
+    { key: 'email', name: 'Outbound email (Nodemailer)', status: provider ? (provider.type === 'nodemailer' ? `Nodemailer Â· ${provider.service} Â· ${provider.authUser} (console)` : 'console (development)') : env.EMAIL_PROVIDER === 'nodemailer' ? `Nodemailer Â· ${env.MAIL_SERVICE} (environment)` : 'console (development)', needsCredentials: (provider?.type ?? env.EMAIL_PROVIDER) === 'console' },
+    { key: 'turnstile', name: 'Cloudflare Turnstile', status: env.TURNSTILE_SECRET ? 'configured' : 'test keys â€” set TURNSTILE_SITE_KEY / TURNSTILE_SECRET', needsCredentials: !env.TURNSTILE_SECRET, enabled: s.turnstile.enabled },
     { key: 'google', name: 'Google OAuth 2.0', status: google?.enabled ? 'enabled' : 'disabled', needsCredentials: !(google?.clientId || env.GOOGLE_CLIENT_ID) },
     { key: 'inbound', name: 'Inbound email webhook', status: s.inboundEmail.enabled ? 'enabled' : 'disabled', needsCredentials: !env.INBOUND_EMAIL_WEBHOOK_SECRET },
     { key: 'storage', name: 'Private file storage', status: 'local disk (replace with private object storage in production)' },
@@ -553,6 +554,47 @@ superAdminRouter.get(
   }),
 );
 
+
+// ------------------------------------------------------------------ live-map response zones
+superAdminRouter.get(
+  '/live-map/zones',
+  asyncHandler(async (_req, res) => {
+    let zones = await ResponseZone.find({ active: true }).sort({ campus: 1, name: 1 }).lean();
+    if (!zones.length) {
+      zones = await ResponseZone.find({}).sort({ campus: 1, name: 1 }).lean();
+    }
+    if (!zones.length) {
+      const defaults = [
+        { name: 'Academic Block A & Admin', code: 'acad-a', campus: 'main', latitude: 16.464, longitude: 80.507, radiusMeters: 150 },
+        { name: 'Academic Block B & C', code: 'acad-bc', campus: 'main', latitude: 16.4645, longitude: 80.508, radiusMeters: 150 },
+        { name: 'Central Library & Auditorium', code: 'lib', campus: 'main', latitude: 16.463, longitude: 80.5075, radiusMeters: 120 },
+        { name: 'Hostel Complex (Tier 1 & 2)', code: 'hostel', campus: 'main', latitude: 16.462, longitude: 80.506, radiusMeters: 200 },
+        { name: 'University Health Centre', code: 'health', campus: 'main', latitude: 16.4635, longitude: 80.509, radiusMeters: 100 },
+        { name: 'Sports Arena & Grounds', code: 'sports', campus: 'main', latitude: 16.4615, longitude: 80.5095, radiusMeters: 200 },
+        { name: 'Main Campus Gate & Security', code: 'gate', campus: 'main', latitude: 16.4605, longitude: 80.507, radiusMeters: 100 },
+      ];
+      try {
+        const created = await ResponseZone.insertMany(defaults);
+        zones = created.map((c) => c.toObject());
+      } catch {
+        zones = defaults as any;
+      }
+    }
+    ok(
+      res,
+      zones.map((z: any) => ({
+        id: String(z._id ?? z.id ?? z.code),
+        name: z.name,
+        code: z.code,
+        campus: z.campus,
+        latitude: z.latitude,
+        longitude: z.longitude,
+        radiusMeters: z.radiusMeters,
+      })),
+    );
+  }),
+);
+
 // ------------------------------------------------------------------ data governance: export / deletion requests
 superAdminRouter.get(
   '/data-requests',
@@ -596,7 +638,7 @@ superAdminRouter.post(
       user.safetyCardShare = false;
       user.passwordHash = null;
       user.accountStatus = 'suspended';
-      user.suspendedReason = 'Account deleted at the user’s request';
+      user.suspendedReason = 'Account deleted at the userâ€™s request';
       user.anonymisedAt = new Date();
       await user.save();
       await revokeAllSessions(String(uid));
