@@ -1,13 +1,4 @@
-# Builds the CampusCare Android app.
-#  - Every push / PR: debug APK (pointing at the API URL in the CAMPUSCARE_API_URL variable).
-#  - Manual run or tag v*: signed release APK + AAB when the signing secrets are configured.
-#
-# Repository settings → Secrets and variables → Actions:
-#   Variables: CAMPUSCARE_API_URL (https://api.example.edu), CAMPUSCARE_WEB_URL (https://campuscare.example.edu),
-#              CAMPUSCARE_GOOGLE_WEB_CLIENT_ID (optional)
-#   Secrets:   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD,
-#              GOOGLE_SERVICES_JSON (optional, enables push notifications)
-name: Android
+﻿name: Android
 
 on:
   push:
@@ -24,7 +15,7 @@ on:
         default: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -34,8 +25,8 @@ jobs:
       run:
         working-directory: apps/android
     env:
-      API_URL: ${{ vars.CAMPUSCARE_API_URL || 'http://10.0.2.2:4000' }}
-      WEB_URL: ${{ vars.CAMPUSCARE_WEB_URL || 'http://10.0.2.2:3000' }}
+      API_URL: ${{ vars.CAMPUSCARE_API_URL || 'https://campuscare-api-gywg.onrender.com' }}
+      WEB_URL: ${{ vars.CAMPUSCARE_WEB_URL || 'https://campuscare-web.onrender.com' }}
       GOOGLE_WEB_CLIENT_ID: ${{ vars.CAMPUSCARE_GOOGLE_WEB_CLIENT_ID || '' }}
       IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.release == true }}
     steps:
@@ -54,7 +45,8 @@ jobs:
         run: |
           if [ -n "$GOOGLE_SERVICES_JSON" ]; then echo "$GOOGLE_SERVICES_JSON" > app/google-services.json; echo "Push enabled"; else echo "No google-services.json: push disabled (in-app + realtime still work)"; fi
 
-      - name: Release signing
+      - name: Release signing check
+        id: signing
         if: env.IS_RELEASE == 'true'
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -62,31 +54,36 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -z "$KEYSTORE_B64" ]; then echo "::error::Signing secrets are not configured"; exit 1; fi
-          echo "$KEYSTORE_B64" | base64 -d > release.jks
-          {
-            echo "storeFile=release.jks"
-            echo "storePassword=$STORE_PASSWORD"
-            echo "keyAlias=$KEY_ALIAS"
-            echo "keyPassword=$KEY_PASSWORD"
-          } > keystore.properties
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > release.jks
+            {
+              echo "storeFile=release.jks"
+              echo "storePassword=$STORE_PASSWORD"
+              echo "keyAlias=$KEY_ALIAS"
+              echo "keyPassword=$KEY_PASSWORD"
+            } > keystore.properties
+            echo "has_keystore=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No keystore configured, building debug APK for release"
+            echo "has_keystore=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Unit tests
         run: ./gradlew --no-daemon testDebugUnitTest -Pcampuscare.apiUrl="$API_URL" -Pcampuscare.webUrl="$WEB_URL"
 
       - name: Build debug APK
-        if: env.IS_RELEASE != 'true'
+        if: env.IS_RELEASE != 'true' || steps.signing.outputs.has_keystore == 'false'
         run: ./gradlew --no-daemon assembleDebug -Pcampuscare.apiUrl="$API_URL" -Pcampuscare.webUrl="$WEB_URL" -Pcampuscare.googleWebClientId="$GOOGLE_WEB_CLIENT_ID"
 
       - name: Build release APK and AAB
-        if: env.IS_RELEASE == 'true'
+        if: env.IS_RELEASE == 'true' && steps.signing.outputs.has_keystore == 'true'
         run: |
           ./gradlew --no-daemon assembleRelease bundleRelease \
             -Pcampuscare.apiUrl="$API_URL" -Pcampuscare.webUrl="$WEB_URL" -Pcampuscare.googleWebClientId="$GOOGLE_WEB_CLIENT_ID" \
             -Pcampuscare.versionCode=${{ github.run_number }} -Pcampuscare.versionName="${GITHUB_REF_NAME#v}"
 
-      - name: Print signing certificate SHA-256 (for App Links / ANDROID_CERT_SHA256)
-        if: env.IS_RELEASE == 'true'
+      - name: Print signing certificate SHA-256
+        if: env.IS_RELEASE == 'true' && steps.signing.outputs.has_keystore == 'true'
         run: keytool -list -v -keystore release.jks -storepass "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | grep -E "SHA256" || true
 
       - uses: actions/upload-artifact@v4
@@ -96,6 +93,18 @@ jobs:
             apps/android/app/build/outputs/apk/**/*.apk
             apps/android/app/build/outputs/bundle/**/*.aab
           if-no-files-found: error
+
+      - name: Upload APK to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK_FILE=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
+          if [ -n "$APK_FILE" ]; then
+            cp "$APK_FILE" "CampusCare-${GITHUB_REF_NAME}.apk"
+            gh release upload "${GITHUB_REF_NAME}" "CampusCare-${GITHUB_REF_NAME}.apk" --clobber
+            echo "Successfully uploaded CampusCare-${GITHUB_REF_NAME}.apk to GitHub Release ${GITHUB_REF_NAME}"
+          fi
 
       - name: Clean up signing material
         if: always()
