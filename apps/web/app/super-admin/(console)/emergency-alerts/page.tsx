@@ -116,7 +116,7 @@ export default function EmergencyAlertsPage() {
     if (!broadcastText.trim()) return;
     setBroadcastSending(true);
     try {
-      await api.post('/superadmin/campus-alerts', {
+      await api.post('/admin/campus-alerts', {
         title: 'EMERGENCY CAMPUS ALERT',
         body: broadcastText,
         severity: 'critical',

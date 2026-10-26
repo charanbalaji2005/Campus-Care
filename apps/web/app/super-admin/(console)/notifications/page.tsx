@@ -82,7 +82,7 @@ export default function NotificationsBroadcastPage() {
 
     setSubmitting(true);
     try {
-      await api.post('/superadmin/campus-alerts', {
+      await api.post('/admin/campus-alerts', {
         title,
         body,
         severity,

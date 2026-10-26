@@ -42,7 +42,7 @@ export default function ChatAccessPage() {
 
   const fetchPolicy = async () => {
     try {
-      const res = await api.get<{ settings: any }>('/superadmin/settings');
+      const res = await api.get<{ settings: any }>('/super-admin/settings');
       if (res?.settings) {
         setPolicy((prev) => ({
           ...prev,
@@ -66,7 +66,7 @@ export default function ChatAccessPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await api.patch('/superadmin/settings', {
+      await api.patch('/super-admin/settings', {
         settings: {
           chat: {
             communityEnabled: policy.communityEnabled,

@@ -114,7 +114,7 @@ export function createApp() {
   app.use('/api/v1', opsRouter);
   app.use('/api/v1', contentRouter);
   app.use('/api/v1/admin', adminRouter);
-  app.use('/api/v1/super-admin', superAdminRouter);
+  app.use(['/api/v1/super-admin', '/api/v1/superadmin'], superAdminRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
