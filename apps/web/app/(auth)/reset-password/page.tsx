@@ -40,7 +40,7 @@ export default function ResetPasswordPage() {
   // Read-only check: opening this page never uses up the link. Only "Update password" does.
   React.useEffect(() => {
     if (!token) { setLink('invalid'); return; }
-    api.post<{ valid: boolean; state?: LinkState }>('/auth/reset-password/check', { token })
+    api.get<{ valid: boolean; state?: LinkState }>(`/auth/reset-password/check?token=${encodeURIComponent(token.trim())}`)
       .then((r) => setLink(r.state ?? (r.valid ? 'valid' : 'invalid')))
       .catch(() => setLink('invalid'));
   }, [token]);

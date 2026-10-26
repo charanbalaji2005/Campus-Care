@@ -257,7 +257,16 @@ export type ResetTokenState = 'valid' | 'expired' | 'used' | 'invalid';
 
 /** Read-only check for the reset screen. Never consumes the token. */
 export async function resetTokenState(token: string): Promise<ResetTokenState> {
-  const doc = await PasswordResetToken.findOne({ tokenHash: sha256(token) }).lean();
+  const clean = token.trim();
+  let doc = await PasswordResetToken.findOne({ tokenHash: sha256(clean) }).lean();
+  if (!doc) {
+    try {
+      const decoded = decodeURIComponent(clean);
+      if (decoded !== clean) {
+        doc = await PasswordResetToken.findOne({ tokenHash: sha256(decoded) }).lean();
+      }
+    } catch {}
+  }
   if (!doc) return 'invalid';
   if (doc.consumedAt) return 'used';
   if (doc.expiresAt <= new Date()) return 'expired';
@@ -279,8 +288,11 @@ export async function checkResetToken(token: string) {
  */
 export async function consumePasswordReset(token: string, newHash: string): Promise<UserDoc | null> {
   const claimedAt = new Date();
+  const clean = token.trim();
+  let decoded = clean;
+  try { decoded = decodeURIComponent(clean); } catch {}
   const doc = await PasswordResetToken.findOneAndUpdate(
-    { tokenHash: sha256(token), consumedAt: null, expiresAt: { $gt: claimedAt } },
+    { tokenHash: { $in: [sha256(clean), sha256(decoded)] }, consumedAt: null, expiresAt: { $gt: claimedAt } },
     { $set: { consumedAt: claimedAt } },
     { new: true },
   );

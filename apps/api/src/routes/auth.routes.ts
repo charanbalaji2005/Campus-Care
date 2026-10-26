@@ -339,16 +339,18 @@ authRouter.post(
   }),
 );
 
-authRouter.post(
-  '/reset-password/check',
-  authLimiter,
-  asyncHandler(async (req, res) => {
-    const { token } = parse(tokenSchema, req.body);
-    // Read-only: never consumes the token. state is valid | expired | used | invalid.
-    const state = await resetTokenState(token);
-    ok(res, { valid: state === 'valid', state });
-  }),
-);
+const checkResetHandler = asyncHandler(async (req, res) => {
+  const rawToken = req.method === 'GET' ? req.query.token : req.body?.token;
+  const token = typeof rawToken === 'string' ? rawToken.trim() : '';
+  if (!token) {
+    return ok(res, { valid: false, state: 'invalid' });
+  }
+  const state = await resetTokenState(token);
+  ok(res, { valid: state === 'valid', state });
+});
+
+authRouter.get('/reset-password/check', checkResetHandler);
+authRouter.post('/reset-password/check', authLimiter, checkResetHandler);
 
 authRouter.post(
   '/reset-password',
