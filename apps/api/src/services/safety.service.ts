@@ -76,12 +76,27 @@ export function serializeAlert(a: EmergencyAlertDoc | Record<string, unknown>, f
     assignedToMe: undefined as boolean | undefined,
     timeline: sosTimeline(al as never, forResponder),
     student: forResponder ? student : undefined,
+    batteryLevel: (al as any).batteryLevel ?? null,
+    deviceInfo: (al as any).deviceInfo ?? null,
+    isCachedFix: Boolean((al as any).isCachedFix),
+    evidenceCount: (al as any).evidence?.length ?? 0,
+    evidence: (al as any).evidence ?? [],
   };
 }
 
 export interface RaiseSosInput {
-  idempotencyKey: string; latitude?: number; longitude?: number; accuracyMeters?: number; locationUnavailableReason?: string; note?: string;
-  notifyTrustedContacts?: boolean; countdownMode?: 'client' | 'server'; locationAgeSeconds?: number;
+  idempotencyKey: string;
+  latitude?: number;
+  longitude?: number;
+  accuracyMeters?: number;
+  locationUnavailableReason?: string;
+  note?: string;
+  notifyTrustedContacts?: boolean;
+  countdownMode?: 'client' | 'server';
+  locationAgeSeconds?: number;
+  batteryLevel?: number | null;
+  deviceInfo?: { appVersion?: string; osVersion?: string; model?: string };
+  isCachedFix?: boolean;
 }
 
 /**
@@ -114,6 +129,9 @@ export async function raiseSos(userId: string, input: RaiseSosInput) {
     locationAgeSeconds: input.latitude != null ? input.locationAgeSeconds ?? null : null,
     locationUnavailableReason: input.latitude == null ? input.locationUnavailableReason ?? 'Location not shared' : null,
     note: input.note ?? null,
+    batteryLevel: input.batteryLevel ?? null,
+    deviceInfo: input.deviceInfo ?? null,
+    isCachedFix: Boolean(input.isCachedFix),
     events: [
       { type: 'raised', at: now, actorLabel: 'Student', note: null, studentVisible: true },
       ...(serverCountdown ? [] : [{ type: 'dispatched', at: now, actorLabel: 'CampusCare', note: null, studentVisible: true }]),

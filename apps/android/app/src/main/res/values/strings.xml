@@ -12,4 +12,7 @@
     <string name="channel_service_desc">Shown while location sharing or on-duty mode is running</string>
     <string name="api_base_url">https://campuscare-api-gywg.onrender.com</string>
     <string name="web_base_url">https://campuscare-web.onrender.com</string>
+    <string name="shortcut_sos_short">Emergency SOS</string>
+    <string name="shortcut_sos_long">Emergency SOS Alert</string>
+    <string name="tile_sos_label">Emergency SOS</string>
 </resources>

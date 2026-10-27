@@ -194,16 +194,38 @@ class SafetyApi(private val c: ApiClient) {
      * The same [key] must be reused for retries so a dropped connection never creates a second alert.
      */
     suspend fun raiseSos(
-        key: String, lat: Double?, lng: Double?, accuracy: Double?, unavailableReason: String?, notifyTrusted: Boolean,
-        countdownMode: String? = null, locationAgeSeconds: Double? = null,
+        key: String,
+        lat: Double?,
+        lng: Double?,
+        accuracy: Double?,
+        unavailableReason: String?,
+        notifyTrusted: Boolean,
+        countdownMode: String? = null,
+        locationAgeSeconds: Double? = null,
+        batteryLevel: Int? = null,
+        deviceInfo: Map<String, String>? = null,
+        isCachedFix: Boolean? = null,
+        note: String? = null,
     ): SosAlert = c.post(
         "/safety/sos",
         mapOf(
-            "idempotencyKey" to key, "latitude" to lat, "longitude" to lng, "accuracyMeters" to accuracy,
+            "idempotencyKey" to key,
+            "latitude" to lat,
+            "longitude" to lng,
+            "accuracyMeters" to accuracy,
             "locationAgeSeconds" to locationAgeSeconds?.takeIf { lat != null && lng != null },
-            "locationUnavailableReason" to unavailableReason, "notifyTrustedContacts" to notifyTrusted, "countdownMode" to countdownMode,
+            "locationUnavailableReason" to unavailableReason,
+            "notifyTrustedContacts" to notifyTrusted,
+            "countdownMode" to countdownMode,
+            "batteryLevel" to batteryLevel,
+            "deviceInfo" to deviceInfo,
+            "isCachedFix" to isCachedFix,
+            "note" to note,
         ).filterValues { it != null },
     )
+
+    suspend fun uploadSosEvidence(id: String, bytes: ByteArray, name: String, mime: String): Attachment =
+        c.upload("/safety/sos/$id/evidence", bytes, name, mime)
     suspend fun mySos(): List<SosAlert> = c.get("/safety/sos/mine")
     suspend fun sos(id: String): SosAlert = c.get("/safety/sos/$id")
     suspend fun cancelSos(id: String, reason: String?): SosAlert = c.post("/safety/sos/$id/cancel", mapOf("reason" to reason).filterValues { it != null })

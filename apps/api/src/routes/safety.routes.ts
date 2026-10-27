@@ -5,7 +5,10 @@ import {
   sosResolveSchema, trustedContactSchema, type Role,
 } from '@campuscare/shared';
 import { z } from 'zod';
-import { AppError, asyncHandler, notFound, ok, parse } from '../lib/http';
+import { AppError, asyncHandler, badRequest, forbidden, notFound, ok, parse } from '../lib/http';
+import multer from 'multer';
+import { storeUpload } from '../services/files.service';
+const evidenceUpload = multer({ limits: { fileSize: 25 * 1024 * 1024 } });
 import { decryptSecret, randomToken, sha256 } from '../lib/crypto';
 import { AlertAssignment, AlertDeliveryEvent, CampusAlert, EmergencyAlert, LocationShare, SafeWalkSession, SafetyCheckIn, TrustedContact } from '../models/safety';
 import { ContactConsentToken, User } from '../models/user';
@@ -195,6 +198,95 @@ safetyRouter.post(
     if (!own) throw notFound();
     await dispatchSos(req.params.id, { force: true });
     ok(res, serializeAlert((await EmergencyAlert.findById(req.params.id))!, false));
+  }),
+);
+
+/**
+ * Upload optional Emergency Evidence (photo, audio, video) linked to an active SOS.
+ * Only the reporting student or assigned safety officer can attach evidence.
+ */
+safetyRouter.post(
+  '/sos/:id/evidence',
+  evidenceUpload.single('file'),
+  asyncHandler(async (req, res) => {
+    if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
+    const alert = await EmergencyAlert.findById(req.params.id);
+    if (!alert) throw notFound();
+
+    const isOwner = String(alert.userId) === String(req.user!._id);
+    const isAssigned = alert.assignedTo && String(alert.assignedTo) === String(req.user!._id);
+    const isStaff = hasPermission({ role: req.user!.role as Role, permissions: req.user!.permissions }, 'sos:respond');
+
+    if (!isOwner && !isAssigned && !isStaff) {
+      throw forbidden('You are not authorized to upload evidence for this emergency alert.');
+    }
+
+    if (!req.file) {
+      throw badRequest('No evidence file provided.');
+    }
+
+    const doc = await storeUpload(req.file, {
+      purpose: 'evidence',
+      uploaderId: String(req.user!._id),
+      uploaderTag: req.user!.role,
+    });
+
+    const kind = req.file.mimetype.startsWith('audio') ? 'audio' : req.file.mimetype.startsWith('video') ? 'video' : 'image';
+    const evidenceEntry = {
+      evidenceId: doc._id,
+      kind,
+      filename: req.file.originalname,
+      mimeType: doc.mimeType,
+      size: doc.sizeBytes,
+      capturedAt: new Date(),
+    };
+
+    alert.evidence.push(evidenceEntry as any);
+    alert.events.push({
+      type: 'evidence_uploaded',
+      at: new Date(),
+      actorId: req.user!._id,
+      actorLabel: isOwner ? 'Student' : `${req.user!.fullName} (Responder)`,
+      note: `Uploaded ${kind} evidence (${Math.round(doc.sizeBytes / 1024)} KB)`,
+      studentVisible: true,
+    } as any);
+
+    await alert.save();
+
+    await audit({
+      action: 'sos.evidence_uploaded',
+      req,
+      targetType: 'sos',
+      targetId: String(alert._id),
+      meta: { kind, size: doc.sizeBytes, mimeType: doc.mimeType },
+    });
+
+    emitToRoom(`sos:${alert._id}`, 'sos:updated', { id: String(alert._id), status: alert.status, evidenceCount: alert.evidence.length });
+    emitToRoom('responders:all', 'sos:updated', { id: String(alert._id), status: alert.status, evidenceCount: alert.evidence.length });
+
+    ok(res, { id: String(doc._id), name: req.file.originalname, mimeType: doc.mimeType, sizeBytes: doc.sizeBytes, kind, evidence: evidenceEntry, totalEvidence: alert.evidence.length }, 201);
+  }),
+);
+
+/**
+ * Retrieve evidence files for an authorized alert.
+ */
+safetyRouter.get(
+  '/sos/:id/evidence',
+  asyncHandler(async (req, res) => {
+    if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
+    const alert = await EmergencyAlert.findById(req.params.id).lean();
+    if (!alert) throw notFound();
+
+    const isOwner = String(alert.userId) === String(req.user!._id);
+    const isStaff = hasPermission({ role: req.user!.role as Role, permissions: req.user!.permissions }, 'sos:respond');
+
+    if (!isOwner && !isStaff) {
+      throw notFound();
+    }
+
+    await audit({ action: 'sos.evidence_viewed', req, targetType: 'sos', targetId: String(alert._id) });
+    ok(res, { evidence: (alert as any).evidence || [] });
   }),
 );
 

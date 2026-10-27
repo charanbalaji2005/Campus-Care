@@ -53,6 +53,23 @@ const emergencyAlertSchema = new Schema(
     lastAssignmentAttemptAt: { type: Date, default: null },
     /** When dispatch first found nobody eligible. Cleared once someone is assigned. */
     unassignedSince: { type: Date, default: null },
+    batteryLevel: { type: Number, default: null },
+    deviceInfo: {
+      appVersion: { type: String, default: null },
+      osVersion: { type: String, default: null },
+      model: { type: String, default: null },
+    },
+    isCachedFix: { type: Boolean, default: false },
+    evidence: [
+      {
+        evidenceId: { type: Schema.Types.ObjectId, ref: 'Evidence' },
+        kind: { type: String, enum: ['image', 'audio', 'video'] },
+        filename: { type: String },
+        mimeType: { type: String },
+        size: { type: Number },
+        capturedAt: { type: Date, default: Date.now },
+      },
+    ],
     /** Append-only response timeline (who did what, when). Notes are visible to responders only. */
     events: [
       {

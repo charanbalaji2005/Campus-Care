@@ -189,7 +189,7 @@ opsRouter.get('/admin/emergency-alerts', ...admin, requirePermission('sos:dispat
         id: String(a._id), alertNumber: a.alertNumber, status: a.status, assignmentState: a.assignmentState ?? 'none', reporterRef: reporterRef(a.userId),
         createdAt: a.createdAt, dispatchedAt: a.dispatchedAt, acknowledgedAt: a.acknowledgedAt, resolvedAt: a.resolvedAt, cancelledAt: a.cancelledAt,
         escalationLevel: a.escalationLevel ?? 0, campus: a.campus ?? 'main', zone: a.zoneId ? zoneName.get(String(a.zoneId)) ?? null : null,
-        locationAvailable: a.latitude != null, accuracyMeters: a.accuracyMeters ?? null, unassignedSince: a.unassignedSince ?? null,
+        locationAvailable: a.latitude != null, accuracyMeters: a.accuracyMeters ?? null, batteryLevel: a.batteryLevel ?? null, deviceInfo: a.deviceInfo ?? null, isCachedFix: Boolean(a.isCachedFix), evidenceCount: a.evidence?.length ?? 0, unassignedSince: a.unassignedSince ?? null,
         assignees: assignments.filter((x) => String(x.alertId) === String(a._id)).map((x) => ({ name: names.get(String(x.responderId)) ?? 'Responder', status: x.status })),
         delivery: d,
       };

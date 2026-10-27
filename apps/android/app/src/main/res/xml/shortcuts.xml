@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="emergency_sos"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_sos_short"
+        android:shortcutLongLabel="@string/shortcut_sos_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="in.edu.srmap.campuscare"
+            android:targetClass="edu.srmap.campuscare.MainActivity"
+            android:data="campuscare://student/emergency" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+</shortcuts>

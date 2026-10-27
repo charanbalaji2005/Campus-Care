@@ -3,7 +3,8 @@
 import * as React from 'react';
 import {
   AlertTriangle, CheckCircle2, Clock, Filter, MapPin, Radio, RefreshCw, Send, ShieldAlert,
-  Siren, UserCheck, Users, Volume2, VolumeX, XCircle, ArrowUpRight, ChevronRight, Phone
+  Siren, UserCheck, Users, Volume2, VolumeX, XCircle, ArrowUpRight, ChevronRight, Phone,
+  Battery, Camera, Mic, Smartphone, ShieldCheck, FileText
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Button, Badge, Alert, Card, Input } from '@/components/ui/primitives';
@@ -40,6 +41,20 @@ interface AlertDetail {
     createdAt: string;
     campus: string;
     zone: string | null;
+    batteryLevel?: number | null;
+    deviceInfo?: { appVersion?: string; osVersion?: string; model?: string } | null;
+    isCachedFix?: boolean;
+    evidenceCount?: number;
+    accuracyMeters?: number | null;
+    locationAgeSeconds?: number | null;
+    evidence?: Array<{
+      evidenceId: string;
+      kind: string;
+      filename: string;
+      mimeType: string;
+      size: number;
+      capturedAt: string;
+    }>;
     student?: { fullName: string; phone: string | null; studentId: string | null; hostel: string | null };
   };
   assignments: Array<{
@@ -439,6 +454,80 @@ export default function EmergencyAlertsPage() {
                             <Badge tone={as.status === 'acknowledged' ? 'brand' : 'amber'}>{as.status}</Badge>
                           </div>
                         ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Device Telemetry & Location Quality */}
+                  <div className="p-3 bg-stone-50 rounded-xl space-y-2 text-xs border border-line">
+                    <p className="font-semibold text-ink-strong flex items-center gap-1.5">
+                      <Smartphone className="h-3.5 w-3.5 text-brand-600" /> Device Telemetry &amp; Location Fix
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-ink-soft">Battery Level:</span>{' '}
+                        {detail.alert.batteryLevel != null ? (
+                          <span className={`font-mono font-semibold ${detail.alert.batteryLevel < 20 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                            {detail.alert.batteryLevel}%
+                          </span>
+                        ) : (
+                          <span className="text-ink-soft font-mono">Not reported</span>
+                        )}
+                      </div>
+                      <div>
+                        <span className="text-ink-soft">GPS Precision:</span>{' '}
+                        <span className="font-mono font-semibold text-ink">
+                          {detail.alert.accuracyMeters != null ? `±${Math.round(detail.alert.accuracyMeters)}m` : 'Cell / Wi-Fi'}
+                        </span>
+                      </div>
+                      {detail.alert.deviceInfo && (
+                        <div className="col-span-2">
+                          <span className="text-ink-soft">Device:</span>{' '}
+                          <span className="font-medium text-ink">
+                            {detail.alert.deviceInfo.model || 'Android Device'} ({detail.alert.deviceInfo.osVersion || 'OS'})
+                          </span>
+                        </div>
+                      )}
+                      <div className="col-span-2">
+                        <Badge tone={detail.alert.isCachedFix ? 'amber' : 'brand'} className="text-[10px] px-1.5 py-0.5">
+                          {detail.alert.isCachedFix ? 'Cached Location Fix' : 'Fresh Live GPS Fix'}
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Attached Emergency Evidence */}
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-ink-soft mb-2 flex items-center gap-1">
+                      <Camera className="h-3.5 w-3.5" /> Emergency Evidence ({detail.alert.evidence?.length || 0})
+                    </h4>
+                    {!detail.alert.evidence || detail.alert.evidence.length === 0 ? (
+                      <p className="text-xs text-ink-soft bg-stone-50 p-2.5 rounded-lg border border-line">
+                        No photo or audio evidence uploaded for this alert.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {detail.alert.evidence.map((ev, i) => (
+                          <div key={i} className="p-2.5 rounded-lg bg-stone-50 border border-line flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2">
+                              {ev.kind === 'audio' ? (
+                                <Mic className="h-4 w-4 text-brand-600" />
+                              ) : (
+                                <Camera className="h-4 w-4 text-emerald-600" />
+                              )}
+                              <div>
+                                <p className="font-semibold text-ink">{ev.filename || `Evidence #${i + 1}`}</p>
+                                <p className="text-[10px] text-ink-soft">
+                                  {ev.kind.toUpperCase()} · {Math.round((ev.size || 0) / 1024)} KB · {new Date(ev.capturedAt).toLocaleTimeString()}
+                                </p>
+                              </div>
+                            </div>
+                            <Badge tone="brand" className="text-[10px]">Encrypted &amp; Audited</Badge>
+                          </div>
+                        ))}
+                        <p className="text-[10px] text-ink-soft italic">
+                          Evidence access is logged in the permanent safety audit trail.
+                        </p>
                       </div>
                     )}
                   </div>

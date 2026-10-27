@@ -580,6 +580,9 @@ data class SosAlert(
     val unassignedSince: String? = null,
     /** This responder's own dispatch offer for the alert (responder view only). */
     val myAssignment: MyAssignment? = null,
+    val batteryLevel: Int? = null,
+    val isCachedFix: Boolean = false,
+    val evidenceCount: Int = 0,
 )
 
 @Serializable

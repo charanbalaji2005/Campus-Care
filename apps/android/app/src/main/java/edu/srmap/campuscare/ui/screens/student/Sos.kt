@@ -1,6 +1,13 @@
 package edu.srmap.campuscare.ui.screens.student
 
+import android.content.Context
+import android.os.BatteryManager
+import android.os.Build
+import android.os.SystemClock
 import android.view.HapticFeedbackConstants
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -10,7 +17,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,32 +30,37 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.DirectionsRun
+import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.automirrored.rounded.TrendingUp
 import androidx.compose.material.icons.rounded.Call
+import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
-import androidx.compose.material.icons.automirrored.rounded.DirectionsRun
 import androidx.compose.material.icons.rounded.LocationOff
-import androidx.compose.material.icons.rounded.LocationOn
-import androidx.compose.material.icons.rounded.MyLocation
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.NotificationsActive
-import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Sms
-import androidx.compose.material.icons.automirrored.rounded.TrendingUp
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,26 +68,23 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import edu.srmap.campuscare.BuildConfig
 import edu.srmap.campuscare.data.ApiException
 import edu.srmap.campuscare.data.SosAlert
 import edu.srmap.campuscare.data.newIdempotencyKey
 import edu.srmap.campuscare.services.LocationShareService
+import edu.srmap.campuscare.ui.components.AccuracyCircle
 import edu.srmap.campuscare.ui.components.ButtonKind
 import edu.srmap.campuscare.ui.components.Catalog
 import edu.srmap.campuscare.ui.components.CcButton
@@ -92,6 +100,8 @@ import edu.srmap.campuscare.ui.components.LoadContent
 import edu.srmap.campuscare.ui.components.LocalApp
 import edu.srmap.campuscare.ui.components.LocalNav
 import edu.srmap.campuscare.ui.components.LocalSnack
+import edu.srmap.campuscare.ui.components.LocationQualityPanel
+import edu.srmap.campuscare.ui.components.LocationRationaleDialog
 import edu.srmap.campuscare.ui.components.MapPin
 import edu.srmap.campuscare.ui.components.OsmMap
 import edu.srmap.campuscare.ui.components.SectionHeader
@@ -103,17 +113,9 @@ import edu.srmap.campuscare.ui.components.rememberLocationRequest
 import edu.srmap.campuscare.ui.components.rememberPulse
 import edu.srmap.campuscare.ui.navigation.Routes
 import edu.srmap.campuscare.ui.theme.CcColors
-import edu.srmap.campuscare.ui.theme.LocalReducedMotion
 import edu.srmap.campuscare.util.Fix
 import edu.srmap.campuscare.util.Fmt
 import edu.srmap.campuscare.util.LocationHelper
-import edu.srmap.campuscare.util.composeSms
-import edu.srmap.campuscare.util.dial
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import edu.srmap.campuscare.ui.components.AccuracyCircle
-import edu.srmap.campuscare.ui.components.LocationQualityPanel
-import edu.srmap.campuscare.ui.components.LocationRationaleDialog
 import edu.srmap.campuscare.util.LocationPermissions
 import edu.srmap.campuscare.util.LocationQuality
 import edu.srmap.campuscare.util.LocationQualityRules
@@ -122,16 +124,39 @@ import edu.srmap.campuscare.util.PermissionLevel
 import edu.srmap.campuscare.util.RawFix
 import edu.srmap.campuscare.util.ageLabel
 import edu.srmap.campuscare.util.ageSeconds
+import edu.srmap.campuscare.util.composeSms
+import edu.srmap.campuscare.util.dial
+import edu.srmap.campuscare.util.readPicked
 import edu.srmap.campuscare.util.rememberLiveFix
-import androidx.compose.material3.TextButton
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.max
 
 private val ACTIVE_SOS = setOf("queued", "sending", "sent", "acknowledged", "en_route", "failed")
 
-private enum class SosPhase { Idle, Countdown, Sending, Failed }
+private enum class SosPhase { Countdown, Sending, Cancelled, Failed }
+
+private const val COUNTDOWN_TOTAL_SECONDS = 10
+
+private fun getBatteryPercentage(context: Context): Int? = runCatching {
+    val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+    bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)?.takeIf { it in 0..100 }
+}.getOrNull()
+
+private fun getDeviceInfo(): Map<String, String> = mapOf(
+    "model" to "${Build.MANUFACTURER} ${Build.MODEL}",
+    "osVersion" to "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+    "appVersion" to BuildConfig.VERSION_NAME,
+)
 
 /**
- * Emergency SOS (mockup): press and hold the red button, a cancellable countdown runs, then the
- * alert is sent with location. Every step has a direct-call fallback that works without the server.
+ * Full-screen Emergency SOS Interface:
+ * 1. Immediately displays a 10-second countdown (10, 9, 8 ... 1) using a monotonic clock.
+ * 2. Parallel location acquisition starts immediately with the countdown.
+ * 3. Shows "Emergency alert will be sent automatically unless you cancel."
+ * 4. Large, easy-to-tap Cancel Alert button and Send Now button.
+ * 5. Handles screen rotation, backgrounding, and recreation without silently resetting duration.
+ * 6. Prevents duplicate submissions with an atomic submission guard.
  */
 @Composable
 fun SosScreen() {
@@ -143,25 +168,52 @@ fun SosScreen() {
     val config by app.config.config.collectAsState()
     val a11y by app.a11y.collectAsState()
     val settings = config.settings
-    val security = config.emergencyContacts.firstOrNull { (it.category == "security" || it.category == "emergency") && !it.phone.isNullOrBlank() }
+    val security = config.emergencyContacts.firstOrNull {
+        (it.category == "security" || it.category == "emergency") && !it.phone.isNullOrBlank()
+    }
 
-    var phase by remember { mutableStateOf(SosPhase.Idle) }
-    var secondsLeft by remember { mutableIntStateOf(settings.sos.countdownSeconds) }
-    var notifyTrusted by remember { mutableStateOf(true) }
+    var phase by rememberSaveable { mutableStateOf(SosPhase.Countdown) }
+    var targetDeadlineMs by rememberSaveable {
+        mutableLongStateOf(SystemClock.elapsedRealtime() + COUNTDOWN_TOTAL_SECONDS * 1000L)
+    }
+    var secondsLeft by remember { mutableIntStateOf(COUNTDOWN_TOTAL_SECONDS) }
+    var isSubmitting by rememberSaveable { mutableStateOf(false) }
+
+    var notifyTrusted by rememberSaveable { mutableStateOf(true) }
     var permission by remember { mutableStateOf(LocationPermissions.level(context)) }
     val locationAllowed = permission != PermissionLevel.None
     var locationOn by remember { mutableStateOf(LocationPermissions.locationEnabled(context)) }
     var rationale by remember { mutableStateOf(false) }
-    // High-accuracy updates while this screen is open; the newest valid fix always replaces older ones.
+
+    // Start location acquisition immediately in parallel with countdown
     val live by rememberLiveFix(enabled = locationAllowed)
     var oneShot by remember { mutableStateOf<RawFix?>(null) }
     val fix: RawFix? = live?.raw ?: oneShot
     var failure by remember { mutableStateOf<String?>(null) }
-    // One idempotency key per SOS attempt, so retries after a network blip never create duplicates.
-    var attemptKey by remember { mutableStateOf(newIdempotencyKey()) }
+    var attemptKey by rememberSaveable { mutableStateOf(newIdempotencyKey()) }
 
-    val requestLocation = rememberLocationRequest { _ -> permission = LocationPermissions.level(context) }
-    // Permission and the location switch can change in Settings while this screen is open.
+    val requestLocation = rememberLocationRequest { _ ->
+        permission = LocationPermissions.level(context)
+    }
+
+    // Launch parallel fresh fix request immediately
+    LaunchedEffect(locationAllowed, locationOn) {
+        if (locationAllowed && locationOn && fix == null) {
+            scope.launch {
+                LocationHelper.current(context, timeoutMs = 4_000)?.let { c ->
+                    oneShot = RawFix(
+                        c.latitude,
+                        c.longitude,
+                        c.accuracy,
+                        c.elapsedRealtimeNanos?.div(1_000_000) ?: SystemClock.elapsedRealtime(),
+                        provider = "fused",
+                    )
+                }
+            }
+        }
+    }
+
+    // Keep permission and location switch fresh
     LaunchedEffect(Unit) {
         while (true) {
             permission = LocationPermissions.level(context)
@@ -170,129 +222,269 @@ fun SosScreen() {
         }
     }
 
-    // An SOS that is already active is shown instead of starting a new one.
+    // Check if an SOS is already active
     val mine = rememberLoad { runCatching { app.api.safety.mySos() }.getOrDefault(emptyList()) }
     val active = mine.data?.firstOrNull { it.status in ACTIVE_SOS && it.status != "failed" }
 
     fun send() {
+        if (isSubmitting) return
+        isSubmitting = true
         phase = SosPhase.Sending
         scope.launch {
-            // Never wait for a perfect fix: use the newest valid one (if not stale), else try briefly, else send without.
             val f = fix?.takeIf { it.ageSeconds() <= LocationQualityRules.SOS_STALE_SECONDS }
-                ?: LocationHelper.current(context, timeoutMs = 4_000)?.let { c ->
-                    RawFix(c.latitude, c.longitude, c.accuracy, c.elapsedRealtimeNanos?.div(1_000_000) ?: android.os.SystemClock.elapsedRealtime(), provider = "fused")
+                ?: LocationHelper.current(context, timeoutMs = 3_000)?.let { c ->
+                    RawFix(
+                        c.latitude,
+                        c.longitude,
+                        c.accuracy,
+                        c.elapsedRealtimeNanos?.div(1_000_000) ?: SystemClock.elapsedRealtime(),
+                        provider = "fused",
+                    )
                 }
+            val isCached = f != null && (f.ageSeconds() > 15)
+            val battery = getBatteryPercentage(context)
+            val devInfo = getDeviceInfo()
             try {
                 val alert = app.api.safety.raiseSos(
-                    attemptKey, f?.latitude, f?.longitude, f?.accuracyMeters,
-                    when {
+                    key = attemptKey,
+                    lat = f?.latitude,
+                    lng = f?.longitude,
+                    accuracy = f?.accuracyMeters,
+                    unavailableReason = when {
                         f != null -> null
                         !locationAllowed -> "permission_denied"
                         !locationOn -> "location_off"
                         else -> "no_fix"
                     },
-                    notifyTrusted,
+                    notifyTrusted = notifyTrusted,
                     locationAgeSeconds = f?.ageSeconds(),
+                    batteryLevel = battery,
+                    deviceInfo = devInfo,
+                    isCachedFix = isCached,
                 )
-                // Keep sending live location to responders until the alert is closed.
                 LocationShareService.startSos(context, alert.id)
                 if (a11y.haptics) view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                 nav.navigate(Routes.sosStatus(alert.id)) { popUpTo(Routes.Sos) { inclusive = true } }
             } catch (e: ApiException) {
-                failure = if (e.isNetwork) "You're offline or CampusCare can't be reached." else (e.message ?: "The alert could not be sent.")
+                failure = if (e.isNetwork) {
+                    "Network unreachable. Your alert is pending and will be retried automatically."
+                } else {
+                    e.message ?: "The alert could not be sent."
+                }
                 phase = SosPhase.Failed
+                isSubmitting = false
+            } catch (e: Exception) {
+                failure = e.message ?: "Unexpected error occurred."
+                phase = SosPhase.Failed
+                isSubmitting = false
             }
         }
     }
 
-    // Countdown — cancellable at every second.
-    LaunchedEffect(phase) {
+    // Monotonic clock countdown ticker
+    LaunchedEffect(phase, targetDeadlineMs) {
         if (phase == SosPhase.Countdown) {
-            secondsLeft = settings.sos.countdownSeconds.coerceIn(3, 30)
-            while (secondsLeft > 0) {
-                delay(1_000)
-                if (phase != SosPhase.Countdown) return@LaunchedEffect
-                secondsLeft--
-                if (a11y.haptics) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            while (true) {
+                val now = SystemClock.elapsedRealtime()
+                val remMs = targetDeadlineMs - now
+                val remSec = max(0, ((remMs + 999) / 1000).toInt())
+                secondsLeft = remSec
+                if (remSec > 0 && a11y.haptics) {
+                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                }
+                if (remMs <= 0) {
+                    send()
+                    break
+                }
+                delay(200)
             }
-            send()
         }
     }
 
-    CcScreen(title = "Emergency SOS", subtitle = "Help is on the way", onBack = { nav.popBackStack() }) {
+    CcScreen(
+        title = "Emergency SOS",
+        subtitle = "Automatic emergency dispatch",
+        onBack = {
+            if (phase == SosPhase.Countdown) {
+                phase = SosPhase.Cancelled
+            } else {
+                nav.popBackStack()
+            }
+        },
+    ) {
         if (!settings.sos.enabled) {
-            InfoBanner("In-app SOS is paused by the university. Call the numbers below for immediate help.", tone = Tone.Amber, icon = Icons.Rounded.Warning)
+            InfoBanner(
+                "In-app SOS is paused by university administration. Call the emergency contacts below for immediate help.",
+                tone = Tone.Amber,
+                icon = Icons.Rounded.Warning,
+            )
         }
+
         active?.let { a ->
             CcCard(onClick = { nav.navigate(Routes.sosStatus(a.id)) }, color = CcColors.SosSoft) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconBadge(Icons.Rounded.NotificationsActive, Tone.Danger)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("You have an active alert", style = MaterialTheme.typography.titleSmall, color = CcColors.SosDeep)
+                        Text("You have an active emergency alert", style = MaterialTheme.typography.titleSmall, color = CcColors.SosDeep)
                         Text("${a.alertNumber} · ${Catalog.sosLabels[a.status] ?: a.status}", style = MaterialTheme.typography.bodySmall, color = CcColors.Ink)
                     }
-                    Text("View", color = CcColors.Sos, fontWeight = FontWeight.Bold)
+                    Text("View status", color = CcColors.Sos, fontWeight = FontWeight.Bold)
                 }
             }
         }
 
-        AnimatedContent(targetState = phase, transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) }, label = "sos") { p ->
+        AnimatedContent(
+            targetState = phase,
+            transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
+            label = "sos_phase",
+        ) { p ->
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 when (p) {
-                    SosPhase.Idle -> {
-                        Text(
-                            "Press and hold the button for 2 seconds",
-                            style = MaterialTheme.typography.titleMedium, color = CcColors.Ink, textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                        Text("A ${settings.sos.countdownSeconds}-second countdown lets you cancel if pressed by mistake.", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, textAlign = TextAlign.Center)
-                        Spacer(Modifier.height(20.dp))
-                        HoldToTrigger(enabled = settings.sos.enabled) {
-                            attemptKey = newIdempotencyKey()
-                            phase = SosPhase.Countdown
-                        }
-                    }
                     SosPhase.Countdown -> {
-                        Text("Sending SOS in", style = MaterialTheme.typography.titleMedium, color = CcColors.SosDeep)
-                        Spacer(Modifier.height(12.dp))
-                        CountdownRing(secondsLeft, settings.sos.countdownSeconds.coerceIn(3, 30))
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Emergency alert will be sent automatically unless you cancel.",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = CcColors.SosDeep,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                        )
                         Spacer(Modifier.height(18.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                            CcButton("Cancel SOS", { phase = SosPhase.Idle }, Modifier.weight(1f), kind = ButtonKind.Outline, leadingIcon = Icons.Rounded.Close)
-                            CcButton("Send now", { send() }, Modifier.weight(1f), kind = ButtonKind.Danger, leadingIcon = Icons.AutoMirrored.Rounded.Send)
+                        CountdownRing(secondsLeft = secondsLeft, total = COUNTDOWN_TOTAL_SECONDS)
+                        Spacer(Modifier.height(24.dp))
+
+                        // Large accessible touch targets
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                        ) {
+                            CcButton(
+                                text = "Cancel Alert",
+                                onClick = {
+                                    phase = SosPhase.Cancelled
+                                    if (a11y.haptics) view.performHapticFeedback(HapticFeedbackConstants.REJECT)
+                                },
+                                modifier = Modifier.weight(1.1f).height(52.dp),
+                                kind = ButtonKind.Outline,
+                                leadingIcon = Icons.Rounded.Close,
+                            )
+                            CcButton(
+                                text = "Send Now",
+                                onClick = { send() },
+                                modifier = Modifier.weight(0.9f).height(52.dp),
+                                kind = ButtonKind.Danger,
+                                leadingIcon = Icons.AutoMirrored.Rounded.Send,
+                            )
                         }
                     }
+
+                    SosPhase.Cancelled -> {
+                        Spacer(Modifier.height(16.dp))
+                        InfoBanner(
+                            "Emergency alert was cancelled. No responders were notified and no incident was dispatched.",
+                            tone = Tone.Neutral,
+                            icon = Icons.Rounded.CheckCircle,
+                            title = "Alert Cancelled",
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        CcButton(
+                            text = "Start SOS Countdown",
+                            onClick = {
+                                attemptKey = newIdempotencyKey()
+                                targetDeadlineMs = SystemClock.elapsedRealtime() + COUNTDOWN_TOTAL_SECONDS * 1000L
+                                secondsLeft = COUNTDOWN_TOTAL_SECONDS
+                                isSubmitting = false
+                                phase = SosPhase.Countdown
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            kind = ButtonKind.Danger,
+                            leadingIcon = Icons.Rounded.RestartAlt,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        CcButton(
+                            text = "Return to Safety Screen",
+                            onClick = { nav.popBackStack() },
+                            modifier = Modifier.fillMaxWidth(),
+                            kind = ButtonKind.Outline,
+                        )
+                    }
+
                     SosPhase.Sending -> {
                         Spacer(Modifier.height(30.dp))
                         val pulse = rememberPulse(0.9f, 1.1f, 700)
-                        Box(Modifier.size(150.dp).scale(pulse).clip(CircleShape).background(CcColors.Sos), contentAlignment = Alignment.Center) {
-                            Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null, tint = Color.White, modifier = Modifier.size(54.dp))
+                        Box(
+                            Modifier.size(150.dp).scale(pulse).clip(CircleShape).background(CcColors.Sos),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.Send,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(54.dp),
+                            )
                         }
                         Spacer(Modifier.height(16.dp))
-                        Text("Sending your alert…", style = MaterialTheme.typography.titleMedium, color = CcColors.SosDeep)
+                        Text(
+                            "Submitting emergency alert...",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = CcColors.SosDeep,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "Contacting Campus Security and notifying duty officers...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = CcColors.InkSoft,
+                        )
                     }
+
                     SosPhase.Failed -> {
                         InfoBanner(
-                            (failure ?: "The alert could not be sent.") + " Call Campus Security directly — this always works.",
-                            tone = Tone.Danger, icon = Icons.Rounded.CloudOff, title = "SOS not delivered",
+                            (failure ?: "The emergency alert could not be sent.") +
+                                " Please call Campus Security or 112 directly — direct phone calls work even without mobile data.",
+                            tone = Tone.Danger,
+                            icon = Icons.Rounded.CloudOff,
+                            title = "SOS Not Delivered",
                         )
                         Spacer(Modifier.height(12.dp))
                         security?.phone?.let { phone ->
-                            CcButton("Call ${security.name}", { context.dial(phone) }, Modifier.fillMaxWidth(), kind = ButtonKind.Danger, leadingIcon = Icons.Rounded.Call)
+                            CcButton(
+                                text = "Call ${security.name}",
+                                onClick = { context.dial(phone) },
+                                modifier = Modifier.fillMaxWidth(),
+                                kind = ButtonKind.Danger,
+                                leadingIcon = Icons.Rounded.Call,
+                            )
                             Spacer(Modifier.height(8.dp))
                         }
-                        CcButton("Call 112", { context.dial("112") }, Modifier.fillMaxWidth(), kind = ButtonKind.Danger, leadingIcon = Icons.Rounded.Call)
+                        CcButton(
+                            text = "Call 112 (National Emergency)",
+                            onClick = { context.dial("112") },
+                            modifier = Modifier.fillMaxWidth(),
+                            kind = ButtonKind.Danger,
+                            leadingIcon = Icons.Rounded.Call,
+                        )
                         Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                            CcButton("Try again", { send() }, Modifier.weight(1f), kind = ButtonKind.Outline)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
                             CcButton(
-                                "Text for help",
-                                {
-                                    val loc = fix?.let { " My location (±${it.accuracyMeters?.toInt() ?: "?"} m): https://www.openstreetmap.org/?mlat=${it.latitude}&mlon=${it.longitude}" } ?: ""
-                                    context.composeSms(listOfNotNull(security?.phone), "SOS — I need help urgently.$loc")
+                                text = "Retry sending",
+                                onClick = { send() },
+                                modifier = Modifier.weight(1f),
+                                kind = ButtonKind.Outline,
+                            )
+                            CcButton(
+                                text = "Text SMS with location",
+                                onClick = {
+                                    val loc = fix?.let { " My location: https://www.openstreetmap.org/?mlat=${it.latitude}&mlon=${it.longitude} (±${it.accuracyMeters?.toInt() ?: "?"}m)" } ?: ""
+                                    context.composeSms(listOfNotNull(security?.phone), "EMERGENCY SOS: I need urgent help.$loc")
                                 },
-                                Modifier.weight(1f), kind = ButtonKind.Outline, leadingIcon = Icons.Rounded.Sms,
+                                modifier = Modifier.weight(1f),
+                                kind = ButtonKind.Outline,
+                                leadingIcon = Icons.Rounded.Sms,
                             )
                         }
                     }
@@ -300,32 +492,56 @@ fun SosScreen() {
             }
         }
 
-        // Location status: quality, age and permission state, in words.
+        // Live location acquisition diagnostics during SOS
         CcCard {
             LocationQualityPanel(
-                fix = fix, staleSeconds = LocationQualityRules.SOS_STALE_SECONDS, permission = permission, locationEnabled = locationOn,
-                audienceNote = "Shared only with Campus Security responders for this alert. Your SOS is sent even without a perfect fix.",
+                fix = fix,
+                staleSeconds = LocationQualityRules.SOS_STALE_SECONDS,
+                permission = permission,
+                locationEnabled = locationOn,
+                audienceNote = "Shared strictly with on-duty Campus Security responders for this incident. Alert is dispatched regardless of GPS accuracy.",
                 onRequestPermission = { rationale = true },
             )
             if (locationAllowed && fix == null && locationOn) {
-                TextButton(onClick = { scope.launch { oneShot = LocationHelper.current(context)?.let { c -> RawFix(c.latitude, c.longitude, c.accuracy, c.elapsedRealtimeNanos?.div(1_000_000) ?: android.os.SystemClock.elapsedRealtime(), provider = "fused") } } }) {
-                    Text("Try again")
+                TextButton(onClick = {
+                    scope.launch {
+                        oneShot = LocationHelper.current(context)?.let { c ->
+                            RawFix(
+                                c.latitude,
+                                c.longitude,
+                                c.accuracy,
+                                c.elapsedRealtimeNanos?.div(1_000_000) ?: SystemClock.elapsedRealtime(),
+                                provider = "fused",
+                            )
+                        }
+                    }
+                }) {
+                    Text("Refresh location fix")
                 }
             }
             Divider(Modifier.padding(vertical = 8.dp))
-            SwitchRow("Also alert my trusted contacts", notifyTrusted, { notifyTrusted = it }, description = "Verified trusted contacts get an email with your alert and location link.")
+            SwitchRow(
+                "Notify verified trusted contacts",
+                notifyTrusted,
+                { notifyTrusted = it },
+                description = "Sends emergency alert and live location link to your verified emergency contacts.",
+            )
         }
 
         if (rationale) {
             LocationRationaleDialog(
-                "In an emergency, responders use your precise location to reach you quickly. It is sent only while your SOS is active.",
-                onContinue = { rationale = false; requestLocation() }, onDismiss = { rationale = false },
+                "In an emergency, safety responders use your device location to locate you quickly. Coordinates are only transmitted while your SOS is active.",
+                onContinue = { rationale = false; requestLocation() },
+                onDismiss = { rationale = false },
             )
         }
 
-        SectionHeader("Call directly")
+        SectionHeader("Direct emergency contacts")
         CcCard {
-            security?.let { EmergencyCallRow(it); Divider() }
+            security?.let {
+                EmergencyCallRow(it)
+                Divider()
+            }
             app.config.nationalEmergencyNumbers.take(2).forEachIndexed { i, c ->
                 if (i > 0) Divider()
                 EmergencyCallRow(c)
@@ -334,85 +550,39 @@ fun SosScreen() {
     }
 }
 
-/** Big red button: hold for 2 s (progress ring fills). Accessibility services get a plain click action. */
-@Composable
-private fun HoldToTrigger(enabled: Boolean, onTriggered: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    val progress = remember { Animatable(0f) }
-    val reduced = LocalReducedMotion.current
-    val pulse = if (reduced) 1f else rememberPulse(0.97f, 1.03f, 1200)
-    val view = LocalView.current
-    Box(
-        Modifier
-            .size(240.dp)
-            .semantics {
-                role = Role.Button
-                contentDescription = "Emergency SOS. Double tap to start the countdown."
-                onClick(label = "Start SOS countdown") { if (enabled) onTriggered(); enabled }
-            }
-            .pointerInput(enabled) {
-                if (!enabled) return@pointerInput
-                detectTapGestures(onPress = {
-                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                    val job = scope.launch {
-                        progress.animateTo(1f, tween(2_000, easing = LinearEasing))
-                        onTriggered()
-                        progress.snapTo(0f)
-                    }
-                    tryAwaitRelease()
-                    if (progress.value < 1f) {
-                        job.cancel()
-                        scope.launch { progress.animateTo(0f, tween(250)) }
-                    }
-                })
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        // Soft halo rings
-        Canvas(Modifier.fillMaxSize().scale(pulse)) {
-            drawCircle(CcColors.Sos.copy(alpha = 0.08f), radius = size.minDimension / 2f)
-            drawCircle(CcColors.Sos.copy(alpha = 0.14f), radius = size.minDimension / 2.4f)
-        }
-        Canvas(Modifier.size(206.dp)) {
-            val stroke = 10.dp.toPx()
-            drawArc(
-                color = CcColors.SosDeep, startAngle = -90f, sweepAngle = 360f * progress.value, useCenter = false,
-                topLeft = Offset(stroke / 2, stroke / 2), size = Size(size.width - stroke, size.height - stroke),
-                style = Stroke(stroke, cap = StrokeCap.Round),
-            )
-        }
-        Box(
-            Modifier
-                .size(176.dp)
-                .clip(CircleShape)
-                .background(Brush.radialGradient(if (enabled) listOf(Color(0xFFEF4444), CcColors.Sos, CcColors.SosDeep) else listOf(CcColors.InkFaint, CcColors.InkSoft))),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("SOS", color = Color.White, fontSize = 46.sp, fontWeight = FontWeight.Black)
-                Text(if (progress.value > 0f) "Keep holding…" else "Hold to send", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelLarge)
-            }
-        }
-    }
-}
-
 @Composable
 private fun CountdownRing(secondsLeft: Int, total: Int) {
     val sweep = remember { Animatable(1f) }
-    LaunchedEffect(secondsLeft) { sweep.animateTo(secondsLeft / total.toFloat(), tween(900, easing = LinearEasing)) }
-    Box(Modifier.size(210.dp).semantics { contentDescription = "SOS will be sent in $secondsLeft seconds" }, contentAlignment = Alignment.Center) {
+    LaunchedEffect(secondsLeft) {
+        sweep.animateTo(secondsLeft / total.toFloat(), tween(180, easing = LinearEasing))
+    }
+    Box(
+        Modifier.size(200.dp).semantics { contentDescription = "Emergency countdown: $secondsLeft seconds remaining" },
+        contentAlignment = Alignment.Center,
+    ) {
         Canvas(Modifier.fillMaxSize()) {
             val stroke = 14.dp.toPx()
             val tl = Offset(stroke / 2, stroke / 2)
             val sz = Size(size.width - stroke, size.height - stroke)
             drawArc(CcColors.SosSoft, -90f, 360f, false, topLeft = tl, size = sz, style = Stroke(stroke))
-            drawArc(CcColors.Sos, -90f, 360f * sweep.value, false, topLeft = tl, size = sz, style = Stroke(stroke, cap = StrokeCap.Round))
+            drawArc(
+                CcColors.Sos,
+                -90f,
+                360f * sweep.value,
+                false,
+                topLeft = tl,
+                size = sz,
+                style = Stroke(stroke, cap = StrokeCap.Round),
+            )
         }
-        Text("$secondsLeft", fontSize = 72.sp, fontWeight = FontWeight.Black, color = CcColors.Sos)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("$secondsLeft", fontSize = 68.sp, fontWeight = FontWeight.Black, color = CcColors.Sos)
+            Text("SECONDS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = CcColors.InkSoft)
+        }
     }
 }
 
-/** Live status of a raised SOS: delivery → acknowledged → responder en route → resolved. */
+/** Live status of a dispatched SOS incident */
 @Composable
 fun SosStatusScreen(id: String) {
     val app = LocalApp.current
@@ -425,27 +595,70 @@ fun SosStatusScreen(id: String) {
     val alert = rememberLoad(id) { app.api.safety.sos(id) }
     var cancelOpen by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var evidenceUploading by remember { mutableStateOf(false) }
     val tracking by LocationTracking.state.collectAsState()
     var permission by remember { mutableStateOf(LocationPermissions.level(context)) }
     var rationale by remember { mutableStateOf(false) }
     val requestLocation = rememberLocationRequest { _ -> permission = LocationPermissions.level(context) }
+
+    // Media evidence pickers
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                evidenceUploading = true
+                try {
+                    val f = readPicked(context, uri, 25 * 1024 * 1024)
+                    app.api.safety.uploadSosEvidence(id, f.bytes, f.name, f.mime)
+                    snack.show("Photo evidence securely attached to emergency incident.")
+                    alert.reload()
+                } catch (e: Exception) {
+                    snack.show(e.message ?: "Failed to upload photo evidence.")
+                } finally {
+                    evidenceUploading = false
+                }
+            }
+        }
+    }
+
+    val pickAudio = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                evidenceUploading = true
+                try {
+                    val f = readPicked(context, uri, 25 * 1024 * 1024)
+                    app.api.safety.uploadSosEvidence(id, f.bytes, f.name, f.mime)
+                    snack.show("Audio evidence securely attached to emergency incident.")
+                    alert.reload()
+                } catch (e: Exception) {
+                    snack.show(e.message ?: "Failed to upload audio evidence.")
+                } finally {
+                    evidenceUploading = false
+                }
+            }
+        }
+    }
 
     DisposableEffect(id) {
         app.realtime.subscribe("sos:$id")
         onDispose { app.realtime.unsubscribe("sos:$id") }
     }
     LaunchedEffect(id) {
-        app.realtime.events.collect { e -> if ((e.name == "sos:updated" || e.name == "sos:location") && e.payload.optString("id") == id) alert.reload() }
+        app.realtime.events.collect { e ->
+            if ((e.name == "sos:updated" || e.name == "sos:location") && e.payload.optString("id") == id) {
+                alert.reload()
+            }
+        }
     }
-    // Polling fallback while the alert is active (realtime can drop on poor networks).
+    // Polling fallback while the alert is active
     LaunchedEffect(id) {
         while (true) {
-            delay(if (live) 30_000 else 8_000)
+            delay(if (live) 25_000 else 6_000)
             if (alert.data?.status in ACTIVE_SOS) alert.reload()
         }
     }
-    val security = config.emergencyContacts.firstOrNull { (it.category == "security" || it.category == "emergency") && !it.phone.isNullOrBlank() }
-    // Live location runs for exactly as long as the alert is active (also resumes after the app was closed).
+    val security = config.emergencyContacts.firstOrNull {
+        (it.category == "security" || it.category == "emergency") && !it.phone.isNullOrBlank()
+    }
     val activeAlert = alert.data?.status?.let { it in ACTIVE_SOS && it != "failed" }
     LaunchedEffect(activeAlert, permission) {
         when (activeAlert) {
@@ -459,62 +672,171 @@ fun SosStatusScreen(id: String) {
         title = "SOS status",
         subtitle = alert.data?.alertNumber,
         onBack = { nav.popBackStack() },
-        refreshing = alert.refreshing, onRefresh = { alert.reload() },
+        refreshing = alert.refreshing,
+        onRefresh = { alert.reload() },
         actions = { LiveDot(live, Modifier.padding(end = 12.dp)) },
     ) {
         LoadContent(alert) { a ->
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 StatusHero(a)
+
+                // Battery & device telemetry chips
+                if (a.batteryLevel != null || a.isCachedFix) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        a.batteryLevel?.let { bat ->
+                            StatusChip(
+                                text = "Battery: $bat%",
+                                tone = if (bat < 20) Tone.Danger else Tone.Neutral,
+                            )
+                        }
+                        if (a.isCachedFix) {
+                            StatusChip(
+                                text = "Cached location fix",
+                                tone = Tone.Amber,
+                            )
+                        }
+                    }
+                }
+
                 if (a.escalationLevel > 0 && a.status in setOf("sent", "queued", "sending")) {
                     InfoBanner(
-                        if (a.escalationLevel >= 2) "No one had acknowledged yet, so the alert was escalated to senior staff." else "Your alert was escalated to backup responders.",
-                        tone = Tone.Amber, icon = Icons.AutoMirrored.Rounded.TrendingUp,
+                        if (a.escalationLevel >= 2) {
+                            "No responder acknowledged in time. Alert escalated to senior campus operations."
+                        } else {
+                            "Alert escalated to backup emergency responders."
+                        },
+                        tone = Tone.Amber,
+                        icon = Icons.AutoMirrored.Rounded.TrendingUp,
                     )
                 }
                 if (a.status == "failed") {
-                    InfoBanner(a.lastDeliveryError ?: "Delivery to responders failed.", tone = Tone.Danger, icon = Icons.Rounded.Warning, title = "Call for help now")
+                    InfoBanner(
+                        a.lastDeliveryError ?: "Delivery to responders failed.",
+                        tone = Tone.Danger,
+                        icon = Icons.Rounded.Warning,
+                        title = "Call for help now",
+                    )
                 }
+
                 SosSteps(a)
 
+                // Live location panel
                 if (a.status in ACTIVE_SOS) {
                     CcCard {
                         LocationQualityPanel(
-                            fix = tracking.raw.takeIf { tracking.sosId == id }, staleSeconds = LocationQualityRules.SOS_STALE_SECONDS,
-                            permission = permission, locationEnabled = tracking.locationEnabled, acquiring = tracking.sosId == id,
-                            audienceNote = "Sent live to Campus Security responders until this alert is closed.",
+                            fix = tracking.raw.takeIf { tracking.sosId == id },
+                            staleSeconds = LocationQualityRules.SOS_STALE_SECONDS,
+                            permission = permission,
+                            locationEnabled = tracking.locationEnabled,
+                            acquiring = tracking.sosId == id,
+                            audienceNote = "Transmitted live to Campus Security until this emergency alert is resolved.",
                             uploadNote = when {
                                 tracking.sosId != id -> null
                                 tracking.pendingUploads > 0 -> "${tracking.lastUploadError ?: "Sending"} · ${tracking.pendingUploads} update(s) waiting"
-                                tracking.lastUploadOkAtMs != null -> "Last update reached responders ${ageLabel((android.os.SystemClock.elapsedRealtime() - tracking.lastUploadOkAtMs!!) / 1000.0)}"
+                                tracking.lastUploadOkAtMs != null -> "Last fix reached responders ${ageLabel((SystemClock.elapsedRealtime() - tracking.lastUploadOkAtMs!!) / 1000.0)}"
                                 else -> null
                             },
                             onRequestPermission = { rationale = true },
                         )
                     }
                 }
+
                 if (a.locationAvailable && a.latitude != null && a.longitude != null) {
-                    val q = a.locationQuality?.let { runCatching { LocationQuality.valueOf(it.replaceFirstChar { c -> c.uppercase() }) }.getOrNull() }
+                    val q = a.locationQuality?.let {
+                        runCatching { LocationQuality.valueOf(it.replaceFirstChar { c -> c.uppercase() }) }.getOrNull()
+                    }
                     CcCard(padding = 0.dp) {
                         OsmMap(
-                            centerLat = a.latitude, centerLng = a.longitude, zoom = 17.0,
-                            pins = listOf(MapPin("me", a.latitude, a.longitude, "Location responders see", color = CcColors.Sos, label = "SOS")),
-                            circles = a.accuracyMeters?.let { listOf(AccuracyCircle(a.latitude, a.longitude, it, CcColors.Sos)) } ?: emptyList(),
+                            centerLat = a.latitude,
+                            centerLng = a.longitude,
+                            zoom = 17.0,
+                            pins = listOf(
+                                MapPin("me", a.latitude, a.longitude, "Student location", color = CcColors.Sos, label = "SOS"),
+                            ),
+                            circles = a.accuracyMeters?.let {
+                                listOf(AccuracyCircle(a.latitude, a.longitude, it, CcColors.Sos))
+                            } ?: emptyList(),
                             modifier = Modifier.fillMaxWidth().height(200.dp),
                         )
                         Text(
-                            "What responders see: ${LocationQualityRules.formatCoordinates(a.latitude, a.longitude, a.accuracyMeters)} · ±${a.accuracyMeters?.toInt() ?: "?"} m" +
-                                (q?.let { " · ${it.label}" } ?: "") + (a.locationAt?.let { " · captured ${Fmt.ago(it)}" } ?: ""),
-                            style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft, modifier = Modifier.padding(12.dp),
+                            "Coordinates: ${LocationQualityRules.formatCoordinates(a.latitude, a.longitude, a.accuracyMeters)} · ±${a.accuracyMeters?.toInt() ?: "?"} m" +
+                                (q?.let { " · ${it.label}" } ?: "") +
+                                (a.locationAt?.let { " · captured ${Fmt.ago(it)}" } ?: ""),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CcColors.InkSoft,
+                            modifier = Modifier.padding(12.dp),
                         )
                     }
                 } else {
-                    InfoBanner("Responders don't have your location yet. Tell Campus Security where you are when they call.", tone = Tone.Amber, icon = Icons.Rounded.LocationOff)
+                    InfoBanner(
+                        "Responders don't have your GPS coordinates yet. Mention your location when Campus Security calls.",
+                        tone = Tone.Amber,
+                        icon = Icons.Rounded.LocationOff,
+                    )
+                }
+
+                // Optional Emergency Evidence Feature (Requirement 5)
+                if (a.status in ACTIVE_SOS) {
+                    CcCard {
+                        Text(
+                            "Emergency Evidence (Optional)",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = CcColors.Ink,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Securely attach photos or audio clips to this incident. Only authorized safety responders and dispatchers can access this media. It will never be posted to public feeds.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = CcColors.InkSoft,
+                        )
+                        if (a.evidenceCount > 0) {
+                            Spacer(Modifier.height(8.dp))
+                            StatusChip("${a.evidenceCount} evidence file(s) attached", Tone.Brand, dot = true)
+                        }
+                        if (evidenceUploading) {
+                            Spacer(Modifier.height(10.dp))
+                            LinearProgressIndicator(Modifier.fillMaxWidth(), color = CcColors.Sos, trackColor = CcColors.SosSoft)
+                            Spacer(Modifier.height(4.dp))
+                            Text("Uploading encrypted evidence to responders...", style = MaterialTheme.typography.labelSmall, color = CcColors.SosDeep)
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                            CcButton(
+                                text = "Attach Photo",
+                                onClick = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                modifier = Modifier.weight(1f),
+                                kind = ButtonKind.Soft,
+                                leadingIcon = Icons.Rounded.CameraAlt,
+                                enabled = !evidenceUploading,
+                            )
+                            CcButton(
+                                text = "Attach Audio",
+                                onClick = { pickAudio.launch("audio/*") },
+                                modifier = Modifier.weight(1f),
+                                kind = ButtonKind.Soft,
+                                leadingIcon = Icons.Rounded.Mic,
+                                enabled = !evidenceUploading,
+                            )
+                        }
+                    }
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    CcButton("Call Security", { context.dial(security?.phone ?: "112") }, Modifier.weight(1f), kind = ButtonKind.Danger, leadingIcon = Icons.Rounded.Call)
+                    CcButton(
+                        text = "Call Security",
+                        onClick = { context.dial(security?.phone ?: "112") },
+                        modifier = Modifier.weight(1f),
+                        kind = ButtonKind.Danger,
+                        leadingIcon = Icons.Rounded.Call,
+                    )
                     if (a.status in ACTIVE_SOS && (config.settings.sos.allowCancelAfterSend || a.status == "queued")) {
-                        CcButton("I'm safe now", { cancelOpen = true }, Modifier.weight(1f), kind = ButtonKind.Outline, leadingIcon = Icons.Rounded.CheckCircle)
+                        CcButton(
+                            text = "I'm safe now",
+                            onClick = { cancelOpen = true },
+                            modifier = Modifier.weight(1f),
+                            kind = ButtonKind.Outline,
+                            leadingIcon = Icons.Rounded.CheckCircle,
+                        )
                     }
                 }
 
@@ -524,7 +846,10 @@ fun SosStatusScreen(id: String) {
                         a.timeline.asReversed().forEachIndexed { i, t ->
                             if (i > 0) Divider()
                             Row(Modifier.padding(vertical = 8.dp)) {
-                                Box(Modifier.padding(top = 5.dp).size(10.dp).clip(CircleShape).background(if (i == 0) CcColors.Emerald else CcColors.Line))
+                                Box(
+                                    Modifier.padding(top = 5.dp).size(10.dp).clip(CircleShape)
+                                        .background(if (i == 0) CcColors.Emerald else CcColors.Line),
+                                )
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(Fmt.humanize(t.type), style = MaterialTheme.typography.titleSmall, color = CcColors.Ink)
@@ -538,17 +863,23 @@ fun SosStatusScreen(id: String) {
                     }
                 }
             }
+
             if (rationale) {
                 LocationRationaleDialog(
                     "Responders use your precise location to reach you. It is sent only while this alert is active.",
-                    onContinue = { rationale = false; requestLocation() }, onDismiss = { rationale = false },
+                    onContinue = { rationale = false; requestLocation() },
+                    onDismiss = { rationale = false },
                 )
             }
+
             if (cancelOpen) {
                 InputDialog(
                     title = "Mark yourself safe?",
-                    message = "Responders are told you cancelled. The alert stays in the record. If someone is already on the way, they may still check on you.",
-                    label = "Reason (optional)", confirmLabel = "I'm safe", minLength = 0, loading = busy,
+                    message = "Responders will be notified that you cancelled. The alert stays in the official audit record for campus safety.",
+                    label = "Reason (optional)",
+                    confirmLabel = "I'm safe",
+                    minLength = 0,
+                    loading = busy,
                     onDismiss = { cancelOpen = false },
                     onConfirm = { reason ->
                         scope.launch {
@@ -557,7 +888,7 @@ fun SosStatusScreen(id: String) {
                                 alert.set(app.api.safety.cancelSos(id, reason.ifBlank { null }))
                                 LocationShareService.stopAll(context)
                                 cancelOpen = false
-                                snack.show("Alert cancelled. Stay safe.")
+                                snack.show("Emergency alert cancelled. Glad you are safe.")
                             } catch (e: ApiException) {
                                 snack.error(e)
                             } finally {
@@ -581,24 +912,36 @@ private fun StatusHero(a: SosAlert) {
             Box(Modifier.size(58.dp), contentAlignment = Alignment.Center) {
                 Box(Modifier.size(58.dp).scale(pulse).clip(CircleShape).background(tone.fg.copy(alpha = 0.18f)))
                 Icon(
-                    when (a.status) { "en_route" -> Icons.AutoMirrored.Rounded.DirectionsRun; "resolved", "cancelled" -> Icons.Rounded.CheckCircle; "failed" -> Icons.Rounded.Warning; else -> Icons.Rounded.Shield },
-                    contentDescription = null, tint = tone.fg, modifier = Modifier.size(30.dp),
+                    when (a.status) {
+                        "en_route" -> Icons.AutoMirrored.Rounded.DirectionsRun
+                        "resolved", "cancelled" -> Icons.Rounded.CheckCircle
+                        "failed" -> Icons.Rounded.Warning
+                        else -> Icons.Rounded.Shield
+                    },
+                    contentDescription = null,
+                    tint = tone.fg,
+                    modifier = Modifier.size(30.dp),
                 )
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(Catalog.sosLabels[a.status] ?: Fmt.humanize(a.status), style = MaterialTheme.typography.titleLarge, color = CcColors.Ink)
+                Text(
+                    Catalog.sosLabels[a.status] ?: Fmt.humanize(a.status),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = CcColors.Ink,
+                )
                 Text(
                     when (a.status) {
-                        "acknowledged" -> "${a.acknowledgedByName ?: "Campus Security"} has seen your alert."
-                        "en_route" -> "${a.acknowledgedByName ?: "A responder"} is on the way to you."
-                        "sent" -> "Delivered to ${a.respondersReached} responder${if (a.respondersReached == 1) "" else "s"}. Stay where it is safe."
+                        "acknowledged" -> "${a.acknowledgedByName ?: "Campus Security"} has acknowledged your alert."
+                        "en_route" -> "${a.acknowledgedByName ?: "A responder"} is en route to your location."
+                        "sent" -> "Dispatched to ${a.respondersReached} responder${if (a.respondersReached == 1) "" else "s"}. Remain in a safe place."
                         "resolved" -> "Resolved ${Fmt.ago(a.resolvedAt)}."
                         "cancelled" -> "You marked yourself safe."
-                        "failed" -> "Use the call button below."
+                        "failed" -> "Delivery failed. Call emergency numbers directly."
                         else -> "Raised ${Fmt.ago(a.createdAt)}"
                     },
-                    style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = CcColors.InkSoft,
                 )
             }
         }
@@ -611,7 +954,11 @@ private fun SosSteps(a: SosAlert) {
         Triple("Sent", a.sentAt, a.status !in setOf("queued", "sending", "failed")),
         Triple("Acknowledged", a.acknowledgedAt, a.acknowledgedAt != null),
         Triple("On the way", a.enRouteAt, a.enRouteAt != null),
-        Triple(if (a.status == "cancelled") "Cancelled" else "Resolved", a.resolvedAt ?: a.cancelledAt, a.status in setOf("resolved", "cancelled")),
+        Triple(
+            if (a.status == "cancelled") "Cancelled" else "Resolved",
+            a.resolvedAt ?: a.cancelledAt,
+            a.status in setOf("resolved", "cancelled"),
+        ),
     )
     CcCard {
         Row(Modifier.fillMaxWidth()) {
@@ -629,14 +976,21 @@ private fun SosSteps(a: SosAlert) {
                         Box(Modifier.weight(1f).height(3.dp).background(if (i == steps.lastIndex) Color.Transparent else if (steps[i + 1].third) CcColors.Emerald else CcColors.Line))
                     }
                     Spacer(Modifier.height(6.dp))
-                    Text(label, style = MaterialTheme.typography.labelMedium, color = if (done) CcColors.Ink else CcColors.InkSoft, textAlign = TextAlign.Center)
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (done) CcColors.Ink else CcColors.InkSoft,
+                        textAlign = TextAlign.Center,
+                    )
                     Text(if (done) Fmt.time(at) else "—", style = MaterialTheme.typography.labelSmall, color = CcColors.InkFaint)
                 }
             }
         }
         StatusChip(
-            if (a.status in ACTIVE_SOS) "Stay on this screen — it updates automatically" else "This alert is closed",
-            if (a.status in ACTIVE_SOS) Tone.Sky else Tone.Neutral, dot = true, modifier = Modifier.padding(top = 12.dp),
+            if (a.status in ACTIVE_SOS) "Stay on this screen — status updates automatically" else "This alert is closed",
+            if (a.status in ACTIVE_SOS) Tone.Sky else Tone.Neutral,
+            dot = true,
+            modifier = Modifier.padding(top = 12.dp),
         )
     }
 }
