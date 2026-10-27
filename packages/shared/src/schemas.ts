@@ -4,7 +4,7 @@ import {
   INCIDENT_CATEGORIES, INCIDENT_STATUSES, PRIORITIES, ROLES, SEVERITIES, MAIL_SERVICES,
   HAZARD_CATEGORIES, HAZARD_STATUSES, PLACE_KINDS, LOST_FOUND_CATEGORIES, SUGGESTION_CATEGORIES, SUGGESTION_STATUSES,
   NOTIFICATION_CATEGORIES, DATA_REQUEST_TYPES, type NotificationCategory, DUTY_STATUSES, RESPONDER_SKILLS, RESPONDER_RESPONSIBILITIES,
-  CHAT_REVIEW_SCOPES, CHAT_REVIEW_BASES,
+  CHAT_REVIEW_SCOPES, CHAT_REVIEW_BASES, STUDENT_VERIFICATION_STATUSES,
 } from './enums';
 
 const trimmed = (max: number) => z.string().trim().max(max);
@@ -326,6 +326,18 @@ export const userCounsellorApprovalSchema = z.object({
   approved: z.boolean(),
   note: trimmed(500).optional().nullable(),
   publishAllowed: z.boolean().optional(),
+});
+
+export const studentVerificationDecisionSchema = z.object({
+  status: z.enum(STUDENT_VERIFICATION_STATUSES),
+  reason: trimmed(500).optional().nullable(),
+  notes: trimmed(1000).optional().nullable(),
+});
+
+export const campusScopeAssignmentSchema = z.object({
+  managedCampuses: z.array(trimmed(80)).default([]),
+  delegatedPermissions: z.array(trimmed(80)).default([]),
+  campusZone: trimmed(80).optional().nullable(),
 });
 
 export const userCommunityMuteSchema = z.object({

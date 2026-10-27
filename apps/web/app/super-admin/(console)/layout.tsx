@@ -1,7 +1,7 @@
 'use client';
 
 import {
-  Activity, BadgeCheck, BarChart3, Bell, BellRing, BookOpenCheck, Building2, CalendarClock, CalendarDays, Database, FileClock, FolderKanban, Gauge, Globe, HeartHandshake,
+  Activity, BadgeCheck, BarChart3, CheckCheck, GraduationCap, Bell, BellRing, BookOpenCheck, Building2, CalendarClock, CalendarDays, Database, FileClock, FolderKanban, Gauge, Globe, HeartHandshake,
   KeyRound, LayoutDashboard, Mail, Map, Megaphone, MessageSquareLock, MessagesSquare, PhoneCall, PlugZap, Route, Settings, ShieldAlert, ShieldCheck, Siren,
   Smartphone, SmartphoneNfc, Timer, UserCog, UserRoundCheck, Users,
 } from 'lucide-react';
@@ -22,7 +22,14 @@ const nav: NavItem[] = [
   { group: 'Operations', href: '/super-admin/incidents', label: 'Incidents', icon: FolderKanban, permission: 'incidents:triage' },
   { group: 'Operations', href: '/super-admin/campus-alerts', label: 'Campus alerts', icon: BellRing, permission: 'campus_alerts:manage' },
 
-  { group: 'People & access', href: '/super-admin/users', label: 'Users', icon: Users, permission: 'users:manage' },
+  { group: 'People & access', href: '/super-admin/users', label: 'All Users', icon: Users, permission: 'users:manage' },
+  { group: 'People & access', href: '/super-admin/users/students', label: 'Students', icon: GraduationCap, permission: 'users:manage' },
+  { group: 'People & access', href: '/super-admin/users/campus-admins', label: 'Campus Admins', icon: Building2, permission: 'users:manage' },
+  { group: 'People & access', href: '/super-admin/users/counsellors', label: 'Counsellors', icon: HeartHandshake, permission: 'users:manage' },
+  { group: 'People & access', href: '/super-admin/users/officers', label: 'Safety Officers', icon: Siren, permission: 'users:manage' },
+  { group: 'People & access', href: '/super-admin/users/super-admins', label: 'Super Admins', icon: ShieldAlert, permission: 'users:manage' },
+  { group: 'People & access', href: '/super-admin/users/verifications', label: 'Manual Verification', icon: CheckCheck, permission: 'users:manage' },
+  { group: 'People & access', href: '/super-admin/users/sessions', label: 'Login Sessions', icon: KeyRound, permission: 'users:manage' },
   { group: 'People & access', href: '/super-admin/roles', label: 'Roles & permissions', icon: UserCog, permission: 'roles:manage' },
   { group: 'People & access', href: '/super-admin/committees', label: 'Committees', icon: Building2, permission: 'committees:manage' },
   { group: 'People & access', href: '/super-admin/chat-access', label: 'Chat access', icon: MessageSquareLock, permission: 'chat:configure' },

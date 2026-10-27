@@ -1,5 +1,5 @@
 import { Schema, model, type InferSchemaType, type HydratedDocument, Types } from 'mongoose';
-import { ACCOUNT_STATUSES, ROLES } from '@campuscare/shared';
+import { ACCOUNT_STATUSES, ROLES, STUDENT_VERIFICATION_STATUSES } from '@campuscare/shared';
 
 const membershipSchema = new Schema(
   {
@@ -52,6 +52,15 @@ const userSchema = new Schema(
     lockedUntil: { type: Date, default: null },
     lastLoginAt: { type: Date, default: null },
     invitedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    verificationStatus: { type: String, enum: STUDENT_VERIFICATION_STATUSES, default: 'pending' },
+    verificationReviewedAt: { type: Date, default: null },
+    verificationReviewedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    verificationReason: { type: String, default: null },
+    verificationNotes: { type: String, default: null },
+    mustChangePassword: { type: Boolean, default: false },
+    staffId: { type: String, trim: true, default: null },
+    managedCampuses: { type: [String], default: [] },
+    counsellorCredentials: { type: String, trim: true, default: null },
     privacy: {
       showNameInCommunity: { type: Boolean, default: true },
       allowEmailNotifications: { type: Boolean, default: true },
@@ -74,6 +83,8 @@ const userSchema = new Schema(
 userSchema.index({ email: 1 }, { unique: true });
 userSchema.index({ studentId: 1 }, { unique: true, partialFilterExpression: { studentId: { $type: 'string' } } });
 userSchema.index({ role: 1, accountStatus: 1 });
+userSchema.index({ role: 1, verificationStatus: 1 });
+userSchema.index({ staffId: 1 }, { sparse: true });
 userSchema.index({ accountStatus: 1, createdAt: -1 });
 userSchema.index({ department: 1 });
 userSchema.index({ 'committeeMemberships.committeeId': 1 });
@@ -127,6 +138,15 @@ export function publicUser(u: UserDoc | (UserAttrs & { _id: Types.ObjectId; crea
     privacy: u.privacy,
     createdAt: (u as { createdAt?: Date }).createdAt ?? null,
     lastLoginAt: u.lastLoginAt ?? null,
+    verificationStatus: (u as { verificationStatus?: string }).verificationStatus ?? 'pending',
+    verificationReviewedAt: (u as { verificationReviewedAt?: Date }).verificationReviewedAt ?? null,
+    verificationReviewedBy: (u as { verificationReviewedBy?: Types.ObjectId | null }).verificationReviewedBy ? String((u as { verificationReviewedBy?: Types.ObjectId | null }).verificationReviewedBy) : null,
+    verificationReason: (u as { verificationReason?: string }).verificationReason ?? null,
+    verificationNotes: (u as { verificationNotes?: string }).verificationNotes ?? null,
+    mustChangePassword: Boolean((u as { mustChangePassword?: boolean }).mustChangePassword),
+    staffId: (u as { staffId?: string }).staffId ?? null,
+    managedCampuses: (u as { managedCampuses?: string[] }).managedCampuses ?? [],
+    counsellorCredentials: (u as { counsellorCredentials?: string }).counsellorCredentials ?? null,
   };
 }
 

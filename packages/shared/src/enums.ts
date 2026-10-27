@@ -169,6 +169,31 @@ export const ACCOUNT_STATUS_LABELS: Record<AccountStatus, string> = {
   archived: 'Archived',
 };
 
+/**
+ * Institutional enrollment verification lifecycle for students.
+ * Separate from email verification: email verified != institutional enrolled.
+ */
+export const STUDENT_VERIFICATION_STATUSES = [
+  'pending',
+  'under_review',
+  'approved',
+  'rejected',
+  'needs_info',
+  'expired',
+  'revoked',
+] as const;
+export type StudentVerificationStatus = (typeof STUDENT_VERIFICATION_STATUSES)[number];
+
+export const STUDENT_VERIFICATION_LABELS: Record<StudentVerificationStatus, string> = {
+  pending: 'Pending Verification',
+  under_review: 'Under Review',
+  approved: 'Verified & Approved',
+  rejected: 'Rejected',
+  needs_info: 'More Info Required',
+  expired: 'Enrollment Expired',
+  revoked: 'Verification Revoked',
+};
+
 export const COMMITTEE_TYPES = [
   'anti_ragging',
   'gender_sensitivity',

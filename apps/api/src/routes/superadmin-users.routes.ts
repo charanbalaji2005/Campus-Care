@@ -3,7 +3,7 @@ import { Types } from 'mongoose';
 import {
   ACCOUNT_STATUSES, ROLES, assignableRoles, userBulkActionSchema, userCommunityMuteSchema,
   userCounsellorApprovalSchema, userDutyAssignmentSchema, userInviteSchema, userProfileUpdateSchema,
-  userRoleSchema, userStatusUpdateSchema, type AccountStatus, type Role,
+  userRoleSchema, userStatusUpdateSchema, studentVerificationDecisionSchema, campusScopeAssignmentSchema, STUDENT_VERIFICATION_STATUSES, type AccountStatus, type Role, type StudentVerificationStatus,
 } from '@campuscare/shared';
 import { AppError, asyncHandler, escapeRegex, notFound, ok, pageParams, parse } from '../lib/http';
 import { randomToken, sha256 } from '../lib/crypto';
@@ -64,6 +64,10 @@ superAdminUsersRouter.get(
       mfaCount,
       activeSessions,
       counsellorsPending,
+      pendingStudentVerifications,
+      verifiedStudents,
+      unverifiedEmails,
+      mustChangePasswordCount,
     ] = await Promise.all([
       User.countDocuments({}),
       User.countDocuments({ accountStatus: 'active' }),
@@ -84,6 +88,10 @@ superAdminUsersRouter.get(
       User.countDocuments({ mfaEnabled: true }),
       Session.countDocuments({ revokedAt: null, expiresAt: { $gt: now } }),
       User.countDocuments({ role: 'counsellor', counsellorApproved: false }),
+      User.countDocuments({ role: 'student', verificationStatus: { $in: ['pending', 'under_review', 'needs_info'] } }),
+      User.countDocuments({ role: 'student', verificationStatus: 'approved' }),
+      User.countDocuments({ emailVerified: false }),
+      User.countDocuments({ mustChangePassword: true }),
     ]);
 
     const roleMap: Record<string, number> = Object.fromEntries(byRole.map((r) => [r._id, r.count]));
@@ -102,6 +110,10 @@ superAdminUsersRouter.get(
       mfaCount,
       activeSessions,
       counsellorsPending,
+      pendingStudentVerifications,
+      verifiedStudents,
+      unverifiedEmails,
+      mustChangePasswordCount,
       byRole: roleMap,
       topDepartments: deptMap,
     });
@@ -150,6 +162,14 @@ superAdminUsersRouter.get(
         filter.role = 'counsellor';
         filter.counsellorApproved = false;
       }
+    }
+
+    if (req.query.verificationStatus && STUDENT_VERIFICATION_STATUSES.includes(req.query.verificationStatus as StudentVerificationStatus)) {
+      filter.verificationStatus = req.query.verificationStatus;
+    }
+
+    if (req.query.campusZone) {
+      filter.campusZone = String(req.query.campusZone);
     }
 
     // Department filter
@@ -1012,5 +1032,223 @@ superAdminUsersRouter.post(
       failureCount,
       results,
     });
+  }),
+);
+
+// ------------------------------------------------------------------ 17. Student Manual Enrollment Verification Workflow
+superAdminUsersRouter.post(
+  '/:id/verify-enrollment',
+  requireRecentAuth,
+  asyncHandler(async (req, res) => {
+    const uid = checkObjectId(req.params.id);
+    const target = await User.findById(uid);
+    if (!target) throw notFound('User not found.');
+
+    const input = parse(studentVerificationDecisionSchema, req.body);
+    const beforeStatus = target.verificationStatus ?? 'pending';
+
+    target.verificationStatus = input.status;
+    target.verificationReviewedAt = new Date();
+    target.verificationReviewedBy = req.user!._id;
+    target.verificationReason = input.reason ?? null;
+    target.verificationNotes = input.notes ?? null;
+
+    if (input.status === 'approved' && target.accountStatus === 'pending_verification') {
+      target.accountStatus = 'active';
+    }
+
+    await target.save();
+
+    await audit({
+      action: 'user.verification_decided',
+      req,
+      targetType: 'user',
+      targetId: String(target._id),
+      reason: input.reason ?? null,
+      meta: { before: beforeStatus, after: input.status, notes: input.notes ?? null },
+    });
+
+    ok(res, publicUser(target));
+  }),
+);
+
+// ------------------------------------------------------------------ 18. Verification Queue with Duplicate ID Detection
+superAdminUsersRouter.get(
+  '/verifications/queue',
+  asyncHandler(async (req, res) => {
+    const { page, limit, skip } = pageParams(req.query);
+    const filter: Record<string, unknown> = { role: 'student' };
+
+    if (req.query.status && STUDENT_VERIFICATION_STATUSES.includes(req.query.status as StudentVerificationStatus)) {
+      filter.verificationStatus = req.query.status;
+    } else {
+      filter.verificationStatus = { $in: ['pending', 'under_review', 'needs_info'] };
+    }
+
+    if (req.query.q) {
+      const q = String(req.query.q).trim().slice(0, 80);
+      const regex = escapeRegex(q);
+      filter.$or = [
+        { fullName: { $regex: regex, $options: 'i' } },
+        { email: { $regex: regex, $options: 'i' } },
+        { studentId: { $regex: regex, $options: 'i' } },
+        { department: { $regex: regex, $options: 'i' } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      User.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      User.countDocuments(filter),
+    ]);
+
+    // Check duplicate student IDs
+    const studentIds = items.map((u) => u.studentId).filter((id): id is string => Boolean(id));
+    const duplicates = await User.aggregate([
+      { $match: { studentId: { $in: studentIds } } },
+      { $group: { _id: '$studentId', count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } },
+    ]);
+    const duplicateIds = new Set(duplicates.map((d) => d._id));
+
+    ok(res, {
+      items: items.map((u) => ({
+        ...publicUser(u),
+        isDuplicateStudentId: u.studentId ? duplicateIds.has(u.studentId) : false,
+      })),
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit) || 1,
+    });
+  }),
+);
+
+// ------------------------------------------------------------------ 19. Force Password Change on Next Login
+superAdminUsersRouter.post(
+  '/:id/force-password-change',
+  requireRecentAuth,
+  asyncHandler(async (req, res) => {
+    const uid = checkObjectId(req.params.id);
+    const target = await User.findById(uid);
+    if (!target) throw notFound('User not found.');
+
+    target.mustChangePassword = true;
+    await target.save();
+
+    await revokeAllSessions(String(target._id));
+    await disconnectUser(String(target._id));
+
+    await audit({ action: 'user.password_change_forced', req, targetType: 'user', targetId: String(target._id) });
+    ok(res, { message: 'Password change forced on next login. Existing sessions revoked.' });
+  }),
+);
+
+// ------------------------------------------------------------------ 20. Unlock Account Lockout
+superAdminUsersRouter.post(
+  '/:id/unlock',
+  requireRecentAuth,
+  asyncHandler(async (req, res) => {
+    const uid = checkObjectId(req.params.id);
+    const target = await User.findById(uid);
+    if (!target) throw notFound('User not found.');
+
+    target.failedLoginCount = 0;
+    target.lockedUntil = null;
+    await target.save();
+
+    await audit({ action: 'user.unlocked', req, targetType: 'user', targetId: String(target._id) });
+    ok(res, { message: 'Account unlocked successfully.' });
+  }),
+);
+
+// ------------------------------------------------------------------ 21. Campus Admin Scope & Delegation
+superAdminUsersRouter.post(
+  '/:id/campus-scope',
+  requireRecentAuth,
+  asyncHandler(async (req, res) => {
+    const uid = checkObjectId(req.params.id);
+    const target = await User.findById(uid);
+    if (!target) throw notFound('User not found.');
+
+    const input = parse(campusScopeAssignmentSchema, req.body);
+    target.managedCampuses = input.managedCampuses;
+    target.campusZone = input.campusZone ?? null;
+    await target.save();
+
+    await audit({
+      action: 'user.campus_scope_updated',
+      req,
+      targetType: 'user',
+      targetId: String(target._id),
+      meta: { managedCampuses: input.managedCampuses, campusZone: input.campusZone },
+    });
+
+    ok(res, publicUser(target));
+  }),
+);
+
+// ------------------------------------------------------------------ 22. Active Sessions Across Ecosystem
+superAdminUsersRouter.get(
+  '/sessions/active',
+  asyncHandler(async (req, res) => {
+    const { page, limit, skip } = pageParams(req.query);
+    const now = new Date();
+
+    const [sessions, total] = await Promise.all([
+      Session.find({ revokedAt: null, expiresAt: { $gt: now } })
+        .sort({ lastSeenAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Session.countDocuments({ revokedAt: null, expiresAt: { $gt: now } }),
+    ]);
+
+    const userIds = [...new Set(sessions.map((s) => s.userId))];
+    const users = await User.find({ _id: { $in: userIds } }, { fullName: 1, email: 1, role: 1, accountStatus: 1 }).lean();
+    const uMap = new Map(users.map((u) => [String(u._id), u]));
+
+    ok(res, {
+      items: sessions.map((s) => ({
+        id: String(s._id),
+        userId: String(s.userId),
+        user: uMap.get(String(s.userId)) ?? null,
+        client: s.client,
+        deviceName: s.deviceName,
+        userAgent: s.userAgent,
+        ipHash: s.ipHash,
+        mfaVerified: s.mfaVerified,
+        createdAt: s.createdAt,
+        lastSeenAt: s.lastSeenAt,
+        expiresAt: s.expiresAt,
+      })),
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit) || 1,
+    });
+  }),
+);
+
+// ------------------------------------------------------------------ 23. Revoke Individual Session
+superAdminUsersRouter.delete(
+  '/sessions/:sessionId',
+  requireRecentAuth,
+  asyncHandler(async (req, res) => {
+    const sid = checkObjectId(req.params.sessionId);
+    const session = await Session.findById(sid);
+    if (!session) throw notFound('Session not found.');
+
+    session.revokedAt = new Date();
+    await session.save();
+
+    await audit({
+      action: 'session.revoked',
+      req,
+      targetType: 'session',
+      targetId: String(session._id),
+      meta: { userId: String(session.userId) },
+    });
+
+    ok(res, { message: 'Session revoked successfully.' });
   }),
 );

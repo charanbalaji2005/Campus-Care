@@ -1013,13 +1013,29 @@ function BulkActionsDialog({
 }
 
 // ------------------------------------------------------------------ 9. Main User Management Component
-export function UserManager({ superAdmin = true }: { superAdmin?: boolean }) {
+export interface UserManagerProps {
+  superAdmin?: boolean;
+  initialRole?: Role;
+  lockRole?: boolean;
+  hideStats?: boolean;
+  roleTitle?: string;
+  roleSubtitle?: string;
+}
+
+export function UserManager({
+  superAdmin = true,
+  initialRole,
+  lockRole = false,
+  hideStats = false,
+  roleTitle,
+  roleSubtitle,
+}: UserManagerProps) {
   const me = useCurrentUser();
   const run = useSensitiveAction();
 
   // Filter and pagination state
   const [q, setQ] = React.useState('');
-  const [role, setRole] = React.useState('');
+  const [role, setRole] = React.useState(initialRole ?? '');
   const [status, setStatus] = React.useState('');
   const [verification, setVerification] = React.useState('');
   const [department, setDepartment] = React.useState('');
@@ -1098,7 +1114,7 @@ export function UserManager({ superAdmin = true }: { superAdmin?: boolean }) {
   return (
     <div className="space-y-6">
       {/* 1. Metric Cards Row */}
-      {stats && (
+      {!hideStats && stats && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <button
             type="button"
@@ -1162,10 +1178,12 @@ export function UserManager({ superAdmin = true }: { superAdmin?: boolean }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {!lockRole && (
             <Select className="w-36 text-xs" value={role} onChange={(e) => { setRole(e.target.value); setPage(1); }} aria-label="Role Filter">
               <option value="">All Roles</option>
               {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
             </Select>
+          )}
 
             <Select className="w-36 text-xs" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} aria-label="Status Filter">
               <option value="">All Statuses</option>
@@ -1386,7 +1404,21 @@ export function UserManager({ superAdmin = true }: { superAdmin?: boolean }) {
                               className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 outline-none hover:bg-brand-50"
                               onSelect={() => runUserAction('Password reset link sent to user', () => api.post(`/super-admin/users/${u.id}/force-password-reset`))}
                             >
-                              <KeyRound className="h-4 w-4 text-ink-soft" /> Force Password Reset
+                              <KeyRound className="h-4 w-4 text-ink-soft" /> Send Password Reset Email
+                            </DropdownMenu.Item>
+
+                            <DropdownMenu.Item
+                              className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 outline-none hover:bg-brand-50"
+                              onSelect={() => runUserAction('Password change required on next login', () => api.post(`/super-admin/users/${u.id}/force-password-change`))}
+                            >
+                              <KeyRound className="h-4 w-4 text-amber-700" /> Force Password Change Next Sign-In
+                            </DropdownMenu.Item>
+
+                            <DropdownMenu.Item
+                              className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 outline-none hover:bg-brand-50"
+                              onSelect={() => runUserAction('Account unlocked', () => api.post(`/super-admin/users/${u.id}/unlock`))}
+                            >
+                              <ShieldCheck className="h-4 w-4 text-emerald-700" /> Clear Lockout & Reset Failures
                             </DropdownMenu.Item>
 
                             <DropdownMenu.Item
