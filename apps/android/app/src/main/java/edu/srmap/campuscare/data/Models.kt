@@ -40,6 +40,8 @@ data class LoginResponse(
     val user: User? = null,
     val sessionToken: String? = null,
     val mfaRequired: Boolean = false,
+    /** Single-use second-step ticket issued after the password (and Turnstile) check passed. */
+    val challengeToken: String? = null,
     val needsMfaSetup: Boolean = false,
     val needsStudentId: Boolean = false,
     val created: Boolean = false,

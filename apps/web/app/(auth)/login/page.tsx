@@ -55,11 +55,55 @@ export default function LoginPage() {
   const resendCooldown = useCooldown();
   const [resending, setResending] = React.useState(false);
 
+  const inFlight = React.useRef(false);
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await form.submit(async (data) => {
+    if (inFlight.current) return; // no duplicate sign-in requests
+    inFlight.current = true;
+    try {
+      if (mfaStep) await submitCode();
+      else await submitPassword();
+    } finally {
+      inFlight.current = false;
+    }
+  }
+
+  /** Second step: the single-use challenge cookie from the password step replaces password + Turnstile. */
+  async function submitCode() {
+    const code = String(form.values.mfaCode ?? '');
+    if (!/^\d{6}$/.test(code)) { form.setErrors({ mfaCode: 'Enter the 6-digit code' }); return; }
+    await form.submit(async () => {
       try {
-        const r = await api.post<{ mfaRequired?: boolean; redirectTo?: string }>('/auth/login', { ...data, mfaCode: data.mfaCode || undefined });
+        const r = await api.post<{ redirectTo?: string }>('/auth/mfa/challenge', { code });
+        router.replace(safeNextPath(params.get('next'), safeNextPath(r.redirectTo, '/')));
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'mfa_challenge_expired') {
+          setMfaStep(false);
+          form.set('mfaCode', undefined);
+        }
+        if (err instanceof ApiError) setNotice({ tone: 'rose', text: err.message });
+        throw err;
+      }
+    }, { toastErrors: false });
+  }
+
+  async function submitPassword() {
+    await form.submit(async (data) => {
+      const started = performance.now();
+      try {
+        // Usually ready already: verification started when the page loaded.
+        let turnstileToken: string | undefined;
+        try {
+          turnstileToken = await turnstile.current?.getToken();
+        } catch (err) {
+          setNotice({ tone: 'rose', text: (err as Error).message });
+          return;
+        }
+        const r = await api.post<{ mfaRequired?: boolean; redirectTo?: string }>('/auth/login', { ...data, mfaCode: undefined, turnstileToken });
+        if (process.env.NODE_ENV !== 'production') console.debug(`[login] submit → response ${Math.round(performance.now() - started)}ms`);
+        // The token was used: prepare a fresh one in case the person has to start over.
+        turnstile.current?.reset();
         if (r.mfaRequired) { setMfaStep(true); return; }
         router.replace(safeNextPath(params.get('next'), safeNextPath(r.redirectTo, '/')));
       } catch (err) {

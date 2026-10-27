@@ -33,6 +33,10 @@ class AuthApi(private val c: ApiClient) {
     suspend fun login(email: String, password: String, mfaCode: String?, turnstile: String?): LoginResponse =
         c.post("/auth/login", mapOf("email" to email, "password" to password, "rememberMe" to true, "mfaCode" to mfaCode, "turnstileToken" to turnstile))
 
+    /** Second step: exchanges the challenge from [login] and a 6-digit code for a session (no password re-sent). */
+    suspend fun mfaChallenge(challengeToken: String, code: String): LoginResponse =
+        c.post("/auth/mfa/challenge", mapOf("challengeToken" to challengeToken, "code" to code))
+
     suspend fun google(idToken: String, nonce: String?): LoginResponse = c.post("/auth/google/mobile", mapOf("idToken" to idToken, "nonce" to nonce))
 
     suspend fun register(body: Map<String, Any?>): RegisterResponse = c.post("/auth/register", body)

@@ -33,7 +33,6 @@ export const authRouter = Router();
 const GENERIC_RESET = 'If an account exists for that email, a password reset link is on its way. It can take a few minutes to arrive; check your spam folder too.';
 const GENERIC_RESEND = 'If that account still needs verification, a new verification link is on its way. It can take a few minutes to arrive; check your spam folder too.';
 
-/** Answers no sooner than AUTH_GENERIC_RESPONSE_MS, so response timing does not reveal whether an account exists. */
 async function withGenericTiming<T>(work: () => Promise<T>): Promise<T> {
   const floor = new Promise((resolve) => setTimeout(resolve, env.AUTH_GENERIC_RESPONSE_MS));
   try {
@@ -43,15 +42,10 @@ async function withGenericTiming<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-/**
- * Refuses honestly when account emails cannot be sent (provider missing or failing). The check looks only at
- * the mail provider, never at the requested account, so the error is the same for every address.
- */
 async function requireEmailReady() {
   const r = await emailReadiness();
   if (!r.ready) throw new AppError(503, 'email_unavailable', r.message, { reason: r.reason });
 }
-/** Holds the restricted MFA challenge for browser sign-ins, so the token never has to sit in page script or a URL. */
 const MFA_COOKIE = 'cc_mfa';
 const MFA_COOKIE_PATH = '/';
 

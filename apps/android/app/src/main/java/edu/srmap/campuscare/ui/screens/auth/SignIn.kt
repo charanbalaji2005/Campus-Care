@@ -70,6 +70,8 @@ import edu.srmap.campuscare.ui.components.LocalSnack
 import edu.srmap.campuscare.ui.components.PasswordStrength
 import edu.srmap.campuscare.ui.components.Tone
 import edu.srmap.campuscare.ui.components.TurnstileHost
+import edu.srmap.campuscare.ui.components.TurnstileInline
+import edu.srmap.campuscare.ui.components.TurnstilePhase
 import edu.srmap.campuscare.ui.components.rememberTurnstile
 import edu.srmap.campuscare.ui.navigation.Routes
 import edu.srmap.campuscare.ui.theme.CcColors
@@ -94,6 +96,7 @@ fun LoginScreen() {
     var password by remember { mutableStateOf("") }
     var mfaCode by remember { mutableStateOf("") }
     var needMfa by remember { mutableStateOf(false) }
+    var challengeToken by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var googleBusy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -101,6 +104,32 @@ fun LoginScreen() {
     var emailError by remember { mutableStateOf<String?>(null) }
 
     fun submit() {
+        if (busy) return // no duplicate sign-in requests
+        val challenge = challengeToken
+        if (needMfa && challenge != null) {
+            // Second step: the password and Turnstile were already verified; the server's single-use
+            // challenge stands in for them, so there is no second security check to wait for.
+            if (mfaCode.length != 6) return
+            scope.launch {
+                busy = true
+                error = null
+                try {
+                    val resp = app.api.auth.mfaChallenge(challenge, mfaCode)
+                    app.rememberedEmail = if (rememberMe) email.trim().lowercase() else null
+                    completeSignIn(app, nav, resp)
+                } catch (e: ApiException) {
+                    if (e.code == "mfa_challenge_expired") {
+                        needMfa = false
+                        challengeToken = null
+                        mfaCode = ""
+                    }
+                    error = e.message
+                } finally {
+                    busy = false
+                }
+            }
+            return
+        }
         emailError = universityEmailError(email, domain)
         if (emailError != null || password.isEmpty()) return
         turnstile.run { token ->
@@ -111,6 +140,7 @@ fun LoginScreen() {
                     val resp = app.api.auth.login(email.trim().lowercase(), password, mfaCode.takeIf { needMfa && it.length == 6 }, token)
                     if (resp.mfaRequired && resp.sessionToken == null) {
                         needMfa = true
+                        challengeToken = resp.challengeToken
                     } else {
                         app.rememberedEmail = if (rememberMe) email.trim().lowercase() else null
                         completeSignIn(app, nav, resp)
@@ -169,8 +199,10 @@ fun LoginScreen() {
                 TextButton(onClick = { nav.navigate(Routes.verify(email = email)) }) { Text("Resend verification email") }
             }) else null)
         }
-        TurnstileNote(turnstile.enabled)
-        CcButton("Sign In", { submit() }, modifier = Modifier.fillMaxWidth(), loading = busy, trailingIcon = Icons.AutoMirrored.Rounded.ArrowForward)
+        // Verifies in the background while the form is filled in; the code step does not need it.
+        if (!needMfa || challengeToken == null) TurnstileInline(turnstile)
+        val waitingForCheck = turnstile.pending != null && turnstile.phase != TurnstilePhase.Failed
+        CcButton(if (waitingForCheck) "Verifying…" else "Sign In", { submit() }, modifier = Modifier.fillMaxWidth(), loading = busy || waitingForCheck, trailingIcon = Icons.AutoMirrored.Rounded.ArrowForward)
         if (GoogleSignIn.configured) {
             Text("or continue with", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             OutlinedButton(
