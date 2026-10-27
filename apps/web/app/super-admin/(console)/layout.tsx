@@ -1,70 +1,108 @@
 'use client';
 
 import {
-  Activity, BadgeCheck, BarChart3, CheckCheck, GraduationCap, Bell, BellRing, BookOpenCheck, Building2, CalendarClock, CalendarDays, Database, FileClock, FolderKanban, Gauge, Globe, HeartHandshake,
-  KeyRound, LayoutDashboard, LifeBuoy, Mail, Map, Megaphone, MessageSquareLock, MessagesSquare, PhoneCall, PlugZap, Route, Settings, ShieldAlert, ShieldCheck, Siren,
-  Smartphone, SmartphoneNfc, Timer, UserCog, UserRoundCheck, Users,
+  Activity,
+  BadgeCheck,
+  BarChart3,
+  Bell,
+  BellRing,
+  BookOpenCheck,
+  Building2,
+  CalendarClock,
+  CalendarDays,
+  CheckCheck,
+  Database,
+  FileClock,
+  FolderKanban,
+  Gauge,
+  Globe,
+  GraduationCap,
+  HeartHandshake,
+  KeyRound,
+  LayoutDashboard,
+  LifeBuoy,
+  ListTodo,
+  Mail,
+  Map,
+  Megaphone,
+  MessageSquareLock,
+  MessagesSquare,
+  PhoneCall,
+  PlugZap,
+  Route,
+  Server,
+  Settings,
+  ShieldAlert,
+  ShieldCheck,
+  Siren,
+  Smartphone,
+  SmartphoneNfc,
+  Timer,
+  UserCog,
+  UserRoundCheck,
+  Users,
 } from 'lucide-react';
 import { PortalShell, type NavItem } from '@/components/layout/portal-shell';
 
 /**
- * The website is the Super Admin control centre. Students, staff, administrators and moderators
- * use the Android app; everything configured here reaches installed apps through the API.
- * Items are hidden when the signed-in account lacks the permission — the API enforces the same rules.
+ * Super Admin Control Center navigation categorized into 6 collapsible operational groups.
+ * Real-time badges and permissions are evaluated server-side and client-side.
  */
 const nav: NavItem[] = [
-  { group: 'Operations', href: '/super-admin/dashboard', label: 'Dashboard', icon: Gauge },
-  { group: 'Operations', href: '/super-admin/emergency-alerts', label: 'Emergency alerts', icon: Siren, permission: 'sos:dispatch' },
-  { group: 'Operations', href: '/super-admin/live-map', label: 'Live map', icon: Map },
-  { group: 'Operations', href: '/super-admin/duty-roster', label: 'Duty roster', icon: CalendarClock, permission: 'duty:view' },
-  { group: 'Operations', href: '/super-admin/responders', label: 'Responders', icon: UserRoundCheck, permission: 'duty:view' },
-  { group: 'Operations', href: '/super-admin/live-ops', label: 'Response metrics', icon: Activity },
-  { group: 'Operations', href: '/super-admin/incidents', label: 'Incidents', icon: FolderKanban, permission: 'incidents:triage' },
-  { group: 'Operations', href: '/super-admin/campus-alerts', label: 'Campus alerts', icon: BellRing, permission: 'campus_alerts:manage' },
-  { group: 'Operations', href: '/super-admin/support', label: 'Support Center', icon: LifeBuoy, permission: 'support:manage' },
+  // 1. Overview
+  { group: 'Overview', href: '/super-admin/dashboard', label: 'Dashboard', icon: Gauge, exact: true },
+  { group: 'Overview', href: '/super-admin/activity-center', label: 'Activity Center', icon: ListTodo, badgeKey: 'activity' },
 
-  { group: 'People & access', href: '/super-admin/users', label: 'All Users', icon: Users, permission: 'users:manage' },
-  { group: 'People & access', href: '/super-admin/users/students', label: 'Students', icon: GraduationCap, permission: 'users:manage' },
-  { group: 'People & access', href: '/super-admin/users/campus-admins', label: 'Campus Admins', icon: Building2, permission: 'users:manage' },
-  { group: 'People & access', href: '/super-admin/users/counsellors', label: 'Counsellors', icon: HeartHandshake, permission: 'users:manage' },
-  { group: 'People & access', href: '/super-admin/users/officers', label: 'Safety Officers', icon: Siren, permission: 'users:manage' },
-  { group: 'People & access', href: '/super-admin/users/super-admins', label: 'Super Admins', icon: ShieldAlert, permission: 'users:manage' },
-  { group: 'People & access', href: '/super-admin/users/verifications', label: 'Manual Verification', icon: CheckCheck, permission: 'users:manage' },
-  { group: 'People & access', href: '/super-admin/users/sessions', label: 'Login Sessions', icon: KeyRound, permission: 'users:manage' },
-  { group: 'People & access', href: '/super-admin/roles', label: 'Roles & permissions', icon: UserCog, permission: 'roles:manage' },
-  { group: 'People & access', href: '/super-admin/committees', label: 'Committees', icon: Building2, permission: 'committees:manage' },
-  { group: 'People & access', href: '/super-admin/chat-access', label: 'Chat access', icon: MessageSquareLock, permission: 'chat:configure' },
-  { group: 'People & access', href: '/super-admin/chat', label: 'Support & chat', icon: MessagesSquare, permission: 'chat:configure' },
-  { group: 'People & access', href: '/super-admin/case-routing', label: 'Case routing', icon: Route, permission: 'routing:manage' },
+  // 2. People & Access
+  { group: 'People & Access', href: '/super-admin/users', label: 'All Users', icon: Users, permission: 'users:manage' },
+  { group: 'People & Access', href: '/super-admin/users/students', label: 'Students', icon: GraduationCap, permission: 'users:manage' },
+  { group: 'People & Access', href: '/super-admin/users/campus-admins', label: 'Campus Admins', icon: Building2, permission: 'users:manage' },
+  { group: 'People & Access', href: '/super-admin/users/counsellors', label: 'Counsellors', icon: HeartHandshake, permission: 'users:manage' },
+  { group: 'People & Access', href: '/super-admin/users/officers', label: 'Safety Officers', icon: Siren, permission: 'users:manage' },
+  { group: 'People & Access', href: '/super-admin/users/super-admins', label: 'Super Admins', icon: ShieldAlert, permission: 'users:manage' },
+  { group: 'People & Access', href: '/super-admin/roles', label: 'Roles & Permissions', icon: UserCog, permission: 'roles:manage' },
+  { group: 'People & Access', href: '/super-admin/users/verifications', label: 'Verification Queue', icon: CheckCheck, permission: 'users:manage', badgeKey: 'verifications' },
+  { group: 'People & Access', href: '/super-admin/users/sessions', label: 'Login Sessions', icon: KeyRound, permission: 'users:manage' },
+  { group: 'People & Access', href: '/super-admin/committees', label: 'Committees', icon: Building2, permission: 'committees:manage' },
 
-  { group: 'Security', href: '/super-admin/security', label: 'Security', icon: ShieldAlert, permission: 'security:manage' },
-  { group: 'Security', href: '/super-admin/authenticator', label: 'Authenticator', icon: SmartphoneNfc },
-  { group: 'Security', href: '/super-admin/identity-providers', label: 'Identity providers', icon: KeyRound, permission: 'identity_providers:manage' },
-  { group: 'Security', href: '/super-admin/domains', label: 'Domains', icon: Globe, permission: 'domains:manage' },
-  { group: 'Security', href: '/super-admin/audit-logs', label: 'Audit logs', icon: FileClock, permission: 'audit:read' },
+  // 3. Safety Operations
+  { group: 'Safety Operations', href: '/super-admin/emergency-alerts', label: 'SOS Alerts', icon: Siren, permission: 'sos:dispatch', badgeKey: 'sos' },
+  { group: 'Safety Operations', href: '/super-admin/incidents', label: 'Incidents & Complaints', icon: FolderKanban, permission: 'incidents:triage', badgeKey: 'incidents' },
+  { group: 'Safety Operations', href: '/super-admin/live-map', label: 'Safe Walk & Live Map', icon: Map },
+  { group: 'Safety Operations', href: '/super-admin/duty-roster', label: 'Duty Roster', icon: CalendarClock, permission: 'duty:view' },
+  { group: 'Safety Operations', href: '/super-admin/responders', label: 'Responders', icon: UserRoundCheck, permission: 'duty:view' },
+  { group: 'Safety Operations', href: '/super-admin/live-ops', label: 'Response Metrics', icon: Activity },
 
+  // 4. Communication
+  { group: 'Communication', href: '/super-admin/counselling-channel', label: 'Channels', icon: BadgeCheck, permission: 'community_channels:manage' },
+  { group: 'Communication', href: '/super-admin/chat', label: 'Chats & Support Thread', icon: MessagesSquare, permission: 'chat:configure' },
+  { group: 'Communication', href: '/super-admin/support', label: 'Support Center', icon: LifeBuoy, permission: 'support:manage', badgeKey: 'support' },
   { group: 'Communication', href: '/super-admin/notifications', label: 'Notifications', icon: Bell },
-  { group: 'Communication', href: '/super-admin/email', label: 'Email', icon: Mail, permission: 'email:manage' },
-  { group: 'Communication', href: '/super-admin/announcements', label: 'Announcements & events', icon: Megaphone, permission: 'announcements:manage' },
+  { group: 'Communication', href: '/super-admin/announcements', label: 'Announcements', icon: Megaphone, permission: 'announcements:manage' },
+  { group: 'Communication', href: '/super-admin/email', label: 'Email Operations', icon: Mail, permission: 'email:manage' },
 
-  { group: 'Campus safety', href: '/super-admin/campus', label: 'Campus overview', icon: LayoutDashboard, permission: 'analytics:read' },
-  { group: 'Campus safety', href: '/super-admin/safety-intel', label: 'Safety intelligence', icon: ShieldCheck, permission: 'safety_intel:manage' },
-  { group: 'Campus safety', href: '/super-admin/community', label: 'Community safety', icon: HeartHandshake, permission: 'community_safety:manage' },
-  { group: 'Campus safety', href: '/super-admin/moderation', label: 'Community moderation', icon: ShieldCheck, permission: 'chat:moderate' },
-  { group: 'Campus safety', href: '/super-admin/awareness', label: 'Awareness & training', icon: BookOpenCheck, permission: 'training:manage' },
-  { group: 'Campus safety', href: '/super-admin/contacts', label: 'Emergency contacts', icon: PhoneCall, permission: 'contacts:manage' },
-  { group: 'Campus safety', href: '/super-admin/counselling', label: 'Counselling overview', icon: CalendarDays, permission: 'appointments:read_aggregate' },
-  { group: 'Campus safety', href: '/super-admin/counselling-channel', label: 'Counselling channel', icon: BadgeCheck, permission: 'community_channels:manage' },
-  { group: 'Campus safety', href: '/super-admin/analytics', label: 'Analytics', icon: BarChart3, permission: 'analytics:read' },
+  // 5. Services
+  { group: 'Services', href: '/super-admin/counselling', label: 'Counselling Operations', icon: CalendarDays, permission: 'appointments:read_aggregate' },
+  { group: 'Services', href: '/super-admin/community', label: 'Community Safety', icon: HeartHandshake, permission: 'community_safety:manage' },
+  { group: 'Services', href: '/super-admin/moderation', label: 'Community Moderation', icon: ShieldCheck, permission: 'chat:moderate' },
+  { group: 'Services', href: '/super-admin/awareness', label: 'Awareness & Training', icon: BookOpenCheck, permission: 'training:manage' },
+  { group: 'Services', href: '/super-admin/contacts', label: 'Emergency Contacts', icon: PhoneCall, permission: 'contacts:manage' },
 
-  { group: 'Platform', href: '/super-admin/sos', label: 'SOS & safety settings', icon: Siren, permission: 'sos:configure' },
-  { group: 'Platform', href: '/super-admin/mobile-app', label: 'Mobile app', icon: Smartphone, permission: 'settings:manage' },
-  { group: 'Platform', href: '/super-admin/integrations', label: 'Integrations', icon: PlugZap, permission: 'settings:manage' },
-  { group: 'Platform', href: '/super-admin/data-governance', label: 'Data governance', icon: Database, permission: 'retention:manage' },
-  { group: 'Platform', href: '/super-admin/retention', label: 'Data retention', icon: Timer, permission: 'retention:manage' },
-  { group: 'Platform', href: '/super-admin/settings', label: 'Settings', icon: Settings, permission: 'settings:manage' },
+  // 6. System Administration
+  { group: 'System Administration', href: '/super-admin/analytics', label: 'Analytics & Reports', icon: BarChart3, permission: 'analytics:read' },
+  { group: 'System Administration', href: '/super-admin/audit-logs', label: 'Database Activity & Audit Logs', icon: FileClock, permission: 'audit:read' },
+  { group: 'System Administration', href: '/super-admin/security', label: 'Security Center', icon: ShieldAlert, permission: 'security:manage' },
+  { group: 'System Administration', href: '/super-admin/settings', label: 'Application Settings & Health', icon: Settings, permission: 'settings:manage' },
+  { group: 'System Administration', href: '/super-admin/data-governance', label: 'Data Governance', icon: Database, permission: 'retention:manage' },
+  { group: 'System Administration', href: '/super-admin/retention', label: 'Data Retention', icon: Timer, permission: 'retention:manage' },
+  { group: 'System Administration', href: '/super-admin/mobile-app', label: 'Mobile App Settings', icon: Smartphone, permission: 'settings:manage' },
+  { group: 'System Administration', href: '/super-admin/integrations', label: 'Integrations', icon: PlugZap, permission: 'settings:manage' },
 ];
 
 export default function SuperAdminLayout({ children }: { children: React.ReactNode }) {
-  return <PortalShell portal="Super Admin" nav={nav} roles={['super_admin']} permission="super_admin:access">{children}</PortalShell>;
+  return (
+    <PortalShell portal="Super Admin" nav={nav} roles={['super_admin']} permission="super_admin:access">
+      {children}
+    </PortalShell>
+  );
 }
