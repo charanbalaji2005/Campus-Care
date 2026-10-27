@@ -24,6 +24,7 @@ import {
   ListTodo,
   Mail,
   Map,
+  MapPin,
   Megaphone,
   MessageSquareLock,
   MessagesSquare,
@@ -68,6 +69,7 @@ const nav: NavItem[] = [
   // 3. Safety Operations
   { group: 'Safety Operations', href: '/super-admin/emergency-alerts', label: 'SOS Alerts', icon: Siren, permission: 'sos:dispatch', badgeKey: 'sos' },
   { group: 'Safety Operations', href: '/super-admin/incidents', label: 'Incidents & Complaints', icon: FolderKanban, permission: 'incidents:triage', badgeKey: 'incidents' },
+  { group: 'Safety Operations', href: '/super-admin/campus-map', label: 'Campus Map & Routes', icon: MapPin },
   { group: 'Safety Operations', href: '/super-admin/live-map', label: 'Safe Walk & Live Map', icon: Map },
   { group: 'Safety Operations', href: '/super-admin/duty-roster', label: 'Duty Roster', icon: CalendarClock, permission: 'duty:view' },
   { group: 'Safety Operations', href: '/super-admin/responders', label: 'Responders', icon: UserRoundCheck, permission: 'duty:view' },

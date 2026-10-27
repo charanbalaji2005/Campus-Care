@@ -870,3 +870,105 @@ data class AdminUser(
 
 /** Raw JSON for endpoints whose result the app does not need to inspect. */
 typealias Ignored = JsonElement
+
+
+// ------------------------------------------------------------------ campus map & routing models
+@Serializable
+data class CampusEntranceItem(
+    val id: String,
+    val name: String,
+    val latitude: Double,
+    val longitude: Double,
+    val isAccessible: Boolean = false,
+    val isMain: Boolean = false,
+    val status: String = "open",
+)
+
+@Serializable
+data class CampusBuildingItem(
+    val id: String,
+    val name: String,
+    val code: String,
+    val category: String,
+    val latitude: Double,
+    val longitude: Double,
+    val entrances: List<CampusEntranceItem> = emptyList(),
+    val operatingHours: String? = null,
+    val contactPhone: String? = null,
+    val description: String = "",
+    val status: String = "active",
+    val isEmergencyLocation: Boolean = false,
+    val accessibilityNotes: String? = null,
+)
+
+@Serializable
+data class PathwaySegmentItem(
+    val id: String,
+    val name: String,
+    val pathType: String = "pedestrian",
+    val isOneWay: Boolean = false,
+    val distanceMeters: Double = 0.0,
+    val surfaceType: String = "paved",
+    val hasLighting: Boolean = true,
+    val status: String = "open",
+)
+
+@Serializable
+data class CampusMapStats(
+    val totalBuildings: Int = 0,
+    val totalPathways: Int = 0,
+    val activeReportsCount: Int = 0,
+)
+
+@Serializable
+data class CampusMapData(
+    val center: MapCenter,
+    val campus: String = "main",
+    val buildings: List<CampusBuildingItem> = emptyList(),
+    val emergencyLocations: List<CampusBuildingItem> = emptyList(),
+    val pathways: List<PathwaySegmentItem> = emptyList(),
+    val stats: CampusMapStats = CampusMapStats(),
+)
+
+@Serializable
+data class RouteStepItem(
+    val instruction: String,
+    val distanceMeters: Double,
+    val durationSeconds: Double,
+    val pathwayName: String,
+)
+
+@Serializable
+data class RouteCalculationResponse(
+    val found: Boolean,
+    val isApproximate: Boolean = false,
+    val distanceMeters: Double = 0.0,
+    val durationSeconds: Double = 0.0,
+    val mode: String = "walking",
+    val geometry: List<List<Double>> = emptyList(),
+    val steps: List<RouteStepItem> = emptyList(),
+    val destinationEntrance: CampusEntranceItem? = null,
+    val warnings: List<String> = emptyList(),
+)
+
+@Serializable
+data class BuildingsResponse(
+    val items: List<CampusBuildingItem> = emptyList(),
+    val count: Int = 0,
+)
+
+@Serializable
+data class EmergencyLocationsResponse(
+    val items: List<CampusBuildingItem> = emptyList(),
+)
+
+@Serializable
+data class MapReportItem(
+    val id: String,
+    val reportType: String,
+    val locationLabel: String,
+    val description: String,
+    val status: String,
+    val resolutionNote: String? = null,
+    val createdAt: String? = null,
+)

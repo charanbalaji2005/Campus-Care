@@ -27,6 +27,7 @@ import { channelRouter } from './routes/channel.routes';
 import { eventsRouter } from './routes/events.routes';
 import { counsellingChatRouter } from './routes/counselling-chat.routes';
 import { opsRouter } from './routes/ops.routes';
+import { campusMapRouter } from './routes/campus-map.routes';
 import { getSettings } from './services/settings.service';
 import { AppError } from './lib/http';
 // Side-effect imports register background jobs and socket room authorisers.
@@ -117,6 +118,7 @@ export function createApp() {
   app.use('/api/v1/admin', adminRouter);
   app.use(['/api/v1/super-admin', '/api/v1/superadmin'], superAdminRouter);
   app.use('/api/v1/support', supportRouter);
+  app.use(['/api/v1/campus-map', '/api/campus-map'], campusMapRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

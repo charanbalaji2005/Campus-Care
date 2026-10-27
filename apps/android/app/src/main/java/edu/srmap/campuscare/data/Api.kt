@@ -16,6 +16,7 @@ class Api(val client: ApiClient) {
     val counselling = CounsellingApi(client)
     val safety = SafetyApi(client)
     val community = CommunityApi(client)
+    val campusMap = CampusMapApi(client)
     val admin = AdminApi(client)
     val mobile = MobileApi(client)
     val duty = DutyApi(client)
@@ -349,4 +350,60 @@ class AdminApi(private val c: ApiClient) {
     suspend fun invite(fullName: String, email: String, role: String, department: String?): Ignored =
         c.post("/admin/users/invite", mapOf("fullName" to fullName, "email" to email, "role" to role, "department" to department, "committeeIds" to emptyList<String>()).filterValues { it != null })
     suspend fun committees(): List<Committee> = c.get("/admin/committees")
+}
+
+
+class CampusMapApi(private val c: ApiClient) {
+    suspend fun data(campus: String? = null): CampusMapData =
+        c.get("/campus-map/data" + (campus?.let { "?campus=$it" } ?: ""))
+
+    suspend fun buildings(q: String? = null, category: String? = null): BuildingsResponse {
+        val params = listOfNotNull(
+            q?.takeIf { it.isNotBlank() }?.let { "q=${enc(it)}" },
+            category?.takeIf { it != "all" }?.let { "category=$it" },
+        ).joinToString("&")
+        return c.get("/campus-map/buildings" + if (params.isEmpty()) "" else "?$params")
+    }
+
+    suspend fun building(id: String): CampusBuildingItem =
+        c.get("/campus-map/buildings/$id")
+
+    suspend fun route(
+        originLat: Double,
+        originLng: Double,
+        destLat: Double? = null,
+        destLng: Double? = null,
+        buildingId: String? = null,
+        mode: String = "walking",
+    ): RouteCalculationResponse = c.post(
+        "/campus-map/route",
+        mapOf(
+            "origin" to mapOf("latitude" to originLat, "longitude" to originLng),
+            "destination" to mapOf("latitude" to destLat, "longitude" to destLng, "buildingId" to buildingId).filterValues { it != null },
+            "mode" to mode,
+        ),
+    )
+
+    suspend fun emergencyLocations(): EmergencyLocationsResponse =
+        c.get("/campus-map/emergency-locations")
+
+    suspend fun reportIssue(
+        reportType: String,
+        locationLabel: String,
+        description: String,
+        lat: Double? = null,
+        lng: Double? = null,
+    ): StatusResponse = c.post(
+        "/campus-map/reports",
+        mapOf(
+            "reportType" to reportType,
+            "locationLabel" to locationLabel,
+            "description" to description,
+            "latitude" to lat,
+            "longitude" to lng,
+        ).filterValues { it != null },
+    )
+
+    suspend fun myReports(): List<MapReportItem> =
+        c.get("/campus-map/reports/mine")
 }

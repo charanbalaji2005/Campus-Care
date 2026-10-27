@@ -568,3 +568,69 @@ export type SupportPriority = (typeof SUPPORT_PRIORITIES)[number];
 
 export const FAQ_STATUSES = ['draft', 'published', 'archived'] as const;
 export type FaqStatus = (typeof FAQ_STATUSES)[number];
+
+export const BUILDING_CATEGORIES = [
+  'academic',
+  'administrative',
+  'library',
+  'hostel',
+  'cafeteria',
+  'medical',
+  'security_office',
+  'assembly_point',
+  'gate',
+  'parking',
+  'bus_stop',
+  'sports',
+  'other',
+] as const;
+export type BuildingCategory = (typeof BUILDING_CATEGORIES)[number];
+
+export const BUILDING_CATEGORY_LABELS: Record<BuildingCategory, string> = {
+  academic: 'Academic Building',
+  administrative: 'Administrative Office',
+  library: 'Library',
+  hostel: 'Hostel & Residence',
+  cafeteria: 'Cafeteria & Dining',
+  medical: 'Medical Facility',
+  security_office: 'Security Office',
+  assembly_point: 'Emergency Assembly Point',
+  gate: 'Campus Gate & Entrance',
+  parking: 'Parking Lot',
+  bus_stop: 'Bus / Shuttle Stop',
+  sports: 'Sports & Recreation',
+  other: 'Other Facility',
+};
+
+export const PATHWAY_TYPES = [
+  'pedestrian',
+  'accessible',
+  'vehicle',
+  'emergency_access',
+] as const;
+export type PathwayType = (typeof PATHWAY_TYPES)[number];
+
+export const PATHWAY_STATUSES = [
+  'open',
+  'restricted',
+  'closed',
+  'maintenance',
+] as const;
+export type PathwayStatus = (typeof PATHWAY_STATUSES)[number];
+
+export const MAP_REPORT_TYPES = [
+  'closed_pathway',
+  'blocked_entrance',
+  'incorrect_location',
+  'accessibility_barrier',
+  'hazard',
+  'other',
+] as const;
+export type MapReportType = (typeof MAP_REPORT_TYPES)[number];
+
+export const ROUTE_TRAVEL_MODES = [
+  'walking',
+  'accessible',
+  'emergency',
+] as const;
+export type RouteTravelMode = (typeof ROUTE_TRAVEL_MODES)[number];
