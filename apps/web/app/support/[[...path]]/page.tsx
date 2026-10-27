@@ -1,5 +1,7 @@
-import { AppOnlyPage } from '@/components/app-only-page';
+﻿'use client';
 
-export default function Page() {
-  return <AppOnlyPage />;
+import { SupportCenter } from '@/components/support/support-center';
+
+export default function SupportPage() {
+  return <SupportCenter />;
 }

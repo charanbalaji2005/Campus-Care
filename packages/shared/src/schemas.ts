@@ -4,7 +4,7 @@ import {
   INCIDENT_CATEGORIES, INCIDENT_STATUSES, PRIORITIES, ROLES, SEVERITIES, MAIL_SERVICES,
   HAZARD_CATEGORIES, HAZARD_STATUSES, PLACE_KINDS, LOST_FOUND_CATEGORIES, SUGGESTION_CATEGORIES, SUGGESTION_STATUSES,
   NOTIFICATION_CATEGORIES, DATA_REQUEST_TYPES, type NotificationCategory, DUTY_STATUSES, RESPONDER_SKILLS, RESPONDER_RESPONSIBILITIES,
-  CHAT_REVIEW_SCOPES, CHAT_REVIEW_BASES, STUDENT_VERIFICATION_STATUSES,
+  CHAT_REVIEW_SCOPES, CHAT_REVIEW_BASES, STUDENT_VERIFICATION_STATUSES, SUPPORT_CATEGORIES, SUPPORT_STATUSES, SUPPORT_PRIORITIES, FAQ_STATUSES,
 } from './enums';
 
 const trimmed = (max: number) => z.string().trim().max(max);
@@ -600,3 +600,58 @@ export const mfaDisableSchema = z.object({ code: sixDigits });
 
 // ------------------------------------------------------------------ console search
 export const adminSearchSchema = z.object({ q: z.string().trim().min(2, 'Type at least 2 characters').max(80) });
+
+
+// ------------------------------------------------------------------ Support Center & Help Knowledge Base
+export const supportTicketCreateSchema = z.object({
+  subject: trimmed(150).min(5, 'Enter a clear subject (at least 5 characters)'),
+  category: z.enum(SUPPORT_CATEGORIES),
+  description: trimmed(3000).min(20, 'Please describe your question or issue in detail (at least 20 characters)'),
+  attachments: z.array(z.string().url()).max(5).default([]),
+  preferredChannel: z.enum(['in_app', 'email']).default('in_app'),
+});
+
+export const supportTicketReplySchema = z.object({
+  message: trimmed(3000).min(2, 'Enter your message'),
+  attachments: z.array(z.string().url()).max(5).default([]),
+  isInternal: z.boolean().default(false),
+});
+
+export const supportTicketAssignSchema = z.object({
+  assignedTo: objectId.nullable(),
+  reason: trimmed(300).optional(),
+});
+
+export const supportTicketStatusSchema = z.object({
+  status: z.enum(SUPPORT_STATUSES),
+  reason: trimmed(500).optional(),
+});
+
+export const supportTicketFeedbackSchema = z.object({
+  helpful: z.boolean(),
+  comment: trimmed(500).optional(),
+});
+
+export const faqArticleCreateSchema = z.object({
+  title: trimmed(200).min(5, 'Title must be at least 5 characters'),
+  slug: z.string().trim().toLowerCase().regex(/^[a-z0-9-]+$/, 'Slug must be alphanumeric with hyphens').optional(),
+  category: z.enum(SUPPORT_CATEGORIES),
+  summary: trimmed(300).min(10, 'Provide a brief summary'),
+  content: trimmed(10000).min(20, 'Article content must be at least 20 characters'),
+  instructions: z.array(trimmed(500)).optional(),
+  status: z.enum(FAQ_STATUSES).default('published'),
+  sourceTicketId: objectId.optional().nullable(),
+});
+
+export const faqArticleUpdateSchema = z.object({
+  title: trimmed(200).min(5).optional(),
+  category: z.enum(SUPPORT_CATEGORIES).optional(),
+  summary: trimmed(300).min(10).optional(),
+  content: trimmed(10000).min(20).optional(),
+  instructions: z.array(trimmed(500)).optional(),
+  status: z.enum(FAQ_STATUSES).optional(),
+});
+
+export const faqFeedbackSchema = z.object({
+  helpful: z.boolean(),
+});

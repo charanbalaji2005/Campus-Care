@@ -2,7 +2,7 @@
 
 import {
   Activity, BadgeCheck, BarChart3, CheckCheck, GraduationCap, Bell, BellRing, BookOpenCheck, Building2, CalendarClock, CalendarDays, Database, FileClock, FolderKanban, Gauge, Globe, HeartHandshake,
-  KeyRound, LayoutDashboard, Mail, Map, Megaphone, MessageSquareLock, MessagesSquare, PhoneCall, PlugZap, Route, Settings, ShieldAlert, ShieldCheck, Siren,
+  KeyRound, LayoutDashboard, LifeBuoy, Mail, Map, Megaphone, MessageSquareLock, MessagesSquare, PhoneCall, PlugZap, Route, Settings, ShieldAlert, ShieldCheck, Siren,
   Smartphone, SmartphoneNfc, Timer, UserCog, UserRoundCheck, Users,
 } from 'lucide-react';
 import { PortalShell, type NavItem } from '@/components/layout/portal-shell';
@@ -21,6 +21,7 @@ const nav: NavItem[] = [
   { group: 'Operations', href: '/super-admin/live-ops', label: 'Response metrics', icon: Activity },
   { group: 'Operations', href: '/super-admin/incidents', label: 'Incidents', icon: FolderKanban, permission: 'incidents:triage' },
   { group: 'Operations', href: '/super-admin/campus-alerts', label: 'Campus alerts', icon: BellRing, permission: 'campus_alerts:manage' },
+  { group: 'Operations', href: '/super-admin/support', label: 'Support Center', icon: LifeBuoy, permission: 'support:manage' },
 
   { group: 'People & access', href: '/super-admin/users', label: 'All Users', icon: Users, permission: 'users:manage' },
   { group: 'People & access', href: '/super-admin/users/students', label: 'Students', icon: GraduationCap, permission: 'users:manage' },

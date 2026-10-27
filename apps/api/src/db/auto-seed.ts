@@ -9,6 +9,7 @@ import { EmailDomain, EmailProviderConfig, IdentityProviderConfig, SystemSetting
 import { User } from '../models/user';
 import { Availability } from '../models/counselling';
 import { createIncident } from '../services/incident.service';
+import { seedFaqArticlesIfEmpty } from '../services/support-seed';
 import { logger } from '../lib/logger';
 
 export async function autoSeedDatabase() {
@@ -285,6 +286,7 @@ export async function autoSeedDatabase() {
       }).catch(() => undefined);
     }
 
+    await seedFaqArticlesIfEmpty();
     logger.info('Auto-seed completed: charanbalaji_neelampalli@srmap.edu.in provisioned with password Charan@123');
   } catch (err: any) {
     logger.error({ err: err?.message }, 'Auto-seed failed');

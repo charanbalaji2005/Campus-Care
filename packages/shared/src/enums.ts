@@ -511,3 +511,60 @@ export const CHAT_REVIEW_BASIS_LABELS: Record<(typeof CHAT_REVIEW_BASES)[number]
   user_consent: 'Written consent of the participants',
   security_incident: 'Platform security incident',
 };
+
+// ------------------------------------------------------------------ Support Center & Help Knowledge Base
+export const SUPPORT_CATEGORIES = [
+  'account_verification',
+  'login_password',
+  'sos_safety',
+  'gps_location',
+  'incidents_complaints',
+  'safe_walk',
+  'counselling_appointments',
+  'community',
+  'notifications',
+  'other',
+] as const;
+export type SupportCategory = (typeof SUPPORT_CATEGORIES)[number];
+
+export const SUPPORT_CATEGORY_LABELS: Record<SupportCategory, string> = {
+  account_verification: 'Account & Verification',
+  login_password: 'Login & Password',
+  sos_safety: 'SOS & Safety Features',
+  gps_location: 'GPS & Location',
+  incidents_complaints: 'Incidents & Complaints',
+  safe_walk: 'Safe Walk',
+  counselling_appointments: 'Counselling Appointments',
+  community: 'Community Guidelines',
+  notifications: 'Notifications & Permissions',
+  other: 'Other Technical Help',
+};
+
+export const SUPPORT_STATUSES = [
+  'new',
+  'open',
+  'assigned',
+  'awaiting_student',
+  'answered',
+  'resolved',
+  'reopened',
+  'closed',
+] as const;
+export type SupportStatus = (typeof SUPPORT_STATUSES)[number];
+
+export const SUPPORT_STATUS_LABELS: Record<SupportStatus, string> = {
+  new: 'New',
+  open: 'Open',
+  assigned: 'Assigned',
+  awaiting_student: 'Awaiting Student',
+  answered: 'Answered',
+  resolved: 'Resolved',
+  reopened: 'Reopened',
+  closed: 'Closed',
+};
+
+export const SUPPORT_PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const;
+export type SupportPriority = (typeof SUPPORT_PRIORITIES)[number];
+
+export const FAQ_STATUSES = ['draft', 'published', 'archived'] as const;
+export type FaqStatus = (typeof FAQ_STATUSES)[number];

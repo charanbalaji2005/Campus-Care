@@ -17,6 +17,7 @@ import { safetyRouter } from './routes/safety.routes';
 import { contentRouter } from './routes/content.routes';
 import { adminRouter } from './routes/admin.routes';
 import { superAdminRouter } from './routes/superadmin.routes';
+import { supportRouter } from './routes/support.routes';
 import { webhooksRouter } from './routes/webhooks.routes';
 import { mobileRouter } from './routes/mobile.routes';
 import { meRouter } from './routes/me.routes';
@@ -115,6 +116,7 @@ export function createApp() {
   app.use('/api/v1', contentRouter);
   app.use('/api/v1/admin', adminRouter);
   app.use(['/api/v1/super-admin', '/api/v1/superadmin'], superAdminRouter);
+  app.use('/api/v1/support', supportRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

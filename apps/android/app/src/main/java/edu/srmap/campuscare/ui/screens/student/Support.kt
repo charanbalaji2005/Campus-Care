@@ -315,14 +315,21 @@ fun HelpScreen() {
     val context = LocalContext.current
     val settings = app.config.config.value.settings
     val faqs = listOf(
-        "Who can see my report?" to "Only the committee assigned to your case and authorised administrators. Anonymous reports hide your identity from handlers. Super Admins do not read case contents by default.",
-        "What happens when I press SOS?" to "After a short countdown, Campus Security responders receive your alert and location. If nobody acknowledges within two minutes it escalates to backup responders, then to senior staff. You see each step live.",
-        "Does CampusCare track my location?" to "No. Location is only sent when you raise an SOS, start a Safe Walk with sharing, or choose to share live location for a limited time. You can stop sharing any time.",
-        "What does the category suggestion do?" to "It reads the text you type to suggest a category. It never decides anything about your case — people do.",
-        "Can I withdraw a report?" to "Yes, until action has started. Resolved cases can be reopened for a limited time if something still needs attention.",
-        "How do I delete my data?" to "Go to Profile → Privacy & data to download your data or request deletion. Some records must be kept by university policy; we'll tell you which.",
+        "How do I use the SOS feature?" to "Open the SOS section, grant the necessary location permissions, and follow the emergency instructions displayed in the app. Use SOS only for genuine emergencies. If you are in immediate danger, contact local emergency services as well.",
+        "Does CampusCare track my location in the background?" to "No. CampusCare never tracks your location when the app is idle. Location is only sent when you raise an emergency SOS, start a Safe Walk escort session, or manually share your live coordinates with trusted contacts.",
+        "Who can see my incident report?" to "Only the committee assigned to your case and authorised administrators. Anonymous reports hide your identity from handlers. Super Admins do not read case contents by default.",
+        "What happens during student verification?" to "Manual student verification confirms your university enrollment, department, and academic year. Verification requests are typically processed within 24 hours by campus administration.",
+        "How does Safe Walk work?" to "Safe Walk sets an estimated arrival time when walking across campus late at night and shares your progress with chosen friends. If you do not check in safely within 5 minutes after ETA, it prompts you and alerts security if needed.",
+        "Can administrators read my counselling notes?" to "No. Psychological counselling records are strictly confidential and protected by clinical privacy. Neither Super Admins, Campus Admins, nor Security Officers can read private counselling session notes.",
+        "What if I forget my password or get locked out?" to "Tap 'Forgot Password' on the login screen, enter your @srmap.edu.in email address, complete the security check, and follow the single-use reset link sent to your university inbox.",
+        "What are the campus community guidelines?" to "Treat all university peers with respect. Harassment, ragging, hate speech, and spam are prohibited. Official channels are reserved for verified announcements from campus authorities.",
+        "Why am I not receiving campus notifications?" to "Ensure notification permissions are set to 'Allowed' and battery optimization is set to 'Unrestricted' for CampusCare in Android Settings so you never miss critical safety broadcasts.",
+        "How do I export or delete my account data?" to "Go to Profile > Privacy & Data to request a full archive of your data or request account deletion in accordance with university data governance policies.",
     )
-    CcScreen(title = "Help & FAQ", subtitle = "How CampusCare keeps you safe", onBack = { nav.popBackStack() }) {
+    CcScreen(title = "Support Center & FAQs", subtitle = "Help, FAQs and answers from your campus team", onBack = { nav.popBackStack() }) {
+        CcButton("Ask a Question to Campus Admins", { nav.navigate(Routes.Support) }, Modifier.fillMaxWidth(), kind = ButtonKind.Primary, leadingIcon = Icons.Rounded.SupportAgent)
+
+        SectionHeader("Frequently Asked Questions")
         faqs.forEachIndexed { i, (q, a) ->
             var expanded by rememberSaveable { mutableStateOf(i == 0) }
             CcCard(Modifier.enterStagger(i), onClick = { expanded = !expanded }) {
@@ -334,14 +341,16 @@ fun HelpScreen() {
                 if (expanded) Text(a, style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft, modifier = Modifier.padding(top = 8.dp))
             }
         }
-        SectionHeader("Safety tools")
+        SectionHeader("Safety tools & Support")
         CcCard(padding = 8.dp) {
             ListRow("Safe Walk", subtitle = "Let trusted contacts know you got home", icon = Icons.AutoMirrored.Rounded.DirectionsWalk, tone = Tone.Teal, onClick = { nav.navigate(Routes.SafeWalk) })
+            Divider()
+            ListRow("Emergency Contacts", subtitle = "Direct phone numbers for campus security and health", icon = Icons.Rounded.Call, tone = Tone.Brand, onClick = { nav.navigate(Routes.Contacts) })
             Divider()
             ListRow("Safety Map", subtitle = "Help points, security posts and reported hazards", icon = Icons.Rounded.Place, tone = Tone.Sky, onClick = { nav.navigate(Routes.SafetyMap) })
         }
         if (settings.supportEmail.isNotBlank()) {
-            CcButton("Email ${settings.supportEmail}", { context.openUrl("mailto:${settings.supportEmail}") }, Modifier.fillMaxWidth(), kind = ButtonKind.Outline, leadingIcon = Icons.Rounded.Email)
+            CcButton("Email Campus Support (${settings.supportEmail})", { context.openUrl("mailto:${settings.supportEmail}") }, Modifier.fillMaxWidth(), kind = ButtonKind.Outline, leadingIcon = Icons.Rounded.Email)
         }
     }
 }

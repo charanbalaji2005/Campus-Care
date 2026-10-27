@@ -63,6 +63,7 @@ export const PERMISSIONS = [
   'community:moderate', // review reported/held feed posts and comments, decide appeals — never grants private chat access
   'community:organize_events', // publish official campus events (individual grant for organisers)
   'community_channels:manage', // verify which counsellors may publish in the Official Counselling Support channel
+  'support:manage', // manage help knowledge base and student support requests
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -78,7 +79,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'admin:access', 'incidents:triage', 'users:manage', 'committees:manage', 'appointments:read_aggregate',
     'announcements:manage', 'campus_alerts:manage', 'training:manage', 'contacts:manage', 'analytics:read',
     'audit:read', 'chat:moderate', 'chat:community', 'community_safety:manage', 'safety_intel:manage', 'duty:view',
-    'community:moderate',
+    'community:moderate', 'support:manage',
   ],
   super_admin: [
     'admin:access', 'super_admin:access', 'incidents:triage', 'users:manage', 'committees:manage',
@@ -87,7 +88,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'identity_providers:manage', 'email:manage', 'roles:manage', 'routing:manage', 'security:manage',
     'settings:manage', 'retention:manage', 'chat:configure', 'sos:configure', 'community_safety:manage', 'safety_intel:manage',
     'duty:view', 'duty:manage', 'sos:dispatch', 'location:view_live', 'notifications:manage',
-    'community:moderate', 'community_channels:manage',
+    'community:moderate', 'community_channels:manage', 'support:manage',
   ],
 };
 
