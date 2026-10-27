@@ -179,7 +179,12 @@ export function rankResponders(candidates: DispatchCandidate[], alert: DispatchA
   return { ranked, ineligible };
 }
 
-/** The response zone an alert falls in — only when its location is precise enough to say so. */
+/**
+ * The response zone an alert falls in — only when its location is precise enough to say so.
+ * The smallest zone containing the point wins (zones may nest, e.g. a block inside the campus). If the
+ * accuracy circle also reaches another zone that does not enclose the winner (a neighbouring block),
+ * the answer is uncertain and null is returned rather than confidently naming the wrong one.
+ */
 export function zoneForLocation<Z extends { id: string; latitude: number; longitude: number; radiusMeters: number }>(
   point: { latitude: number | null; longitude: number | null; accuracyMeters: number | null },
   zones: Z[],
@@ -187,9 +192,11 @@ export function zoneForLocation<Z extends { id: string; latitude: number; longit
 ): Z | null {
   if (point.latitude == null || point.longitude == null) return null;
   if (point.accuracyMeters == null || point.accuracyMeters > trustedLocationAccuracyMeters) return null;
-  const containing = zones
-    .map((z) => ({ z, d: haversineMeters({ latitude: point.latitude!, longitude: point.longitude! }, z) }))
-    .filter(({ z, d }) => d <= z.radiusMeters)
-    .sort((a, b) => a.z.radiusMeters - b.z.radiusMeters);
-  return containing[0]?.z ?? null;
+  const acc = point.accuracyMeters;
+  const measured = zones.map((z) => ({ z, d: haversineMeters({ latitude: point.latitude!, longitude: point.longitude! }, z) }));
+  const best = measured.filter(({ z, d }) => d <= z.radiusMeters).sort((a, b) => a.z.radiusMeters - b.z.radiusMeters)[0];
+  if (!best) return null;
+  const encloses = (outer: Z, inner: Z) => haversineMeters(outer, inner) + inner.radiusMeters <= outer.radiusMeters;
+  const ambiguous = measured.some(({ z, d }) => z !== best.z && !encloses(z, best.z) && d - acc <= z.radiusMeters);
+  return ambiguous ? null : best.z;
 }

@@ -49,6 +49,10 @@ mobileRouter.get(
 mobileRouter.get('/turnstile', (req, res) => {
   const action = String(req.query.action ?? 'login').replace(/[^a-zA-Z]/g, '').slice(0, 32) || 'login';
   const siteKey = turnstileKeys.siteKey ?? '';
+  // mode=background (newer apps): the widget runs inline while the form is filled in, stays invisible
+  // unless Cloudflare needs the person to interact, and refreshes its token before it expires. Older
+  // apps omit it and keep the original always-visible dialog behaviour.
+  const background = req.query.mode === 'background';
   res.setHeader(
     'Content-Security-Policy',
     "default-src 'none'; script-src 'unsafe-inline' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'unsafe-inline'; connect-src https://challenges.cloudflare.com; frame-ancestors 'none'",
@@ -76,15 +80,21 @@ mobileRouter.get('/turnstile', (req, res) => {
       try {
         if (!window.turnstile) { ccErr('turnstile_not_available'); return; }
         send('onLoaded', '');
-        turnstile.render('#w', {
+        var id = turnstile.render('#w', {
           sitekey: ${JSON.stringify(siteKey)},
           action: ${JSON.stringify(action)},
           theme: 'light',
-          size: 'flexible',
+          size: 'flexible',${background ? `
+          appearance: 'interaction-only',
+          'refresh-expired': 'auto',
+          'before-interactive-callback': function(){ send('onInteractive', '1'); },
+          'after-interactive-callback': function(){ send('onInteractive', '0'); },` : ''}
           callback: function(token){ send('onToken', token); },
           'expired-callback': function(){ send('onExpired', ''); },
           'error-callback': function(code){ send('onError', String(code || 'challenge_failed')); }
         });
+        // Called by the app after it has used a token (tokens are single use) to prepare the next one.
+        window.ccReset = function(){ try { turnstile.reset(id); } catch(e) { ccErr('reset_failed'); } };
       } catch(e) {
         ccErr(e && e.message ? e.message : 'render_failed');
       }

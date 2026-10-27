@@ -177,13 +177,15 @@ export async function autoSeedDatabase() {
     for (const m of modules) await TrainingModule.findOneAndUpdate({ title: m.title }, { $setOnInsert: m }, { upsert: true });
 
     // 6. User Account: charanbalaji_neelampalli@srmap.edu.in
+    // The seed password is only set when an account is first created ($setOnInsert). Overwriting it
+    // on every start would silently undo password resets and changes made since.
     const charanHash = await hashPassword('Charan@123');
     const charanUser = await User.findOneAndUpdate(
       { email: 'charanbalaji_neelampalli@srmap.edu.in' },
       {
+        $setOnInsert: { passwordHash: charanHash },
         $set: {
           fullName: 'Charan Balaji Neelampalli',
-          passwordHash: charanHash,
           role: 'super_admin',
           emailVerified: true,
           emailVerifiedAt: new Date(),
@@ -198,9 +200,9 @@ export async function autoSeedDatabase() {
     await User.findOneAndUpdate(
       { email: 'neelampallicharanbalaji14@gmail.com' },
       {
+        $setOnInsert: { passwordHash: charanHash },
         $set: {
           fullName: 'Charan Balaji',
-          passwordHash: charanHash,
           role: 'super_admin',
           emailVerified: true,
           emailVerifiedAt: new Date(),
@@ -239,9 +241,9 @@ export async function autoSeedDatabase() {
       const u = await User.findOneAndUpdate(
         { email: d.email },
         {
+          $setOnInsert: { passwordHash: charanHash },
           $set: {
             ...rest,
-            passwordHash: charanHash,
             emailVerified: true,
             emailVerifiedAt: new Date(),
             accountStatus: 'active',

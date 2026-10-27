@@ -46,9 +46,13 @@ export function requireTurnstile(form: TurnstileForm) {
     try {
       const s = await getSettings();
       if (!s.turnstile.enabled || !s.turnstile.forms[form]) return next();
-      if (form === 'login' && req.body?.mfaCode) return next();
+      // Every request is verified, including password + code sign-ins: a client-supplied field must never
+      // switch the check off. The second factor after a verified first step goes to /auth/mfa/challenge.
       const token = (req.body?.turnstileToken ?? req.headers['cf-turnstile-response']) as string | undefined;
+      const started = Date.now();
       const result = await verifyTurnstile(token, { remoteIp: req.ip, expectedAction: form });
+      // Timing only: never the token itself.
+      logger.debug({ form, ok: result.ok, reason: result.reason, ms: Date.now() - started }, 'turnstile siteverify');
       if (!result.ok) {
         void audit({ action: 'turnstile.failed', req, outcome: 'denied', meta: { form, reason: result.reason } });
         const message = result.reason === 'provider_unavailable'

@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.drawable.BitmapDrawable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -16,6 +17,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import edu.srmap.campuscare.BuildConfig
+import edu.srmap.campuscare.util.Fix
+import edu.srmap.campuscare.util.ageSeconds
+import edu.srmap.campuscare.util.rememberLiveFix
 import org.osmdroid.tileprovider.tilesource.ITileSource
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.tileprovider.tilesource.XYTileSource
@@ -25,8 +29,6 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.CopyrightOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
-import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
-import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 
 data class MapPin(
     val id: String,
@@ -59,9 +61,18 @@ private fun tileSource(): ITileSource {
 
 data class HeatSpot(val latitude: Double, val longitude: Double, val radiusMeters: Double, val intensity: Float)
 
+/** Device-location dot colour: distinct from every building/facility pin colour. */
+private val MyLocationBlue = Color(0xFF1A73E8)
+
 /**
  * OpenStreetMap view (no API key needed) with coloured pins, privacy-preserving heat circles and
  * an optional "my location" dot (shown only when location permission was granted).
+ *
+ * The dot is the app's own fused high-accuracy fix (same source and outlier filter as SOS), drawn at
+ * the measured coordinates with its accuracy ring. It is never snapped to a building. osmdroid's
+ * MyLocationNewOverlay is deliberately not used: its GpsMyLocationProvider shows raw "network"
+ * provider fixes whenever GPS has no lock (typical indoors), which are often 50–200 m off and put
+ * the dot on a neighbouring block.
  */
 @Composable
 fun OsmMap(
@@ -78,6 +89,7 @@ fun OsmMap(
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val live by rememberLiveFix(enabled = showMyLocation)
     val map = remember {
         MapView(context).apply {
             setTileSource(tileSource())
@@ -151,13 +163,47 @@ fun OsmMap(
         }
         // Attribution required by OpenStreetMap's licence (and most tile hosts).
         view.overlays.add(CopyrightOverlay(view.context).apply { setCopyrightNotice(BuildConfig.MAP_ATTRIBUTION) })
-        if (showMyLocation) {
-            val me = MyLocationNewOverlay(GpsMyLocationProvider(view.context), view)
-            me.enableMyLocation()
-            view.overlays.add(me)
+        val fix = live?.raw
+        if (showMyLocation && fix != null) {
+            // Measured position, not the smoothed estimate or a building centre. A stale fix stays visible
+            // but is drawn grey with a dashed ring so it is not mistaken for where the person is now.
+            val stale = fix.ageSeconds() > Fix.STALE_SECONDS
+            val tint = if (stale) Color(0xFF9AA0A6) else MyLocationBlue
+            val here = GeoPoint(fix.latitude, fix.longitude)
+            fix.accuracyMeters?.let { acc ->
+                view.overlays.add(Polygon(view).apply {
+                    setPoints(Polygon.pointsAsCircle(here, acc.coerceAtLeast(3.0)))
+                    fillPaint.color = tint.copy(alpha = 0.14f).toArgb()
+                    outlinePaint.color = tint.copy(alpha = 0.55f).toArgb()
+                    outlinePaint.strokeWidth = 3f
+                    if (stale) outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(14f, 10f), 0f)
+                    setOnClickListener { _, _, _ -> true }
+                })
+            }
+            view.overlays.add(Marker(view).apply {
+                position = here
+                title = "Your location"
+                snippet = (fix.accuracyMeters?.let { "±${it.toInt().coerceAtLeast(1)} m" } ?: "accuracy unknown") + if (stale) " · stale" else ""
+                icon = dotDrawable(view, tint.toArgb())
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            })
         }
         view.invalidate()
     })
+}
+
+/** Round "you are here" dot with a white rim, visually distinct from teardrop building pins. */
+private fun dotDrawable(view: MapView, color: Int): BitmapDrawable {
+    val d = view.context.resources.displayMetrics.density
+    val size = (20 * d).toInt()
+    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val c = Canvas(bmp)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = android.graphics.Color.WHITE }
+    val r = size / 2f
+    c.drawCircle(r, r, r - d, paint)
+    paint.color = color
+    c.drawCircle(r, r, r - 4 * d, paint)
+    return BitmapDrawable(view.resources, bmp)
 }
 
 /** Teardrop pin with a one-letter label, rendered to a bitmap for osmdroid. */

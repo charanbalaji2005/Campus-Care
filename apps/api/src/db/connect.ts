@@ -25,7 +25,13 @@ export async function connectDatabase(uri = env.MONGODB_URI) {
       memoryServer = await MongoMemoryServer.create();
     }
     targetUri = memoryServer.getUri();
-    logger.info({ uri: targetUri }, 'Using in-memory MongoDB fallback');
+    if (process.env.USE_MEMORY_DB === 'true') {
+      logger.info({ uri: targetUri }, 'Using in-memory MongoDB fallback');
+    } else {
+      // Not requested: MONGODB_URI is a placeholder or malformed. Nothing written now (accounts,
+      // password resets, cases) reaches the real database, and all of it is lost on restart.
+      logger.warn({ uri: targetUri }, 'MONGODB_URI is not a usable connection string; using a TEMPORARY in-memory database. All data is lost on restart. Set the real Atlas URI in apps/api/.env.');
+    }
   }
 
   await mongoose.connect(targetUri, {

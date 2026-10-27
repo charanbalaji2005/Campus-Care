@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
@@ -25,6 +26,7 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import edu.srmap.campuscare.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -128,6 +130,13 @@ fun rememberLiveFix(enabled: Boolean, intervalMs: Long = 3_000, priority: Int = 
                 result.locations.sortedBy { it.elapsedRealtimeNanos }.forEach { loc ->
                     val raw = loc.toRawFix()
                     val d = filter.offer(raw)
+                    if (BuildConfig.DEBUG) {
+                        // Debug builds only: precise coordinates must never reach release logs or analytics.
+                        Log.d("CampusCareLocation", "fix ${raw.provider} %.6f,%.6f ±%s m age %.1fs -> %s".format(
+                            raw.latitude, raw.longitude, raw.accuracyMeters?.toInt() ?: "?", raw.ageSeconds(),
+                            if (d is FilterDecision.Rejected) "rejected: ${d.reason}" else "accepted",
+                        ))
+                    }
                     if (d is FilterDecision.Accepted) state.value = LiveFix(raw, d.estimate)
                 }
             }

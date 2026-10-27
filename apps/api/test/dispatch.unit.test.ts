@@ -125,6 +125,21 @@ describe('zones and geometry', () => {
     expect(zoneForLocation({ latitude: 16.4636, longitude: 80.5074, accuracyMeters: 500 }, zones, 100)).toBeNull();
     expect(zoneForLocation({ latitude: null, longitude: null, accuracyMeters: null }, zones, 100)).toBeNull();
   });
+
+  it('names a neighbouring block only when the accuracy circle cannot reach the other one', () => {
+    // Two adjacent 40 m blocks ~111 m apart along latitude (0.001° ≈ 111 m), inside a campus zone.
+    const north = { id: 'north', latitude: 16.4646, longitude: 80.5074, radiusMeters: 40 };
+    const south = { id: 'south', latitude: 16.4636, longitude: 80.5074, radiusMeters: 40 };
+    const zones = [{ id: 'campus', latitude: 16.4641, longitude: 80.5074, radiusMeters: 1000 }, north, south];
+    // Latitude stays first, longitude second: a swapped pair would land ~7,000 km away and match nothing.
+    expect(zoneForLocation({ latitude: 16.4646, longitude: 80.5074, accuracyMeters: 10 }, zones, 100)?.id).toBe('north');
+    expect(zoneForLocation({ latitude: 16.4636, longitude: 80.5074, accuracyMeters: 10 }, zones, 100)?.id).toBe('south');
+    expect(zoneForLocation({ latitude: 80.5074, longitude: 16.4646, accuracyMeters: 10 }, zones, 100)).toBeNull();
+    // 33 m from north's centre (inside it), 78 m from south's: a ±60 m circle reaches south's edge, so it is uncertain.
+    expect(zoneForLocation({ latitude: 16.4643, longitude: 80.5074, accuracyMeters: 60 }, zones, 100)).toBeNull();
+    // Between the blocks and outside both: the campus zone, never the nearest block centre.
+    expect(zoneForLocation({ latitude: 16.4641, longitude: 80.5074, accuracyMeters: 5 }, zones, 100)?.id).toBe('campus');
+  });
 });
 
 describe('duty transitions', () => {
