@@ -13,7 +13,8 @@ import { Announcement, Contact, TrainingModule, TrainingProgress } from '../mode
 import { CampusAlert, EmergencyAlert, SafetyCheckIn } from '../models/safety';
 import { AuditLog } from '../models/platform';
 import { requireAuth, requireMfaPolicy, requirePermission } from '../middleware/auth';
-import { audit, verifyAuditChain } from '../services/audit.service';
+import { audit, verifyAuditChain, getAuditMetrics, getRecordHistory } from '../services/audit.service';
+import { getDbWatcherHealth } from '../services/db-watcher.service';
 import { appLink, sendEmail } from '../services/email/email.service';
 import { isDomainAllowed, revokeAllSessions } from '../services/auth.service';
 import { notify } from '../services/notification.service';
@@ -404,32 +405,239 @@ adminRouter.delete(
   }),
 );
 
-// ------------------------------------------------------------------ audit logs
+// ------------------------------------------------------------------ audit logs & database activity tracking
+
+function buildAuditFilter(query: Record<string, unknown>): Record<string, unknown> {
+  const filter: Record<string, unknown> = {};
+  if (query.action) filter.action = { $regex: '^' + escapeRegex(String(query.action)), $options: 'i' };
+  if (query.collection) filter.collectionName = String(query.collection);
+  if (query.operation) filter.operation = String(query.operation);
+  if (query.severity) filter.severity = String(query.severity);
+  if (query.source) filter.source = String(query.source);
+  if (query.outcome) filter.outcome = String(query.outcome);
+  if (query.actorId && Types.ObjectId.isValid(String(query.actorId))) filter.actorId = new Types.ObjectId(String(query.actorId));
+  if (query.targetId) filter.targetId = String(query.targetId).slice(0, 64);
+  if (query.correlationId) filter.correlationId = String(query.correlationId).slice(0, 64);
+
+  if (query.from || query.to) {
+    const atFilter: Record<string, Date> = {};
+    if (query.from) atFilter.$gte = new Date(String(query.from));
+    if (query.to) atFilter.$lte = new Date(String(query.to));
+    filter.at = atFilter;
+  }
+
+  if (query.q) {
+    const rx = { $regex: escapeRegex(String(query.q)), $options: 'i' };
+    filter.$or = [
+      { action: rx },
+      { actorName: rx },
+      { targetId: String(query.q) },
+      { correlationId: String(query.q) },
+      { reason: rx },
+      { changedFields: String(query.q) },
+    ];
+  }
+
+  return filter;
+}
+
+const auditListHandler = asyncHandler(async (req, res) => {
+  const { page, limit, skip } = pageParams(req.query, 100);
+  const filter = buildAuditFilter(req.query as Record<string, unknown>);
+
+  const [items, total, metrics] = await Promise.all([
+    AuditLog.find(filter).sort({ seq: -1 }).skip(skip).limit(limit).lean(),
+    AuditLog.countDocuments(filter),
+    getAuditMetrics(),
+  ]);
+
+  const actors = await User.find(
+    { _id: { $in: items.map((i) => i.actorId).filter(Boolean) } },
+    { fullName: 1, email: 1 },
+  ).lean();
+  const names = new Map(actors.map((a) => [String(a._id), a.fullName]));
+  const emails = new Map(actors.map((a) => [String(a._id), a.email]));
+
+  // Log viewing of audit logs (throttled to page 1)
+  if (page === 1 && !req.query.q) {
+    void audit({ action: 'audit.viewed', req, meta: { filterCount: Object.keys(filter).length } });
+  }
+
+  ok(res, {
+    items: items.map((i) => ({
+      id: String(i._id),
+      seq: i.seq,
+      at: i.at,
+      action: i.action,
+      collectionName: (i as any).collectionName || i.targetType || 'system',
+      operation: (i as any).operation || 'update',
+      severity: (i as any).severity || 'info',
+      source: (i as any).source || 'app',
+      correlated: (i as any).correlated ?? true,
+      actor: i.actorId ? names.get(String(i.actorId)) ?? (i as any).actorName ?? 'User' : (i as any).actorName || 'System',
+      actorEmail: i.actorId ? emails.get(String(i.actorId)) : null,
+      actorRole: i.actorRole,
+      actorType: (i as any).actorType || 'user',
+      targetType: i.targetType,
+      targetId: i.targetId,
+      changedFields: (i as any).changedFields || [],
+      diff: (i as any).diff || [],
+      before: (i as any).before || null,
+      after: (i as any).after || null,
+      outcome: i.outcome,
+      ipHash: i.ipHash,
+      reason: i.reason ?? null,
+      correlationId: i.correlationId ?? null,
+      hash: i.hash,
+      prevHash: i.prevHash,
+    })),
+    total,
+    page,
+    limit,
+    metrics,
+  });
+});
+
+adminRouter.get('/audit-logs', requirePermission('audit:read'), auditListHandler);
+adminRouter.get('/audit/events', requirePermission('audit:read'), auditListHandler);
+
+/**
+ * Retrieve chronological before/after history for any specific database record ID.
+ */
 adminRouter.get(
-  '/audit-logs',
+  '/audit/records/:recordId/history',
   requirePermission('audit:read'),
   asyncHandler(async (req, res) => {
-    const { page, limit, skip } = pageParams(req.query, 200);
-    const filter: Record<string, unknown> = {};
-    if (req.query.action) filter.action = { $regex: '^' + escapeRegex(String(req.query.action)), $options: 'i' };
-    if (req.query.outcome) filter.outcome = String(req.query.outcome);
-    if (req.query.actorId && Types.ObjectId.isValid(String(req.query.actorId))) filter.actorId = new Types.ObjectId(String(req.query.actorId));
-    if (req.query.from) filter.at = { $gte: new Date(String(req.query.from)) };
-    // Exact lookups used by console search and incident review: correlation id or target id.
-    if (req.query.correlationId) filter.correlationId = String(req.query.correlationId).slice(0, 64);
-    if (req.query.targetId) filter.targetId = String(req.query.targetId).slice(0, 64);
-    const [items, total] = await Promise.all([AuditLog.find(filter).sort({ seq: -1 }).skip(skip).limit(limit).lean(), AuditLog.countDocuments(filter)]);
-    const actors = await User.find({ _id: { $in: items.map((i) => i.actorId).filter(Boolean) } }, { fullName: 1 }).lean();
-    const names = new Map(actors.map((a) => [String(a._id), a.fullName]));
-    await audit({ action: 'audit.viewed', req, meta: { page } });
-    ok(res, { items: items.map((i) => ({ id: String(i._id), seq: i.seq, at: i.at, action: i.action, outcome: i.outcome, actor: i.actorId ? names.get(String(i.actorId)) ?? 'Unknown' : 'System / anonymous', actorRole: i.actorRole, targetType: i.targetType, targetId: i.targetId, meta: i.meta, reason: i.reason ?? null, correlationId: i.correlationId ?? null })), total, page, limit });
+    const history = await getRecordHistory(req.params.recordId);
+    ok(res, history);
   }),
 );
 
+/**
+ * Health and diagnostics for audit logging and MongoDB change streams.
+ */
+adminRouter.get(
+  '/audit/health',
+  requirePermission('audit:read'),
+  asyncHandler(async (_req, res) => {
+    const watcher = getDbWatcherHealth();
+    const integrity = await verifyAuditChain(200);
+    const total = await AuditLog.countDocuments();
+    ok(res, {
+      status: watcher.status === 'error' ? 'degraded' : 'healthy',
+      changeStream: watcher,
+      integrity: { ok: integrity.ok, checked: integrity.checked, brokenAtSeq: integrity.brokenAtSeq },
+      totalRecordedEvents: total,
+    });
+  }),
+);
+
+/**
+ * Validates cryptographic chain integrity of the append-only audit log.
+ */
 adminRouter.get(
   '/audit-logs/verify',
   requirePermission('audit:read'),
   asyncHandler(async (_req, res) => ok(res, await verifyAuditChain())),
+);
+
+adminRouter.get(
+  '/audit/integrity',
+  requirePermission('audit:read'),
+  asyncHandler(async (_req, res) => ok(res, await verifyAuditChain())),
+);
+
+/**
+ * High-level audit metrics and distribution statistics.
+ */
+adminRouter.get(
+  '/audit/metrics',
+  requirePermission('audit:read'),
+  asyncHandler(async (_req, res) => ok(res, await getAuditMetrics())),
+);
+
+/**
+ * Export audit logs in CSV or JSON format with mandatory reason.
+ */
+adminRouter.post(
+  '/audit/exports',
+  requirePermission('audit:read'),
+  asyncHandler(async (req, res) => {
+    const { format = 'csv', reason, filters = {} } = req.body;
+    if (!reason || String(reason).trim().length < 4) {
+      throw new AppError(400, 'reason_required', 'A valid administrative justification (reason) is required for audit log exports.');
+    }
+
+    const filter = buildAuditFilter(filters);
+    const items = await AuditLog.find(filter).sort({ seq: -1 }).limit(5000).lean();
+
+    const actors = await User.find({ _id: { $in: items.map((i) => i.actorId).filter(Boolean) } }, { fullName: 1 }).lean();
+    const names = new Map(actors.map((a) => [String(a._id), a.fullName]));
+
+    const mapped = items.map((i) => ({
+      seq: i.seq,
+      at: i.at.toISOString(),
+      action: i.action,
+      collection: (i as any).collectionName || i.targetType || 'system',
+      operation: (i as any).operation || 'update',
+      actor: i.actorId ? names.get(String(i.actorId)) ?? (i as any).actorName ?? 'User' : (i as any).actorName || 'System',
+      actorRole: i.actorRole || 'none',
+      targetType: i.targetType || 'none',
+      targetId: i.targetId || 'none',
+      changedFields: ((i as any).changedFields || []).join('; '),
+      outcome: i.outcome,
+      severity: (i as any).severity || 'info',
+      reason: i.reason || '',
+      correlationId: i.correlationId || '',
+      hash: i.hash,
+    }));
+
+    await audit({
+      action: 'audit.exported',
+      req,
+      reason,
+      severity: 'critical',
+      meta: { format, recordCount: mapped.length, filters },
+    });
+
+    if (format === 'json') {
+      ok(res, {
+        filename: `campuscare-audit-${new Date().toISOString().slice(0, 10)}.json`,
+        format: 'json',
+        count: mapped.length,
+        data: mapped,
+      });
+      return;
+    }
+
+    const headers = ['Seq', 'Timestamp', 'Action', 'Collection', 'Operation', 'Actor', 'ActorRole', 'TargetType', 'TargetId', 'ChangedFields', 'Outcome', 'Severity', 'Reason', 'CorrelationId', 'Hash'];
+    const rows = mapped.map((m) => [
+      m.seq,
+      `"${m.at}"`,
+      `"${m.action.replace(/"/g, '""')}"`,
+      `"${m.collection.replace(/"/g, '""')}"`,
+      `"${m.operation.replace(/"/g, '""')}"`,
+      `"${m.actor.replace(/"/g, '""')}"`,
+      `"${m.actorRole.replace(/"/g, '""')}"`,
+      `"${m.targetType.replace(/"/g, '""')}"`,
+      `"${m.targetId.replace(/"/g, '""')}"`,
+      `"${m.changedFields.replace(/"/g, '""')}"`,
+      `"${m.outcome.replace(/"/g, '""')}"`,
+      `"${m.severity.replace(/"/g, '""')}"`,
+      `"${m.reason.replace(/"/g, '""')}"`,
+      `"${m.correlationId.replace(/"/g, '""')}"`,
+      `"${m.hash.replace(/"/g, '""')}"`,
+    ].join(','));
+
+    const csvData = [headers.join(','), ...rows].join('\n');
+
+    ok(res, {
+      filename: `campuscare-audit-${new Date().toISOString().slice(0, 10)}.csv`,
+      format: 'csv',
+      count: mapped.length,
+      data: csvData,
+    });
+  }),
 );
 
 adminRouter.get('/sessions/active-count', requirePermission('users:manage'), asyncHandler(async (_req, res) => {

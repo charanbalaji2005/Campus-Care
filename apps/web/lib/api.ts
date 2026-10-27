@@ -77,6 +77,21 @@ export const api = {
     Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
     return request<T>('POST', path, fd);
   },
+  download: async (path: string, body?: unknown) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    headers['x-csrf-token'] = await csrfToken();
+    const res = await fetch(`/api/v1${path}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body ?? {}),
+      credentials: 'same-origin',
+    });
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, json?.error?.code ?? 'download_failed', json?.error?.message ?? 'Failed to download file');
+    }
+    return res.blob();
+  },
 };
 
 export function fileUrl(kind: 'case' | 'chat', id: string) {

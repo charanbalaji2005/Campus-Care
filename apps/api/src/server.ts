@@ -12,6 +12,7 @@ import { notify } from './services/notification.service';
 import { getSettings } from './services/settings.service';
 import { appLink } from './services/email/email.service';
 import { autoSeedDatabase } from './db/auto-seed';
+import { startDbWatcher, stopDbWatcher } from './services/db-watcher.service';
 
 async function main() {
   await connectDatabase();
@@ -19,6 +20,7 @@ async function main() {
   const app = createApp();
   const server = http.createServer(app);
   initRealtime(server);
+  void startDbWatcher();
 
   if (env.RUN_WORKER) {
     // Remove uploads that were never attached to a message or case (after 24h).
@@ -50,6 +52,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'shutting down');
     stopWorker();
+    stopDbWatcher();
     closeRealtime();
     server.close(async () => {
       await disconnectDatabase().catch(() => undefined);

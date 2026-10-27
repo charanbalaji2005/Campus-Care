@@ -36,6 +36,7 @@ registerRoomAuthoriser('ops', async (user, id) => {
   const sub = subject(user);
   if (id === 'alerts') return hasPermission(sub, 'sos:dispatch') || hasPermission(sub, 'duty:manage');
   if (id === 'livemap') return hasPermission(sub, 'location:view_live') || hasPermission(sub, 'sos:dispatch') || hasPermission(sub, 'duty:view');
+  if (id === 'audit') return hasPermission(sub, 'audit:read') || user.role === 'super_admin';
   return false;
 });
 

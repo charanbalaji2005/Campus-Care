@@ -122,11 +122,29 @@ const auditLogSchema = new Schema(
     seq: { type: Number, required: true },
     actorId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     actorRole: { type: String, default: null },
+    actorName: { type: String, default: null },
+    actorType: { type: String, enum: ['user', 'admin', 'system', 'job', 'database_direct'], default: 'user' },
     action: { type: String, required: true },
+    collectionName: { type: String, default: null },
+    operation: { type: String, enum: ['insert', 'update', 'delete', 'restore', 'read', 'export', 'auth', 'system'], default: 'update' },
     targetType: { type: String, default: null },
     targetId: { type: String, default: null },
     outcome: { type: String, enum: ['success', 'denied', 'failure'], default: 'success' },
+    severity: { type: String, enum: ['info', 'warn', 'critical'], default: 'info' },
+    source: { type: String, enum: ['app', 'change_stream', 'security', 'job', 'migration'], default: 'app' },
+    correlated: { type: Boolean, default: true },
+    changedFields: [{ type: String }],
+    diff: [
+      {
+        path: { type: String },
+        prev: { type: Schema.Types.Mixed },
+        next: { type: Schema.Types.Mixed },
+      },
+    ],
+    before: { type: Schema.Types.Mixed, default: null },
+    after: { type: Schema.Types.Mixed, default: null },
     ipHash: { type: String, default: null },
+    userAgent: { type: String, default: null },
     /** Redacted metadata only — no message bodies, passwords, tokens or secrets. */
     meta: { type: Schema.Types.Mixed, default: {} },
     /** Justification recorded by the actor, where the action requires one (overrides, private reviews). */
@@ -134,7 +152,7 @@ const auditLogSchema = new Schema(
     /** Request id (X-Request-Id) linking this entry to the API request and server logs. */
     correlationId: { type: String, default: null },
     /** Hash format: 1 = original fields; 2 also covers reason and correlationId. */
-    hv: { type: Number, default: 1 },
+    hv: { type: Number, default: 2 },
     prevHash: { type: String, required: true },
     hash: { type: String, required: true },
     at: { type: Date, required: true },
@@ -146,6 +164,11 @@ auditLogSchema.index({ at: -1 });
 auditLogSchema.index({ actorId: 1, at: -1 });
 auditLogSchema.index({ action: 1, at: -1 });
 auditLogSchema.index({ targetType: 1, targetId: 1 });
+auditLogSchema.index({ targetId: 1, at: -1 });
+auditLogSchema.index({ collectionName: 1, at: -1 });
+auditLogSchema.index({ operation: 1, at: -1 });
+auditLogSchema.index({ severity: 1, at: -1 });
+auditLogSchema.index({ source: 1, at: -1 });
 auditLogSchema.index({ correlationId: 1 }, { sparse: true });
 for (const op of ['updateOne', 'updateMany', 'findOneAndUpdate', 'replaceOne', 'deleteOne', 'deleteMany', 'findOneAndDelete'] as const) {
   auditLogSchema.pre(op, function blockMutation(next) {
