@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SETTINGS, canTransition, chatMediaDecision, deepMerge, formatCaseNumber, hasPermission,
-  incidentCreateSchema, registerSchema, assignableRoles, MEDIA_SCOPES, domainSchema, isAllowedAccountEmail, suggestIncidentCategory,
+  incidentCreateSchema, registerSchema, assignableRoles, MEDIA_SCOPES, domainSchema, isAllowedAccountEmail, suggestIncidentCategory, MAIN_ROLES, ROLE_LABELS, MAIN_ROLE_DEFINITIONS,
 } from './index';
 
 describe('chat media policy', () => {
@@ -112,5 +112,28 @@ describe('category suggestion (assistive only)', () => {
     expect(r.confidence).toBeLessThan(0.35);
     expect(suggestIncidentCategory('a man with a knife is following me now').looksUrgent).toBe(true);
     expect(suggestIncidentCategory('I feel like I want to die').showCrisisSupport).toBe(true);
+  });
+});
+
+describe('five canonical main roles', () => {
+  it('defines the 5 main roles without duplicates', () => {
+    // imports already at top
+    expect(MAIN_ROLES).toEqual(['super_admin', 'admin', 'student', 'counsellor', 'security_officer']);
+    expect(ROLE_LABELS.super_admin).toBe('Super Admin');
+    expect(ROLE_LABELS.admin).toBe('Campus Admin');
+    expect(ROLE_LABELS.student).toBe('Student');
+    expect(ROLE_LABELS.counsellor).toBe('Counsellor');
+    expect(ROLE_LABELS.security_officer).toBe('Safety Officer / Duty Officer');
+
+    // Ensure no duplicate label values exist
+    const labels = Object.values(ROLE_LABELS);
+    const unique = new Set(labels);
+    expect(labels.length).toBe(unique.size);
+
+    for (const role of MAIN_ROLES) {
+      expect(MAIN_ROLE_DEFINITIONS[role]).toBeDefined();
+      expect(MAIN_ROLE_DEFINITIONS[role].title).toBe(ROLE_LABELS[role]);
+      expect(MAIN_ROLE_DEFINITIONS[role].description.length).toBeGreaterThan(20);
+    }
   });
 });

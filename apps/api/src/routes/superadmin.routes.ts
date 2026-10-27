@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { Types } from 'mongoose';
 import dns from 'node:dns/promises';
 import {
-  DEFAULT_SETTINGS, SOS_ACTIVE_STATUSES, dataRequestDecisionSchema, EXPLICIT_ONLY_PERMISSIONS, PERMISSIONS, ROLE_PERMISSIONS, chatChannelSchema, domainSchema, domainUpdateSchema,
+  DEFAULT_SETTINGS, SOS_ACTIVE_STATUSES, dataRequestDecisionSchema, EXPLICIT_ONLY_PERMISSIONS, PERMISSIONS, ROLE_PERMISSIONS, MAIN_ROLES, ROLE_LABELS, MAIN_ROLE_DEFINITIONS, type MainRole, chatChannelSchema, domainSchema, domainUpdateSchema,
   emailProviderSchema, emailTemplateSchema, emergencyRecipientSchema, identityProviderSchema, routingRuleSchema, userRoleSchema, type Role,
 } from '@campuscare/shared';
 import { z } from 'zod';
@@ -321,7 +321,17 @@ superAdminRouter.get('/email/inbound', requirePermission('email:manage'), asyncH
 
 // ------------------------------------------------------------------ users and roles
 superAdminRouter.get('/roles', requirePermission('roles:manage'), asyncHandler(async (_req, res) => {
-  ok(res, { roles: ROLE_PERMISSIONS, permissions: PERMISSIONS, explicitOnly: EXPLICIT_ONLY_PERMISSIONS });
+  const byRole = await User.aggregate([{ $group: { _id: '$role', count: { $sum: 1 } } }]);
+  const userCounts: Record<string, number> = Object.fromEntries(byRole.map((r) => [r._id, r.count]));
+  ok(res, {
+    roles: ROLE_PERMISSIONS,
+    permissions: PERMISSIONS,
+    explicitOnly: EXPLICIT_ONLY_PERMISSIONS,
+    mainRoles: MAIN_ROLES,
+    roleLabels: ROLE_LABELS,
+    roleDefinitions: MAIN_ROLE_DEFINITIONS,
+    userCounts,
+  });
 }));
 
 superAdminRouter.patch(

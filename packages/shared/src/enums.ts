@@ -11,14 +11,147 @@ export const ROLES = [
 ] as const;
 export type Role = (typeof ROLES)[number];
 
+/**
+ * The five canonical main roles in the CampusCare ecosystem.
+ * Formally structured to eliminate duplicate or ambiguous administrative roles.
+ */
+export const MAIN_ROLES = [
+  'super_admin',
+  'admin',
+  'student',
+  'counsellor',
+  'security_officer',
+] as const;
+export type MainRole = (typeof MAIN_ROLES)[number];
+
 export const ROLE_LABELS: Record<Role, string> = {
+  super_admin: 'Super Admin',
+  admin: 'Campus Admin',
   student: 'Student',
   counsellor: 'Counsellor',
-  committee_member: 'Committee member',
-  security_officer: 'Security officer',
-  moderator: 'Community moderator',
-  admin: 'Administrator',
-  super_admin: 'Super Admin',
+  security_officer: 'Safety Officer / Duty Officer',
+  committee_member: 'Committee Member',
+  moderator: 'Community Moderator',
+};
+
+export interface RoleDetail {
+  id: Role;
+  title: string;
+  badge: string;
+  subtitle: string;
+  description: string;
+  scope: string;
+  responsibilities: string[];
+  keyCapabilities: string[];
+  securityNote: string;
+}
+
+export const MAIN_ROLE_DEFINITIONS: Record<MainRole, RoleDetail> = {
+  super_admin: {
+    id: 'super_admin',
+    title: 'Super Admin',
+    badge: 'Full System Control',
+    subtitle: 'Full System Governance & Platform Control',
+    description: 'Manage all modules, users, campus admins, permissions, security settings, reports, audit logs, and application configuration. Access sensitive data only when explicitly authorized.',
+    scope: 'Ecosystem-wide (All Campuses, Databases & Infrastructure)',
+    responsibilities: [
+      'Manage all modules, users, campus admins, and system roles',
+      'Oversee platform security, MFA policies, domain controls, and audit trails',
+      'Configure notification templates, campus operational policies, and integrations',
+      'Review system health, API analytics, database status, and background queues',
+    ],
+    keyCapabilities: [
+      'Full administrative access across all campus portals and consoles',
+      'Configure email providers, identity providers, and Turnstile settings',
+      'Inspect immutable security audit logs and session revocation',
+      'Sensitive data access restricted by default: requires explicit, audited break-glass authorization',
+    ],
+    securityNote: 'Sensitive student case files and private counselling notes are sealed by default. Access requires explicit permission grant with mandatory justification.',
+  },
+  admin: {
+    id: 'admin',
+    title: 'Campus Admin',
+    badge: 'Campus Operations',
+    subtitle: 'Campus Operations & Escalations',
+    description: 'Manage campus operations, students, officers, announcements, incidents, reports, and duty assignments within their authorized campus scope.',
+    scope: 'Campus-wide Operational Scope',
+    responsibilities: [
+      'Manage campus operations, students, and duty security officers',
+      'Oversee campus announcements, emergency alerts, and community posts',
+      'Triage and route incoming incidents to appropriate committees',
+      'Assign duty shifts and manage campus roster availability',
+    ],
+    keyCapabilities: [
+      'Incident case triage and routing across campus committees',
+      'Roster oversight, duty assignment, and responder availability monitoring',
+      'Student account management and role provisioning within campus scope',
+      'Publishing official campus alerts, training materials, and contact registries',
+    ],
+    securityNote: 'Restricted from platform configuration, database credentials, and system-wide security settings. Cannot access confidential counselling notes.',
+  },
+  student: {
+    id: 'student',
+    title: 'Student',
+    badge: 'Campus Resident / Scholar',
+    subtitle: 'Campus Resident Safety & Community',
+    description: 'Access SOS, GPS-based safety features, incident reporting, Safe Walk, counselling requests, community features, notifications, and personal account settings.',
+    scope: 'Personal Account, Peer Community & Emergency Safety',
+    responsibilities: [
+      'Raise emergency SOS alerts when in danger or distress',
+      'Report safety hazards, ragging, harassment, or infrastructure issues',
+      'Request Safe Walk companion escorts across campus',
+      'Book counselling appointments and communicate securely with assigned counsellors',
+    ],
+    keyCapabilities: [
+      'Instant one-tap SOS with automated GPS location sharing and emergency contacts dispatch',
+      'Incident submission with evidence attachments and anonymous reporting option',
+      'Safe Walk live companion tracker with peer or security officer assignment',
+      'Confidential counselling booking and student wellbeing support requests',
+    ],
+    securityNote: 'Client identity and location data are encrypted and strictly protected. Location is only shared with active responders during an open SOS or Safe Walk.',
+  },
+  counsellor: {
+    id: 'counsellor',
+    title: 'Counsellor',
+    badge: 'Psychological Support',
+    subtitle: 'Confidential Wellbeing & Psychological Support',
+    description: 'Manage availability, appointments, counselling requests, and authorized private student conversations. Confidential counselling records must remain restricted.',
+    scope: 'Assigned Appointments & Confidential Clinical Records',
+    responsibilities: [
+      'Manage counsellor availability schedule and slot allocations',
+      'Review and accept incoming student counselling requests',
+      'Conduct private, confidential consultations and therapy sessions',
+      'Publish verified mental health resources and guidance in official channels',
+    ],
+    keyCapabilities: [
+      'Confidential appointment workflow (pending, confirmed, completed, rescheduled)',
+      'Private clinical notes storage accessible ONLY by the assigned counsellor',
+      'Encrypted one-on-one student wellbeing messaging',
+      'Aggregate anonymized reporting for campus wellbeing trends',
+    ],
+    securityNote: 'Clinical and therapy notes are strictly sealed. Even Super Admins cannot read private counselling session notes without explicit legal/safeguarding authorization and audit logging.',
+  },
+  security_officer: {
+    id: 'security_officer',
+    title: 'Safety Officer / Duty Officer',
+    badge: 'Emergency Response & Patrol',
+    subtitle: 'Emergency Ground Response & Campus Patrol',
+    description: 'Receive and respond to assigned SOS alerts, view necessary location data, manage assigned incidents, update response status, and escalate emergencies.',
+    scope: 'Active Shift Ground Operations & Emergency Dispatch',
+    responsibilities: [
+      'Receive instant SOS push alerts and emergency dispatch notifications',
+      'View consenting student GPS coordinates and location breadcrumbs during active alerts',
+      'Manage assigned incidents, update real-time response status, and record arrival timestamps',
+      'Conduct Safe Walk escorts and coordinate emergency medical or police escalation',
+    ],
+    keyCapabilities: [
+      'SOS response dashboard with live distance and directional navigation',
+      'Duty status toggle (On duty, Off duty, On break, Busy, Responding)',
+      'Real-time incident updates, evidence logging, and escalation workflows',
+      'Direct secure coordination channel with campus control room during emergencies',
+    ],
+    securityNote: 'GPS location tracking of students is strictly restricted to active emergency response duration and automatically ceases once the alert is resolved.',
+  },
 };
 
 /** Roles that can never be created through public registration or Google sign-up. */
