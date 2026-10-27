@@ -1,38 +1,55 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import {
-  ACTIVE_APPOINTMENT_STATUSES, appointmentRequestSchema, appointmentUpdateSchema, availabilitySchema, counsellingNoteSchema,
-  hasPermission, type AppointmentStatus, type Role,
+  ACTIVE_APPOINTMENT_STATUSES,
+  appointmentRequestSchema,
+  appointmentReassignSchema,
+  appointmentUpdateSchema,
+  availabilitySchema,
+  counsellingNoteSchema,
+  hasPermission,
+  type AppointmentStatus,
+  type Role,
 } from '@campuscare/shared';
 import { AppError, asyncHandler, notFound, ok, parse } from '../lib/http';
 import { generateSlots } from '../lib/time';
 import { Appointment, Availability, CounsellingNote, type AppointmentDoc } from '../models/counselling';
 import { ChatChannel, ChatMembership } from '../models/chat';
 import { User, type UserDoc } from '../models/user';
+import { AuditLog } from '../models/platform';
 import { requireAuth, requirePermission, requireRole } from '../middleware/auth';
 import { audit } from '../services/audit.service';
 import { notify } from '../services/notification.service';
 import { appLink } from '../services/email/email.service';
+import {
+  CounsellorAssignmentService,
+  ALGORITHM_VERSION,
+  DEFAULT_MAX_ACTIVE_CASELOAD,
+} from '../services/counsellor-assignment.service';
 
 export const counsellingRouter = Router();
 counsellingRouter.use(requireAuth);
 
 const slotLockOf = (counsellorId: unknown, startAt: Date) => `${String(counsellorId)}:${startAt.toISOString()}`;
-const fmt = (d: Date) => d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
+const fmt = (d?: Date | null) => (d ? d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }) : 'TBD');
 
 async function bookedStarts(counsellorId: unknown) {
   const active = await Appointment.find({ counsellorId, status: { $in: ACTIVE_APPOINTMENT_STATUSES }, startAt: { $gt: new Date() } }, { startAt: 1 }).lean();
-  return new Set(active.map((a) => a.startAt.toISOString()));
+  return new Set(active.map((a) => a.startAt ? a.startAt.toISOString() : ''));
 }
 
-function serializeAppointment(a: AppointmentDoc | Record<string, unknown>, viewer: 'student' | 'counsellor', people: Map<string, { fullName: string; studentId?: string | null; department?: string | null }>) {
+function serializeAppointment(
+  a: AppointmentDoc | Record<string, unknown>,
+  viewer: 'student' | 'counsellor' | 'admin',
+  people: Map<string, { fullName: string; studentId?: string | null; department?: string | null }>,
+) {
   const ap = a as AppointmentDoc;
   const student = people.get(String(ap.studentId));
-  const counsellor = people.get(String(ap.counsellorId));
+  const counsellor = ap.counsellorId ? people.get(String(ap.counsellorId)) : null;
   return {
     id: String(ap._id),
-    startAt: ap.startAt,
-    endAt: ap.endAt,
+    startAt: ap.startAt ?? null,
+    endAt: ap.endAt ?? null,
     mode: ap.mode,
     status: ap.status,
     statusReason: ap.statusReason,
@@ -40,15 +57,15 @@ function serializeAppointment(a: AppointmentDoc | Record<string, unknown>, viewe
     meetingLink: ap.status === 'confirmed' || ap.status === 'rescheduled' ? ap.meetingLink : null,
     threadId: ap.threadId ? String(ap.threadId) : null,
     counsellor: counsellor ? { id: String(ap.counsellorId), name: counsellor.fullName } : null,
-    // Counsellors see only what they need for the session.
-    student: viewer === 'counsellor' && student ? { id: String(ap.studentId), name: student.fullName, studentId: student.studentId ?? null, department: student.department ?? null } : undefined,
+    // Counsellors/Admins see student details for triage and session context.
+    student: (viewer === 'counsellor' || viewer === 'admin') && student ? { id: String(ap.studentId), name: student.fullName, studentId: student.studentId ?? null, department: student.department ?? null } : undefined,
     followUpAt: ap.followUpAt,
     createdAt: (ap as unknown as { createdAt: Date }).createdAt,
   };
 }
 
-async function peopleFor(list: { studentId: unknown; counsellorId: unknown }[]) {
-  const ids = [...new Set(list.flatMap((a) => [String(a.studentId), String(a.counsellorId)]))];
+async function peopleFor(list: { studentId: unknown; counsellorId?: unknown }[]) {
+  const ids = [...new Set(list.flatMap((a) => [String(a.studentId), ...(a.counsellorId ? [String(a.counsellorId)] : [])]))];
   const users = await User.find({ _id: { $in: ids } }, { fullName: 1, studentId: 1, department: 1 }).lean();
   return new Map(users.map((u) => [String(u._id), u]));
 }
@@ -86,13 +103,22 @@ counsellingRouter.get(
   asyncHandler(async (req, res) => {
     const user = req.user!;
     let filter: Record<string, unknown>;
-    let view: 'student' | 'counsellor' = 'student';
-    if (user.role === 'student') filter = { studentId: user._id };
-    else if (user.role === 'counsellor' || user.role === 'super_admin') { filter = { counsellorId: user._id }; view = 'counsellor'; }
-    else throw new AppError(403, 'forbidden', 'Administrators see aggregate counselling statistics only.');
+    let view: 'student' | 'counsellor' | 'admin' = 'student';
+    if (user.role === 'student') {
+      filter = { studentId: user._id };
+    } else if (user.role === 'counsellor') {
+      filter = { counsellorId: user._id };
+      view = 'counsellor';
+    } else if (user.role === 'super_admin' || hasPermission({ role: user.role as Role, permissions: user.permissions }, 'appointments:read_aggregate')) {
+      filter = {};
+      view = 'admin';
+    } else {
+      throw new AppError(403, 'forbidden', 'Administrators see aggregate counselling statistics only.');
+    }
+
     if (req.query.status) filter.status = String(req.query.status);
     if (req.query.upcoming === 'true') filter.startAt = { $gte: new Date(Date.now() - 3600_000) };
-    const list = await Appointment.find(filter).sort({ startAt: req.query.upcoming === 'true' ? 1 : -1 }).limit(200).lean();
+    const list = await Appointment.find(filter).sort({ createdAt: -1 }).limit(200).lean();
     const people = await peopleFor(list);
     ok(res, list.map((a) => serializeAppointment(a as never, view, people)));
   }),
@@ -108,30 +134,100 @@ counsellingRouter.post(
       if (String(existing.studentId) !== String(req.user!._id)) throw new AppError(409, 'conflict', 'Duplicate request key.');
       return ok(res, { id: String(existing._id), status: existing.status });
     }
-    const avail = await Availability.findOne({ counsellorId: input.counsellorId }).lean();
-    if (!avail?.acceptingRequests) throw new AppError(422, 'not_accepting', 'This counsellor is not accepting requests right now.');
-    const slots = generateSlots({ weekly: avail.weekly as never, slotMinutes: avail.slotMinutes, timezone: avail.timezone, blockedDates: avail.blockedDates });
-    const startAt = new Date(input.startAt);
-    if (!slots.some((s) => s.getTime() === startAt.getTime())) throw new AppError(422, 'invalid_slot', 'Choose one of the available time slots.');
-    const activeCount = await Appointment.countDocuments({ studentId: req.user!._id, status: { $in: ACTIVE_APPOINTMENT_STATUSES }, startAt: { $gt: new Date() } });
-    if (activeCount >= 3) throw new AppError(422, 'too_many', 'You already have 3 upcoming requests. Cancel one before booking another.');
+
+    const activeCount = await Appointment.countDocuments({
+      studentId: req.user!._id,
+      status: { $in: ACTIVE_APPOINTMENT_STATUSES },
+      $or: [{ startAt: { $gt: new Date() } }, { startAt: null }],
+    });
+    if (activeCount >= 3) {
+      throw new AppError(422, 'too_many', 'You already have 3 upcoming requests. Cancel one before booking another.');
+    }
+
+    const isAuto = !input.counsellorId || input.counsellorId === 'auto';
+    let assignedCounsellorId: Types.ObjectId | null = null;
+    let startAt: Date | null = input.startAt ? new Date(input.startAt) : null;
+    let endAt: Date | null = null;
+    let slotLock: string | null = null;
+
+    if (!isAuto) {
+      assignedCounsellorId = new Types.ObjectId(input.counsellorId as string);
+      const avail = await Availability.findOne({ counsellorId: assignedCounsellorId }).lean();
+      if (!avail?.acceptingRequests) {
+        throw new AppError(422, 'not_accepting', 'This counsellor is not accepting requests right now.');
+      }
+      const slots = generateSlots({ weekly: avail.weekly as never, slotMinutes: avail.slotMinutes, timezone: avail.timezone, blockedDates: avail.blockedDates });
+      if (!startAt || !slots.some((s) => s.getTime() === startAt!.getTime())) {
+        throw new AppError(422, 'invalid_slot', 'Choose one of the available time slots.');
+      }
+      endAt = new Date(startAt.getTime() + avail.slotMinutes * 60_000);
+      slotLock = slotLockOf(assignedCounsellorId, startAt);
+    }
+
     let appt;
     try {
       appt = await Appointment.create({
-        studentId: req.user!._id, counsellorId: input.counsellorId, startAt, endAt: new Date(startAt.getTime() + avail.slotMinutes * 60_000),
-        mode: input.mode, reason: input.reason ?? null, status: 'requested', slotLock: slotLockOf(input.counsellorId, startAt), idempotencyKey: input.idempotencyKey,
+        studentId: req.user!._id,
+        counsellorId: assignedCounsellorId,
+        startAt,
+        endAt,
+        mode: input.mode,
+        reason: input.reason ?? null,
+        status: 'requested',
+        slotLock,
+        idempotencyKey: input.idempotencyKey,
       });
     } catch (err) {
-      if ((err as { code?: number }).code === 11000) throw new AppError(409, 'slot_taken', 'That slot was just taken. Please pick another time.');
+      if ((err as { code?: number }).code === 11000) {
+        throw new AppError(409, 'slot_taken', 'That slot was just taken. Please pick another time.');
+      }
       throw err;
     }
-    // Private appointment thread (student + counsellor only).
-    const thread = await ChatChannel.create({ kind: 'counselling_thread', name: 'Counselling', appointmentId: appt._id, studentId: req.user!._id, published: true });
-    await ChatMembership.insertMany([{ channelId: thread._id, userId: req.user!._id, role: 'student' }, { channelId: thread._id, userId: input.counsellorId, role: 'staff' }]);
+
+    // Private appointment thread (student + counsellor)
+    const thread = await ChatChannel.create({
+      kind: 'counselling_thread',
+      name: 'Counselling',
+      appointmentId: appt._id,
+      studentId: req.user!._id,
+      published: true,
+    });
+    const memberships = [{ channelId: thread._id, userId: req.user!._id, role: 'student' }];
+    if (assignedCounsellorId) {
+      memberships.push({ channelId: thread._id, userId: assignedCounsellorId, role: 'staff' });
+    }
+    await ChatMembership.insertMany(memberships);
     appt.threadId = thread._id;
     await appt.save();
+
     await audit({ action: 'appointment.requested', req, targetType: 'appointment', targetId: String(appt._id) });
-    await notify({ userId: input.counsellorId, kind: 'appointment', category: 'appointments', title: 'New appointment request', body: `Requested for ${fmt(startAt)}.`, link: `/consultancy/appointments?focus=${appt._id}` });
+
+    if (isAuto) {
+      const autoResult = await CounsellorAssignmentService.autoAssign(
+        String(appt._id),
+        String(req.user!._id),
+        String(req.user!._id),
+      );
+      return ok(
+        res,
+        {
+          id: String(appt._id),
+          status: appt.status,
+          autoAssignment: autoResult,
+        },
+        201,
+      );
+    }
+
+    await notify({
+      userId: String(assignedCounsellorId),
+      kind: 'appointment',
+      category: 'appointments',
+      title: 'New appointment request',
+      body: `Requested for ${fmt(startAt)}.`,
+      link: `/consultancy/appointments?focus=${appt._id}`,
+    });
+
     ok(res, { id: String(appt._id), status: appt.status }, 201);
   }),
 );
@@ -141,9 +237,10 @@ async function loadAppointmentFor(user: UserDoc, id: string) {
   const appt = await Appointment.findById(id);
   if (!appt) throw notFound();
   const isStudent = String(appt.studentId) === String(user._id);
-  const isCounsellor = String(appt.counsellorId) === String(user._id) || user.role === 'super_admin';
-  if (!isStudent && !isCounsellor) throw notFound();
-  return { appt, isStudent, isCounsellor };
+  const isCounsellor = appt.counsellorId && String(appt.counsellorId) === String(user._id);
+  const isSuperAdmin = user.role === 'super_admin' || hasPermission({ role: user.role as Role, permissions: user.permissions }, 'appointments:read_aggregate');
+  if (!isStudent && !isCounsellor && !isSuperAdmin) throw notFound();
+  return { appt, isStudent, isCounsellor: Boolean(isCounsellor || isSuperAdmin) };
 }
 
 counsellingRouter.patch(
@@ -163,11 +260,11 @@ counsellingRouter.patch(
       if (isStudent && !isCounsellor && !(allowedForStudent.includes(to) && ACTIVE_APPOINTMENT_STATUSES.includes(from))) throw new AppError(403, 'forbidden', 'You can only cancel an upcoming appointment.');
       if (isCounsellor && !(counsellorTransitions[from] ?? []).includes(to)) throw new AppError(422, 'invalid_transition', `Cannot change from ${from} to ${to}.`);
       if ((to === 'rejected' || (to === 'cancelled' && isCounsellor)) && !input.reason) throw new AppError(422, 'reason_required', 'Please give the student a reason.');
-      if ((to === 'completed' || to === 'missed') && appt.startAt > new Date()) throw new AppError(422, 'too_early', 'You can record attendance after the session starts.');
+      if ((to === 'completed' || to === 'missed') && appt.startAt && appt.startAt > new Date()) throw new AppError(422, 'too_early', 'You can record attendance after the session starts.');
     }
     if (input.startAt) {
       if (!isCounsellor) throw new AppError(403, 'forbidden', 'Only the counsellor can propose a new time.');
-      const avail = await Availability.findOne({ counsellorId: appt.counsellorId }).lean();
+      const avail = appt.counsellorId ? await Availability.findOne({ counsellorId: appt.counsellorId }).lean() : null;
       const newStart = new Date(input.startAt);
       if (newStart <= new Date()) throw new AppError(422, 'invalid_slot', 'Choose a future time.');
       appt.startAt = newStart;
@@ -177,7 +274,9 @@ counsellingRouter.patch(
     if (to) appt.status = to;
     if (input.reason) appt.statusReason = input.reason;
     if (input.meetingLink !== undefined && isCounsellor) appt.meetingLink = input.meetingLink || null;
-    appt.slotLock = ACTIVE_APPOINTMENT_STATUSES.includes(appt.status as AppointmentStatus) ? slotLockOf(appt.counsellorId, appt.startAt) : null;
+    appt.slotLock = (appt.counsellorId && appt.startAt && ACTIVE_APPOINTMENT_STATUSES.includes(appt.status as AppointmentStatus))
+      ? slotLockOf(appt.counsellorId, appt.startAt)
+      : null;
     try {
       await appt.save();
     } catch (err) {
@@ -185,14 +284,154 @@ counsellingRouter.patch(
       throw err;
     }
     await audit({ action: 'appointment.updated', req, targetType: 'appointment', targetId: String(appt._id), meta: { from, to: appt.status } });
-    const otherParty = isCounsellor ? String(appt.studentId) : String(appt.counsellorId);
-    await notify({
-      userId: otherParty, kind: 'appointment', category: 'appointments', title: `Appointment ${appt.status}`, body: `Your appointment on ${fmt(appt.startAt)} is now ${appt.status}.`,
-      link: isCounsellor ? '/student/counselling' : `/consultancy/appointments?focus=${appt._id}`,
-      email: isCounsellor ? { template: 'appointment_update', vars: { when: fmt(appt.startAt), status: appt.status, link: appLink('/student/counselling') } } : undefined,
-    });
+    if (appt.counsellorId) {
+      const otherParty = isCounsellor ? String(appt.studentId) : String(appt.counsellorId);
+      await notify({
+        userId: otherParty, kind: 'appointment', category: 'appointments', title: `Appointment ${appt.status}`, body: `Your appointment on ${fmt(appt.startAt)} is now ${appt.status}.`,
+        link: isCounsellor ? '/student/counselling' : `/consultancy/appointments?focus=${appt._id}`,
+        email: isCounsellor ? { template: 'appointment_update', vars: { when: fmt(appt.startAt), status: appt.status, link: appLink('/student/counselling') } } : undefined,
+      });
+    }
     const people = await peopleFor([appt]);
     ok(res, serializeAppointment(appt, isCounsellor ? 'counsellor' : 'student', people));
+  }),
+);
+
+// ------------------------------------------------------------------ Reassign endpoint (Admin / Coordinator)
+counsellingRouter.post(
+  '/appointments/:id/reassign',
+  requirePermission('appointments:read_aggregate'),
+  asyncHandler(async (req, res) => {
+    const input = parse(appointmentReassignSchema, req.body);
+    const updated = await CounsellorAssignmentService.reassign(
+      req.params.id,
+      input.counsellorId,
+      input.reason,
+      String(req.user!._id),
+    );
+    ok(res, { id: String(updated._id), counsellorId: String(updated.counsellorId), status: updated.status, message: 'Reassigned successfully.' });
+  }),
+);
+
+// ------------------------------------------------------------------ Manual Auto-Assign trigger
+counsellingRouter.post(
+  '/appointments/:id/auto-assign',
+  requirePermission('appointments:read_aggregate'),
+  asyncHandler(async (req, res) => {
+    if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
+    const appt = await Appointment.findById(req.params.id);
+    if (!appt) throw notFound();
+    const result = await CounsellorAssignmentService.autoAssign(
+      String(appt._id),
+      String(appt.studentId),
+      String(req.user!._id),
+    );
+    ok(res, result);
+  }),
+);
+
+// ------------------------------------------------------------------ Admin Workload & Queue
+counsellingRouter.get(
+  '/admin/workload',
+  requirePermission('appointments:read_aggregate'),
+  asyncHandler(async (_req, res) => {
+    const now = new Date();
+    const counsellors = await User.find(
+      { role: 'counsellor', accountStatus: 'active' },
+      { fullName: 1, email: 1, department: 1, accountStatus: 1 },
+    ).lean();
+
+    const counsellorIds = counsellors.map((c) => c._id);
+    const availabilities = await Availability.find({ counsellorId: { $in: counsellorIds } }).lean();
+    const availMap = new Map(availabilities.map((a) => [String(a.counsellorId), a]));
+
+    const activeAppts = await Appointment.find({
+      counsellorId: { $in: counsellorIds },
+      status: { $in: ACTIVE_APPOINTMENT_STATUSES },
+      startAt: { $gt: now },
+    }).lean();
+
+    const caseloadMap = new Map<string, number>();
+    for (const a of activeAppts) {
+      const cId = String(a.counsellorId);
+      caseloadMap.set(cId, (caseloadMap.get(cId) ?? 0) + 1);
+    }
+
+    const counsellorWorkload = counsellors.map((c) => {
+      const cId = String(c._id);
+      const avail = availMap.get(cId);
+      const activeCaseload = caseloadMap.get(cId) ?? 0;
+      const capacity = DEFAULT_MAX_ACTIVE_CASELOAD;
+      return {
+        id: cId,
+        name: c.fullName,
+        email: c.email,
+        department: c.department ?? 'General Counselling',
+        activeCaseload,
+        capacity,
+        openCapacity: Math.max(0, capacity - activeCaseload),
+        acceptingRequests: avail?.acceptingRequests ?? false,
+        slotsPublished: (avail?.weekly?.length ?? 0) > 0,
+      };
+    });
+
+    // Unassigned requests queue (status: requested, no counsellor assigned or queued for auto-assign)
+    const unassigned = await Appointment.find({
+      status: 'requested',
+      counsellorId: null,
+    })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    const studentIds = unassigned.map((u) => u.studentId);
+    const students = await User.find({ _id: { $in: studentIds } }, { fullName: 1, studentId: 1, department: 1 }).lean();
+    const studentMap = new Map(students.map((s) => [String(s._id), s]));
+
+    const unassignedQueue = unassigned.map((u) => {
+      const st = studentMap.get(String(u.studentId));
+      return {
+        id: String(u._id),
+        studentName: st?.fullName ?? 'Student',
+        studentId: st?.studentId ?? null,
+        department: st?.department ?? null,
+        mode: u.mode,
+        reason: u.reason ?? 'General Consultation',
+        statusReason: u.statusReason ?? 'Awaiting counsellor assignment',
+        createdAt: (u as unknown as { createdAt: Date }).createdAt,
+      };
+    });
+
+    // Recent assignment audit history
+    const recentAudit = await AuditLog.find({
+      action: { $in: ['counsellor.auto_assigned', 'counsellor.reassigned'] },
+    })
+      .sort({ at: -1 })
+      .limit(20)
+      .lean();
+
+    ok(res, {
+      counsellors: counsellorWorkload,
+      unassignedQueue,
+      unassignedCount: unassignedQueue.length,
+      recentAssignments: recentAudit.map((a) => ({
+        id: String(a._id),
+        action: a.action,
+        appointmentId: a.targetId,
+        actorId: a.actorId,
+        at: a.at,
+        meta: a.meta,
+      })),
+      algorithm: {
+        version: ALGORITHM_VERSION,
+        defaultMaxCaseload: DEFAULT_MAX_ACTIVE_CASELOAD,
+        weights: {
+          workload: 40,
+          availability: 20,
+          continuity: 25,
+          fairRotation: 15,
+        },
+      },
+    });
   }),
 );
 
@@ -259,7 +498,6 @@ counsellingRouter.get(
   requireRole('counsellor'),
   asyncHandler(async (req, res) => {
     if (!Types.ObjectId.isValid(req.params.studentId)) throw notFound();
-    // Minimum necessary: only students this counsellor has appointments with.
     const has = req.user!.role === 'super_admin' || (await Appointment.exists({ counsellorId: req.user!._id, studentId: req.params.studentId }));
     if (!has) throw notFound();
     const s = await User.findById(req.params.studentId, { fullName: 1, studentId: 1, department: 1, academicYear: 1 }).lean();
@@ -292,7 +530,6 @@ counsellingRouter.get(
     const match: Record<string, unknown> = {};
     if (req.user!.role === 'counsellor' || req.user!.role === 'super_admin') match.counsellorId = req.user!._id;
     else if (!hasPermission(subject, 'appointments:read_aggregate')) throw new AppError(403, 'forbidden', 'Not permitted.');
-    // Aggregates only — never names or notes.
     const byStatus = await Appointment.aggregate([{ $match: match }, { $group: { _id: '$status', count: { $sum: 1 } } }]);
     const byMonth = await Appointment.aggregate([
       { $match: { ...match, startAt: { $gte: new Date(Date.now() - 180 * 86400_000) } } },

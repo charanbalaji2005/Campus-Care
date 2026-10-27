@@ -38,6 +38,7 @@ async function main() {
       const until = new Date(Date.now() + s.notifications.reminderHoursBefore * 3600_000);
       const due = await Appointment.find({ status: { $in: ['confirmed', 'rescheduled'] }, reminderSentAt: null, startAt: { $gt: new Date(), $lte: until } }).limit(100);
       for (const a of due) {
+        if (!a.startAt) continue;
         const when = a.startAt.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
         await notify({ userId: String(a.studentId), kind: 'appointment', category: 'appointments', title: 'Appointment reminder', body: `Your appointment is on ${when}.`, link: '/student/counselling', email: { template: 'appointment_reminder', vars: { when, link: appLink('/student/counselling') }, dedupeKey: `reminder:${a._id}:${a.startAt.toISOString()}` } });
         a.reminderSentAt = new Date();

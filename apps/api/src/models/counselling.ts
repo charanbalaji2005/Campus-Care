@@ -20,9 +20,9 @@ export const Availability = model('Availability', availabilitySchema);
 const appointmentSchema = new Schema(
   {
     studentId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    counsellorId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    startAt: { type: Date, required: true },
-    endAt: { type: Date, required: true },
+    counsellorId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    startAt: { type: Date, default: null },
+    endAt: { type: Date, default: null },
     mode: { type: String, enum: APPOINTMENT_MODES, default: 'in_person' },
     status: { type: String, enum: APPOINTMENT_STATUSES, default: 'requested' },
     reason: { type: String, default: null, maxlength: 500 },

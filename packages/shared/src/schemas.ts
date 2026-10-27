@@ -128,11 +128,15 @@ export const committeeMemberSchema = z.object({ userId: objectId, position: z.en
 
 // ---------------------------------------------------------------- counselling
 export const appointmentRequestSchema = z.object({
-  counsellorId: objectId,
-  startAt: z.coerce.date(),
-  mode: z.enum(APPOINTMENT_MODES),
+  counsellorId: z.union([objectId, z.literal('auto')]).optional(),
+  startAt: z.coerce.date().optional(),
+  mode: z.enum(APPOINTMENT_MODES).default('in_person'),
   reason: trimmed(500).optional(),
   idempotencyKey: z.string().uuid(),
+});
+export const appointmentReassignSchema = z.object({
+  counsellorId: objectId,
+  reason: trimmed(500),
 });
 export const appointmentUpdateSchema = z.object({
   status: z.enum(APPOINTMENT_STATUSES).optional(),
