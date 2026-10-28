@@ -12,9 +12,10 @@ object Routes {
     const val GetStarted = "get-started"
     const val Login = "login"
     const val Register = "register"
+    const val IdentityVerification = "auth/identity-verification"
     const val Forgot = "forgot"
-    const val Reset = "reset?token={token}"
-    const val Verify = "verify?token={token}&email={email}"
+    const val Reset = "reset?token={token}&via={via}"
+    const val Verify = "verify?token={token}&email={email}&ticket={ticket}&method={method}"
     const val AcceptInvite = "invite?token={token}"
     const val Mfa = "mfa"
     const val CompleteProfile = "complete-profile"
@@ -64,6 +65,8 @@ object Routes {
     const val Help = "s/help"
 
     // shared
+    const val Chats = "chats"
+    const val ChatsCategory = "chats?category={category}"
     const val Notifications = "notifications"
     const val Profile = "profile"
     const val EditProfile = "profile/edit"
@@ -113,6 +116,7 @@ object Routes {
     fun module(id: String) = "s/module/$id"
     fun certificate(id: String) = "s/certificate/${Uri.encode(id)}"
     fun lostFoundItem(id: String) = "s/lostfound/item/$id"
+    fun chats(category: String? = null) = "chats" + (category?.let { "?category=$it" } ?: "")
     fun chat(id: String) = "chat/$id"
     fun communityPost(id: String) = "community/post/$id"
     fun communityCompose(edit: String? = null, category: String? = null) =
@@ -124,9 +128,14 @@ object Routes {
     fun case(id: String) = "case/$id"
     fun appointment(id: String) = "c/appointment/$id"
     fun responderAlert(id: String) = "r/alert/$id"
-    fun reset(token: String) = "reset?token=${Uri.encode(token)}"
-    fun verify(token: String? = null, email: String? = null) =
-        "verify?token=${Uri.encode(token ?: "")}&email=${Uri.encode(email ?: "")}"
+    /** [via] = "code" when the token came from a correct reset code rather than an emailed link. */
+    fun reset(token: String, via: String = "link") = "reset?token=${Uri.encode(token)}&via=$via"
+    /**
+     * Verification screen: a link token (landing), or the "check your email" step with the person's
+     * [email], an optional server [ticket] (code/link choice and delivery status) and the [method] in use.
+     */
+    fun verify(token: String? = null, email: String? = null, ticket: String? = null, method: String? = null) =
+        "verify?token=${Uri.encode(token ?: "")}&email=${Uri.encode(email ?: "")}&ticket=${Uri.encode(ticket ?: "")}&method=${Uri.encode(method ?: "")}"
     fun invite(token: String) = "invite?token=${Uri.encode(token)}"
 
     /**
@@ -180,7 +189,8 @@ object Routes {
             first == "reset-password" -> uri.getQueryParameter("token")?.let { reset(it) }
             first == "accept-invite" -> uri.getQueryParameter("token")?.let { invite(it) }
             first == "student" && second == "my-reports" && third != null -> reportDetail(third, if (uri.fragment == "chat") "chat" else null)
-            first == "student" && second == "my-reports" -> Reports
+            first == "student" && second == "my-reports" -> chats("reports")
+            first == "chats" -> chats(uri.getQueryParameter("category") ?: uri.getQueryParameter("cat"))
             first == "student" && second == "emergency" -> uri.getQueryParameter("alert")?.let { sosStatus(it) }
                 ?: Sos.also { SosTrigger.pendingSource = uri.getQueryParameter("source") }
             first == "student" && second == "counselling" -> Counselling

@@ -1,7 +1,10 @@
 package edu.srmap.campuscare.ui.components
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.layout.offset
+import edu.srmap.campuscare.ui.theme.LocalReducedMotion
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -77,12 +80,16 @@ fun CcCard(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed && onClick != null) 0.98f else 1f, spring(stiffness = 700f), label = "card")
+    val reduced = LocalReducedMotion.current
+    val active = pressed && onClick != null
+    // Pressed cards sink slightly: a touch smaller and flatter, springing back on release.
+    val scale by animateFloatAsState(if (active && !reduced) 0.98f else 1f, spring(stiffness = 700f), label = "card")
+    val elevation by animateDpAsState(if (active) 0.5.dp else 2.dp, spring(stiffness = 700f), label = "cardElevation")
     val shape = RoundedCornerShape(22.dp)
     Surface(
         modifier = modifier
             .scale(scale)
-            .shadow(elevation = 2.dp, shape = shape, ambientColor = CcColors.Forest.copy(alpha = 0.08f), spotColor = CcColors.Forest.copy(alpha = 0.10f)),
+            .shadow(elevation = elevation, shape = shape, ambientColor = CcColors.Forest.copy(alpha = 0.08f), spotColor = CcColors.Forest.copy(alpha = 0.10f)),
         shape = shape,
         color = color,
         border = if (border) BorderStroke(1.dp, CcColors.Line.copy(alpha = 0.7f)) else null,
@@ -153,12 +160,7 @@ fun ActionTile(icon: ImageVector, label: String, tone: Tone, onClick: () -> Unit
     ) {
         Box {
             IconBadge(icon, tone, size = 46.dp, iconSize = 24.dp, modifier = Modifier)
-            if (badge > 0) {
-                Box(
-                    Modifier.align(Alignment.TopEnd).size(18.dp).clip(CircleShape).background(CcColors.Sos),
-                    contentAlignment = Alignment.Center,
-                ) { Text(if (badge > 9) "9+" else "$badge", color = Color.White, style = MaterialTheme.typography.labelSmall) }
-            }
+            CountBadge(badge, Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp), max = 9)
         }
         Spacer(Modifier.height(8.dp))
         Text(label, style = MaterialTheme.typography.labelMedium, color = CcColors.Ink, textAlign = TextAlign.Center, maxLines = 2, fontWeight = FontWeight.SemiBold)

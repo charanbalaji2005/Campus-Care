@@ -58,6 +58,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import edu.srmap.campuscare.data.ApiException
 import edu.srmap.campuscare.data.MessageResponse
+import edu.srmap.campuscare.data.VerificationStatus
+import edu.srmap.campuscare.ui.components.popIn
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.runtime.mutableIntStateOf
 import edu.srmap.campuscare.ui.components.ButtonKind
 import edu.srmap.campuscare.ui.components.CcButton
 import edu.srmap.campuscare.ui.components.CcSelect
@@ -76,6 +80,7 @@ import edu.srmap.campuscare.ui.components.TurnstilePhase
 import edu.srmap.campuscare.ui.components.rememberTurnstile
 import edu.srmap.campuscare.ui.navigation.Routes
 import edu.srmap.campuscare.ui.theme.CcColors
+import edu.srmap.campuscare.util.GoogleFailure
 import edu.srmap.campuscare.util.GoogleResult
 import edu.srmap.campuscare.util.GoogleSignIn
 import kotlinx.coroutines.delay
@@ -100,8 +105,11 @@ fun LoginScreen() {
     var challengeToken by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var googleBusy by remember { mutableStateOf(false) }
+    /** Last native Google sign-in problem, shown in place (with a retry when it can help). */
+    var googleError by remember { mutableStateOf<GoogleResult.Failed?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var unverified by remember { mutableStateOf(false) }
+    var verificationTicket by remember { mutableStateOf<String?>(null) }
     var emailError by remember { mutableStateOf<String?>(null) }
 
     fun submit() {
@@ -148,6 +156,7 @@ fun LoginScreen() {
                     }
                 } catch (e: ApiException) {
                     unverified = e.code == "email_not_verified"
+                    verificationTicket = e.details["verificationTicket"]?.takeIf { unverified && it.isNotBlank() }
                     error = e.message
                 } finally {
                     busy = false
@@ -198,7 +207,7 @@ fun LoginScreen() {
         }
         error?.let {
             InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, action = if (unverified) ({
-                TextButton(onClick = { nav.navigate(Routes.verify(email = email)) }) { Text("Resend verification email") }
+                TextButton(onClick = { nav.navigate(Routes.verify(email = email.trim().lowercase(), ticket = verificationTicket)) }) { Text("Verify your email") }
             }) else null)
         }
         // Verifies in the background while the form is filled in; the code step does not need it.
@@ -207,32 +216,45 @@ fun LoginScreen() {
         CcButton(if (waitingForCheck) "Verifying…" else "Sign In", { submit() }, modifier = Modifier.fillMaxWidth(), loading = busy || waitingForCheck, trailingIcon = Icons.AutoMirrored.Rounded.ArrowForward)
         if (GoogleSignIn.configured) {
             Text("or continue with", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        googleBusy = true
+            fun continueWithGoogle() {
+                if (googleBusy) return
+                scope.launch {
+                    googleBusy = true
+                    googleError = null
+                    error = null
+                    try {
                         when (val r = GoogleSignIn.signIn(context)) {
+                            // The server verifies the ID token and decides whether this account may use this app.
                             is GoogleResult.Token -> try {
                                 completeSignIn(app, nav, app.api.auth.google(r.idToken, r.nonce, rememberMe), rememberMe)
                             } catch (e: ApiException) {
-                                error = e.message
+                                if (e.isNetwork || e.status >= 500) googleError = GoogleResult.Failed(GoogleFailure.Other, e.message ?: "Couldn't reach CampusCare. Please try again.")
+                                else error = e.message
                             }
                             is GoogleResult.Failed -> {
-                                val authUrl = "${BuildConfig.API_BASE_URL}/api/v1/auth/google?client=android&app=${BuildConfig.APP_AUDIENCE}"
-                                val opened = runCatching {
-                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(authUrl))
-                                    context.startActivity(intent)
+                                // CampusCare College never leaves the app for a website; Student keeps its older browser fallback.
+                                val opened = GoogleSignIn.browserFallbackAllowed(AppAudience.current) && runCatching {
+                                    val authUrl = "${BuildConfig.API_BASE_URL}/api/v1/auth/google?client=android&app=${BuildConfig.APP_AUDIENCE}"
+                                    context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(authUrl)))
                                     true
                                 }.getOrDefault(false)
-                                if (!opened) {
-                                    snack.show(r.message, long = true)
-                                }
+                                if (!opened) googleError = r
                             }
                             GoogleResult.Cancelled -> Unit
                         }
+                    } finally {
                         googleBusy = false
                     }
-                },
+                }
+            }
+            googleError?.let { g ->
+                InfoBanner(
+                    g.message, tone = Tone.Danger, icon = Icons.Rounded.Warning,
+                    action = if (g.retryable) ({ TextButton(onClick = { continueWithGoogle() }) { Text("Try again") } }) else null,
+                )
+            }
+            OutlinedButton(
+                onClick = { continueWithGoogle() },
                 enabled = !googleBusy,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(16.dp),
@@ -290,6 +312,7 @@ fun RegisterScreen() {
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var accept by rememberSaveable { mutableStateOf(false) }
+    var verifyMethod by rememberSaveable { mutableStateOf("otp") }
     var errors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var busy by remember { mutableStateOf(false) }
     var general by remember { mutableStateOf<String?>(null) }
@@ -318,10 +341,12 @@ fun RegisterScreen() {
                         mapOf(
                             "fullName" to name.trim(), "email" to email.trim().lowercase(), "studentId" to studentId.trim(), "department" to department,
                             "academicYear" to year?.toInt(), "phone" to phone.trim(), "password" to password, "confirmPassword" to confirm, "acceptPolicy" to true,
-                            "turnstileToken" to token,
+                            "turnstileToken" to token, "verificationMethod" to verifyMethod,
                         ),
                     )
-                    nav.navigate(Routes.verify(email = r.email.ifBlank { email })) { popUpTo(Routes.Login) }
+                    nav.navigate(
+                        Routes.verify(email = r.email.ifBlank { email.trim().lowercase() }, ticket = r.verificationTicket, method = r.verificationMethod ?: "link"),
+                    ) { popUpTo(Routes.Login) }
                 } catch (e: ApiException) {
                     errors = e.fields
                     general = e.message
@@ -343,6 +368,8 @@ fun RegisterScreen() {
         CcTextField(password, { password = it }, label = "Password", placeholder = "Create a strong password", leadingIcon = Icons.Rounded.Lock, password = true, error = errors["password"])
         PasswordStrength(password, minLen)
         CcTextField(confirm, { confirm = it }, label = "Confirm password", leadingIcon = Icons.Rounded.Lock, password = true, error = errors["confirmPassword"], imeAction = ImeAction.Done)
+        Text("How should we verify your email?", style = MaterialTheme.typography.titleSmall, color = CcColors.Ink, fontWeight = FontWeight.SemiBold)
+        EmailMethodChoice(verificationOptions(), verifyMethod, { verifyMethod = it }, enabled = !busy)
         TurnstileNote(turnstile.enabled)
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { accept = !accept }.padding(vertical = 4.dp),
@@ -376,6 +403,11 @@ private fun rememberCooldown(): androidx.compose.runtime.MutableIntState {
 
 private val politeLiveRegion = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
 
+/**
+ * Forgot password: the person chooses a 6-digit code (entered here, then a new password) or a reset link.
+ * Every answer about the address is generic, the code only proves control of the inbox (it never signs
+ * anyone in), and success is shown only after the server has changed the password.
+ */
 @Composable
 fun ForgotPasswordScreen() {
     val app = LocalApp.current
@@ -384,27 +416,39 @@ fun ForgotPasswordScreen() {
     val domain = app.config.config.value.settings.accountEmailDomain
     val turnstile = rememberTurnstile("forgotPassword")
     var email by rememberSaveable { mutableStateOf("") }
+    var method by rememberSaveable { mutableStateOf("otp") }
+    /** request | code | link */
+    var stage by rememberSaveable { mutableStateOf("request") }
     var sent by remember { mutableStateOf<MessageResponse?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var problem by remember { mutableStateOf<String?>(null) }
+    var code by rememberSaveable { mutableStateOf("") }
+    var codeError by remember { mutableStateOf<String?>(null) }
+    var shakeKey by remember { mutableIntStateOf(0) }
+    var checking by remember { mutableStateOf(false) }
     val cooldown = rememberCooldown()
 
-    fun submit() {
+    fun request(m: String = method) {
         if (busy || cooldown.intValue > 0) return // no duplicate taps
         error = universityEmailError(email, domain)
-        if (error != null) return
+        if (error != null) { stage = "request"; return }
         turnstile.run { token ->
             scope.launch {
                 busy = true
                 problem = null
                 try {
-                    val r = app.api.auth.forgotPassword(email.trim().lowercase(), token)
+                    val r = app.api.auth.forgotPassword(email.trim().lowercase(), token, m)
                     sent = r
+                    method = m
+                    code = ""
+                    codeError = null
+                    stage = if (m == "otp") "code" else "link"
                     cooldown.intValue = r.retryAfterSeconds.coerceAtLeast(30)
                 } catch (e: ApiException) {
                     // e.g. email_unavailable: the email could not be sent. Never shown as "sent".
-                    if (e.fields["email"] != null) error = e.fields["email"] else problem = e.message
+                    if (e.fields["email"] != null) error = e.fields["email"] else problem = e.message ?: "We couldn't send the email. Please try again."
+                    if (e.code == "rate_limited") cooldown.intValue = 60
                 } finally {
                     busy = false
                 }
@@ -412,34 +456,97 @@ fun ForgotPasswordScreen() {
         }
     }
 
-    AuthLayout("Forgot password?", "We'll email you a secure reset link.", onBack = { nav.popBackStack() }) {
-        val result = sent
-        if (result != null) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { IconBadge(Icons.Rounded.MarkEmailRead, Tone.Brand, size = 72.dp, iconSize = 34.dp) }
-            InfoBanner(result.message, tone = Tone.Brand, title = "Check your inbox", modifier = politeLiveRegion)
-            Text(
-                "The link works once and expires in ${result.expiresInMinutes ?: 30} minutes. Open it on this phone to continue in the app. Only the newest link works.",
-                style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft,
-            )
-            problem?.let { InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion) }
-            CcButton(
-                if (cooldown.intValue > 0) "Send again in ${cooldown.intValue}s" else "Send another link",
-                { submit() }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Outline, loading = busy, enabled = cooldown.intValue == 0,
-            )
-            CcButton("Back to sign in", { nav.popBackStack() }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Ghost)
-        } else {
-            CcTextField(email, { email = it; error = null }, label = "University email", placeholder = "you@$domain", leadingIcon = Icons.Rounded.Email, keyboardType = KeyboardType.Email, error = error, imeAction = ImeAction.Done, onImeAction = { submit() })
-            problem?.let { InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion) }
-            TurnstileNote(turnstile.enabled)
-            CcButton("Send reset link", { submit() }, modifier = Modifier.fillMaxWidth(), loading = busy)
+    fun checkCode(c: String = code) {
+        if (checking || c.length != EMAIL_CODE_LENGTH) return // one check at a time
+        scope.launch {
+            checking = true
+            codeError = null
+            try {
+                val r = app.api.auth.resetOtp(email.trim().lowercase(), c)
+                nav.navigate(Routes.reset(r.resetToken, via = "code")) { popUpTo(Routes.Forgot) { inclusive = true } }
+            } catch (e: ApiException) {
+                codeError = e.message ?: "That code is incorrect or has expired. Request a new one."
+                code = ""
+                shakeKey++
+            } finally {
+                checking = false
+            }
+        }
+    }
 
+    val masked = maskEmail(email)
+    AuthLayout(
+        title = when (stage) { "code" -> "Enter your reset code"; "link" -> "Check your inbox"; else -> "Forgot password?" },
+        subtitle = when (stage) {
+            "code" -> "Enter the code sent to your registered email ($masked)."
+            "link" -> "We've emailed a reset link if an account exists for $masked."
+            else -> "Choose how you'd like to reset your password."
+        },
+        onBack = { if (stage == "request") nav.popBackStack() else stage = "request" },
+    ) {
+        AuthStep(stage) { s ->
+            when (s) {
+                "code" -> {
+                    sent?.let { InfoBanner(it.message, tone = Tone.Brand, title = "Check your inbox", modifier = politeLiveRegion) }
+                    OtpCodeField(code, { code = it; codeError = null }, enabled = !checking, error = codeError, errorKey = shakeKey, onComplete = { checkCode(it) })
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        PasteCodeButton(onCode = { code = it; checkCode(it) }, onNothing = { codeError = "No 6-digit code found on the clipboard." })
+                    }
+                    CcButton("Continue", { checkCode() }, modifier = Modifier.fillMaxWidth(), loading = checking, enabled = code.length == EMAIL_CODE_LENGTH)
+                    Text(
+                        "The code works once and expires in ${sent?.expiresInMinutes ?: 10} minutes. Only the newest code works. Code expired? Request a new one.",
+                        style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft,
+                    )
+                    problem?.let { InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion) }
+                    CcButton(
+                        if (cooldown.intValue > 0) "Resend code in ${cooldown.intValue}s" else "Resend code",
+                        { request("otp") }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Outline, loading = busy, enabled = cooldown.intValue == 0,
+                    )
+                    TextButton(onClick = { request("link") }, enabled = cooldown.intValue == 0 && !busy, modifier = Modifier.fillMaxWidth()) {
+                        Text("Send a password-reset link instead", color = CcColors.Emerald, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                "link" -> {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                        IconBadge(Icons.Rounded.MarkEmailRead, Tone.Brand, size = 72.dp, iconSize = 34.dp, modifier = Modifier.popIn())
+                    }
+                    sent?.let { InfoBanner(it.message, tone = Tone.Brand, title = "Check your inbox", modifier = politeLiveRegion) }
+                    Text(
+                        "The link works once and expires in ${sent?.expiresInMinutes ?: 30} minutes. Open it on this phone to continue in the app. Only the newest link works.",
+                        style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft,
+                    )
+                    problem?.let { InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion) }
+                    CcButton(
+                        if (cooldown.intValue > 0) "Send again in ${cooldown.intValue}s" else "Send another link",
+                        { request("link") }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Outline, loading = busy, enabled = cooldown.intValue == 0,
+                    )
+                    TextButton(onClick = { request("otp") }, enabled = cooldown.intValue == 0 && !busy, modifier = Modifier.fillMaxWidth()) {
+                        Text("Reset password with OTP instead", color = CcColors.Emerald, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                else -> {
+                    EmailMethodChoice(resetOptions(), method, { method = it }, enabled = !busy)
+                    CcTextField(email, { email = it; error = null }, label = "University email", placeholder = "you@$domain", leadingIcon = Icons.Rounded.Email, keyboardType = KeyboardType.Email, error = error, imeAction = ImeAction.Done, onImeAction = { request() })
+                    problem?.let { InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion) }
+                    TurnstileNote(turnstile.enabled)
+                    CcButton(
+                        when {
+                            cooldown.intValue > 0 -> "Try again in ${cooldown.intValue}s"
+                            method == "otp" -> "Email me a code"
+                            else -> "Send reset link"
+                        },
+                        { request() }, modifier = Modifier.fillMaxWidth(), loading = busy, enabled = cooldown.intValue == 0,
+                    )
+                }
+            }
+            if (s != "request") CcButton("Back to sign in", { nav.popBackStack() }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Ghost)
         }
     }
     TurnstileHost(turnstile)
 }
 
 @Composable
-fun ResetPasswordScreen(token: String) {
+fun ResetPasswordScreen(token: String, viaCode: Boolean = false) {
     val app = LocalApp.current
     val nav = LocalNav.current
     val snack = LocalSnack.current
@@ -498,11 +605,16 @@ fun ResetPasswordScreen(token: String) {
             }
         }
     }
-    AuthLayout("Set a new password", "Choose a strong password you don't use anywhere else.", onBack = { nav.navigate(Routes.Login) { popUpTo(0) } }) {
+    val what = if (viaCode) "reset session" else "reset link"
+    AuthLayout(
+        "Set a new password",
+        if (viaCode) "Code verified. Choose a strong password you don't use anywhere else." else "Choose a strong password you don't use anywhere else.",
+        onBack = { nav.navigate(Routes.Login) { popUpTo(0) } },
+    ) {
         when (linkState) {
-            null -> Text("Checking your link...", color = CcColors.InkSoft, modifier = politeLiveRegion)
+            null -> Text(if (viaCode) "One moment..." else "Checking your link...", color = CcColors.InkSoft, modifier = politeLiveRegion)
             "offline" -> {
-                InfoBanner("We couldn't check this link. Check your connection and try again.", tone = Tone.Amber, icon = Icons.Rounded.Warning, modifier = politeLiveRegion)
+                InfoBanner("We couldn't check this $what. Check your connection and try again.", tone = Tone.Amber, icon = Icons.Rounded.Warning, modifier = politeLiveRegion)
                 CcButton("Try again", { attempt++ }, modifier = Modifier.fillMaxWidth())
             }
             "valid" -> {
@@ -520,12 +632,12 @@ fun ResetPasswordScreen(token: String) {
             }
             else -> {
                 val msg = when (linkState) {
-                    "expired" -> "This reset link has expired. Reset links work for a short time only."
-                    "used" -> "This reset link was already used or replaced by a newer one."
-                    else -> "This reset link is invalid."
+                    "expired" -> if (viaCode) "This reset session has expired. Request a new code." else "This reset link has expired. Reset links work for a short time only."
+                    "used" -> "This $what was already used or replaced by a newer one."
+                    else -> "This $what is invalid."
                 }
                 InfoBanner(msg, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion)
-                CcButton("Request a new link", { nav.navigate(Routes.Forgot) { popUpTo(Routes.Login) } }, modifier = Modifier.fillMaxWidth())
+                CcButton(if (viaCode) "Request a new code" else "Request a new link", { nav.navigate(Routes.Forgot) { popUpTo(Routes.Login) } }, modifier = Modifier.fillMaxWidth())
                 CcButton("Back to sign in", { nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } } }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Ghost)
             }
         }
@@ -534,12 +646,15 @@ fun ResetPasswordScreen(token: String) {
 }
 
 /**
- * Post-registration "check your inbox" screen, and the landing screen for verification links.
- * Opening a link never verifies the account: the screen checks it (read-only) and the person taps
- * "Verify my email", which sends the token to the server. Only the server's answer changes the state.
+ * Email verification, three ways in:
+ * - a verification link opened on this phone ([token]): checked read-only; only "Verify my email" uses it;
+ * - right after registering, or after signing in to an unverified account ([ticket]): the person sees the
+ *   masked address, whether the email went out, and can enter the code or switch between code and link;
+ * - without either: they enter their address and ask for a code or link (generic answers).
+ * Only the server's answer marks the account verified; sending an email never does, and nobody is signed in.
  */
 @Composable
-fun VerifyEmailScreen(token: String, email: String) {
+fun VerifyEmailScreen(token: String, email: String, ticket: String = "", method: String = "") {
     val app = LocalApp.current
     val nav = LocalNav.current
     val context = LocalContext.current
@@ -560,13 +675,23 @@ fun VerifyEmailScreen(token: String, email: String) {
     }
     val domain = app.config.config.value.settings.accountEmailDomain
     val turnstile = rememberTurnstile("resendVerification")
-    // sent | checking | ready | verifying | verified | already | expired | invalid
-    var state by remember { mutableStateOf(if (token.isBlank()) "sent" else "checking") }
+    // await | checking | ready | verifying | verified | already | expired | invalid
+    var state by remember { mutableStateOf(if (token.isBlank()) "await" else "checking") }
     var message by remember { mutableStateOf<String?>(null) }
-    var resendEmail by rememberSaveable { mutableStateOf(email) }
-    var resendEmailError by remember { mutableStateOf<String?>(null) }
-    var resendNotice by remember { mutableStateOf<Pair<Boolean, String>?>(null) } // ok? to text
-    var resending by remember { mutableStateOf(false) }
+    var activeTicket by rememberSaveable { mutableStateOf(ticket.ifBlank { null }) }
+    var status by remember { mutableStateOf<VerificationStatus?>(null) }
+    /** What was last sent (otp | link), or null before the person has chosen. */
+    var current by rememberSaveable { mutableStateOf(method.ifBlank { null }) }
+    var choice by rememberSaveable { mutableStateOf(method.ifBlank { "otp" }) }
+    var address by rememberSaveable { mutableStateOf(email) }
+    var addressError by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<Pair<Boolean, String>?>(null) } // ok? to text
+    var sending by remember { mutableStateOf(false) }
+    var code by rememberSaveable { mutableStateOf("") }
+    var codeError by remember { mutableStateOf<String?>(null) }
+    var shakeKey by remember { mutableIntStateOf(0) }
+    var checkingCode by remember { mutableStateOf(false) }
+    var poll by remember { mutableIntStateOf(0) }
     val cooldown = rememberCooldown()
 
     LaunchedEffect(token) {
@@ -580,6 +705,27 @@ fun VerifyEmailScreen(token: String, email: String) {
             }
         } catch (e: Exception) {
             "ready" // the explicit verify call gives the authoritative answer
+        }
+    }
+
+    // Ticket holders see which method is in use and whether the email went out (polled briefly while sending).
+    LaunchedEffect(activeTicket, poll) {
+        val t = activeTicket ?: return@LaunchedEffect
+        repeat(15) { attempt ->
+            val s = try {
+                app.api.auth.verificationStatus(t)
+            } catch (e: ApiException) {
+                if (e.code == "invalid_ticket") activeTicket = null
+                return@LaunchedEffect
+            } catch (e: Exception) {
+                return@LaunchedEffect
+            }
+            status = s
+            if (s.emailVerified) { state = "already"; return@LaunchedEffect }
+            if (s.method != null) current = s.method
+            if (attempt == 0 && s.retryAfterSeconds > cooldown.intValue) cooldown.intValue = s.retryAfterSeconds
+            if (s.delivery?.status != "sending") return@LaunchedEffect
+            delay(4000)
         }
     }
 
@@ -601,81 +747,182 @@ fun VerifyEmailScreen(token: String, email: String) {
         }
     }
 
-    fun resend() {
-        if (resending || cooldown.intValue > 0) return // no duplicate taps
-        resendEmailError = universityEmailError(resendEmail, domain)
-        if (resendEmailError != null) return
-        turnstile.run { t ->
+    fun send(m: String) {
+        if (sending || cooldown.intValue > 0) return // no duplicate taps
+        val t = activeTicket
+        if (t != null) {
             scope.launch {
-                resending = true
-                resendNotice = null
+                sending = true
+                notice = null
                 try {
-                    val r = app.api.auth.resendVerification(resendEmail.trim().lowercase(), t)
-                    resendNotice = true to r.message
+                    val s = app.api.auth.sendVerification(t, m)
+                    status = s
+                    if (s.emailVerified) state = "already"
+                    current = s.method ?: m
+                    choice = current ?: m
+                    code = ""
+                    codeError = null
+                    cooldown.intValue = s.retryAfterSeconds.coerceAtLeast(30)
+                    poll++
+                } catch (e: ApiException) {
+                    when (e.code) {
+                        "resend_cooldown" -> cooldown.intValue = e.details["retryAfterSeconds"]?.toIntOrNull() ?: 60
+                        "invalid_ticket" -> activeTicket = null
+                    }
+                    notice = false to (e.message ?: "We couldn't send the email. Please try again.")
+                } finally {
+                    sending = false
+                }
+            }
+            return
+        }
+        addressError = universityEmailError(address, domain)
+        if (addressError != null) return
+        turnstile.run { tk ->
+            scope.launch {
+                sending = true
+                notice = null
+                try {
+                    val r = app.api.auth.resendVerification(address.trim().lowercase(), tk, m)
+                    notice = true to r.message
+                    current = m
+                    choice = m
+                    code = ""
+                    codeError = null
                     cooldown.intValue = r.retryAfterSeconds.coerceAtLeast(30)
                 } catch (e: ApiException) {
                     // e.g. email_unavailable or rate_limited: say so honestly, never "sent".
-                    resendNotice = false to (e.message ?: "We couldn't request a new link. Try again.")
+                    notice = false to (e.message ?: "We couldn't send the email. Please try again.")
                     if (e.code == "rate_limited") cooldown.intValue = 60
                 } finally {
-                    resending = false
+                    sending = false
                 }
             }
         }
     }
 
+    fun verifyCode(c: String = code) {
+        if (checkingCode || c.length != EMAIL_CODE_LENGTH) return
+        addressError = universityEmailError(address, domain)
+        if (addressError != null) return
+        scope.launch {
+            checkingCode = true
+            codeError = null
+            try {
+                val r = app.api.auth.verifyEmailOtp(address.trim().lowercase(), c, activeTicket)
+                // Success only now, after the server confirmed it.
+                state = if (r.result == "already_verified") "already" else "verified"
+            } catch (e: ApiException) {
+                codeError = when (e.code) {
+                    "expired_code" -> "Code expired. Request a new one."
+                    "too_many_attempts" -> "Too many incorrect codes. Request a new code."
+                    else -> e.message ?: "That code is incorrect."
+                }
+                code = ""
+                shakeKey++
+            } finally {
+                checkingCode = false
+            }
+        }
+    }
+
+    val masked = status?.maskedEmail?.takeIf { it.isNotBlank() } ?: if (address.isNotBlank()) maskEmail(address) else "your university email"
+    val otpAvailable = status?.otpAvailable ?: true
     val problem = state == "invalid" || state == "expired"
     AuthLayout(
         title = when (state) {
             "verified", "already" -> "Email verified"
             "checking", "verifying" -> "One moment..."
             "ready" -> "Verify your email"
-            "sent" -> "Check your inbox"
+            "await" -> "Verify your email"
             "expired" -> "Link expired"
             else -> "Link problem"
         },
         subtitle = when (state) {
-            "sent" -> "Open the verification link we email to ${email.ifBlank { "your university email" }}. Need a new one? Request it below."
+            "await" -> when (current) {
+                "otp" -> "Enter the code sent to your registered email ($masked)."
+                "link" -> "Open the verification link we emailed to $masked on this phone."
+                else -> "Choose how you'd like to verify $masked."
+            }
             "ready" -> "Tap the button to confirm this is your email address."
             "verified" -> "Your account is active. You can sign in now."
             "already" -> "This email was already verified. You can sign in."
             "checking" -> "Checking your link."
             "verifying" -> "Verifying your email."
-            "expired" -> "This verification link has expired. Request a new one below."
-            else -> "This link is invalid or was replaced by a newer one. Request a new one below."
+            "expired" -> "This verification link has expired. Request a new code or link below."
+            else -> "This link is invalid or was replaced by a newer one. Request a new code or link below."
         },
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-            IconBadge(if (problem) Icons.Rounded.Warning else Icons.Rounded.MarkEmailRead, if (problem) Tone.Amber else Tone.Brand, size = 80.dp, iconSize = 38.dp)
+        val step = when (state) {
+            "await", "expired", "invalid" -> "await:${current ?: "choose"}"
+            else -> state
         }
-        when (state) {
-            "verified", "already" -> CcButton("Sign in", { nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } } }, modifier = Modifier.fillMaxWidth())
-            "checking" -> Unit
-            "ready", "verifying" -> {
-                message?.let { InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion) }
-                CcButton("Verify my email", { verify() }, modifier = Modifier.fillMaxWidth(), loading = state == "verifying")
-            }
-            else -> {
-                if (state == "sent") {
-                    CcButton("Open email app", { openEmailApp() }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Primary, leadingIcon = Icons.Rounded.Email)
+        AuthStep(step) { s ->
+            when {
+                s == "verified" || s == "already" -> {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                        IconBadge(Icons.Rounded.CheckCircle, Tone.Brand, size = 80.dp, iconSize = 40.dp, modifier = Modifier.popIn())
+                    }
+                    CcButton("Sign in", { nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } } }, modifier = Modifier.fillMaxWidth())
                 }
-                Text(
-                    "Verification links work once and expire after a limited time. Only the newest link works. Didn't get it? Check spam, or send a new one.",
-                    style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft,
-                )
-                if (email.isBlank() || problem) {
-                    CcTextField(resendEmail, { resendEmail = it; resendEmailError = null }, label = "University email", placeholder = "you@$domain", leadingIcon = Icons.Rounded.Email, keyboardType = KeyboardType.Email, error = resendEmailError, imeAction = ImeAction.Done, onImeAction = { resend() })
+                s == "checking" -> Unit
+                s == "ready" || s == "verifying" -> {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                        IconBadge(Icons.Rounded.MarkEmailRead, Tone.Brand, size = 80.dp, iconSize = 38.dp)
+                    }
+                    message?.let { InfoBanner(it, tone = Tone.Danger, icon = Icons.Rounded.Warning, modifier = politeLiveRegion) }
+                    CcButton("Verify my email", { verify() }, modifier = Modifier.fillMaxWidth(), loading = state == "verifying")
                 }
-                resendNotice?.let { (good, text) ->
-                    InfoBanner(text, tone = if (good) Tone.Brand else Tone.Danger, icon = if (good) Icons.Rounded.MarkEmailRead else Icons.Rounded.Warning, modifier = politeLiveRegion)
+                else -> {
+                    DeliveryStatusLine(status?.delivery, if (current == "otp") "code" else "link")
+                    // Without a ticket the address is needed (to send, and to check a code).
+                    if (activeTicket == null && (email.isBlank() || problem)) {
+                        CcTextField(address, { address = it; addressError = null }, label = "University email", placeholder = "you@$domain", leadingIcon = Icons.Rounded.Email, keyboardType = KeyboardType.Email, error = addressError, imeAction = ImeAction.Next)
+                    }
+                    when (current) {
+                        "otp" -> {
+                            OtpCodeField(code, { code = it; codeError = null }, enabled = !checkingCode, error = codeError, errorKey = shakeKey, onComplete = { verifyCode(it) })
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                PasteCodeButton(onCode = { code = it; verifyCode(it) }, onNothing = { codeError = "No 6-digit code found on the clipboard." })
+                            }
+                            CcButton("Verify email", { verifyCode() }, modifier = Modifier.fillMaxWidth(), loading = checkingCode, enabled = code.length == EMAIL_CODE_LENGTH)
+                            Text("Codes work once and expire after a few minutes. Only the newest code works. Didn't get it? Check spam, or send a new one.", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
+                        }
+                        "link" -> {
+                            CcButton("Open email app", { openEmailApp() }, modifier = Modifier.fillMaxWidth(), leadingIcon = Icons.Rounded.Email)
+                            Text("Verification links work once and expire after a limited time. Only the newest link works. Didn't get it? Check spam, or send a new one.", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
+                        }
+                        else -> EmailMethodChoice(verificationOptions().filter { otpAvailable || it.method == "link" }, choice, { choice = it }, enabled = !sending)
+                    }
+                    notice?.let { (good, text) ->
+                        InfoBanner(text, tone = if (good) Tone.Brand else Tone.Danger, icon = if (good) Icons.Rounded.MarkEmailRead else Icons.Rounded.Warning, modifier = politeLiveRegion)
+                    }
+                    TurnstileNote(turnstile.enabled && activeTicket == null)
+                    val waiting = cooldown.intValue > 0
+                    when (current) {
+                        null -> CcButton(
+                            if (waiting) "Send available in ${cooldown.intValue}s" else if (choice == "otp") "Email me a code" else "Email me a link",
+                            { send(choice) }, modifier = Modifier.fillMaxWidth(), loading = sending, enabled = !waiting,
+                        )
+                        else -> {
+                            val what = if (current == "otp") "code" else "link"
+                            CcButton(
+                                if (waiting) "Resend available in ${cooldown.intValue}s" else "Resend $what",
+                                { send(current ?: "link") }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Outline, loading = sending, enabled = !waiting,
+                            )
+                            if (current == "otp") {
+                                TextButton(onClick = { send("link") }, enabled = !waiting && !sending, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Verify using an email link instead", color = CcColors.Emerald, fontWeight = FontWeight.SemiBold)
+                                }
+                            } else if (otpAvailable) {
+                                TextButton(onClick = { send("otp") }, enabled = !waiting && !sending, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Verify using OTP instead", color = CcColors.Emerald, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                    }
+                    CcButton("Back to sign in", { nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } } }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Ghost)
                 }
-                TurnstileNote(turnstile.enabled)
-                CcButton(
-                    if (cooldown.intValue > 0) "Resend available in ${cooldown.intValue}s" else "Resend verification email",
-                    { resend() }, modifier = Modifier.fillMaxWidth(), kind = if (problem) ButtonKind.Primary else ButtonKind.Outline,
-                    loading = resending, enabled = cooldown.intValue == 0,
-                )
-                CcButton("Back to sign in", { nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } } }, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.Ghost)
             }
         }
     }

@@ -40,11 +40,38 @@ class AuthApi(private val c: ApiClient) {
     suspend fun google(idToken: String, nonce: String?, rememberMe: Boolean = true): LoginResponse = c.post("/auth/google/mobile", mapOf("idToken" to idToken, "nonce" to nonce, "rememberMe" to rememberMe))
 
     suspend fun register(body: Map<String, Any?>): RegisterResponse = c.post("/auth/register", body)
+    suspend fun uploadVerificationEvidence(
+        bytes: ByteArray,
+        name: String,
+        mime: String,
+        evidenceType: String,
+        identifier: String,
+        requestedRole: String,
+        department: String?,
+        campus: String?,
+    ): Ignored = c.upload(
+        "/auth/verification-evidence", bytes, name, mime,
+        mapOf("evidenceType" to evidenceType, "identifier" to identifier, "requestedRole" to requestedRole, "department" to (department ?: ""), "campus" to (campus ?: "main")),
+    )
+
+    suspend fun identityVerificationStatus(): IdentityVerificationStatusResponse = c.get("/auth/verification-evidence/status")
+
     suspend fun verifyEmail(token: String): VerifyResult = c.post("/auth/verify-email", mapOf("token" to token))
     /** Read-only: never consumes the token (only [verifyEmail] does, after the person taps Verify). */
     suspend fun checkVerifyEmail(token: String): VerifyCheck = c.post("/auth/verify-email/check", mapOf("token" to token))
-    suspend fun resendVerification(email: String, turnstile: String?): MessageResponse = c.post("/auth/resend-verification", mapOf("email" to email, "turnstileToken" to turnstile))
-    suspend fun forgotPassword(email: String, turnstile: String?): MessageResponse = c.post("/auth/forgot-password", mapOf("email" to email, "turnstileToken" to turnstile))
+    suspend fun resendVerification(email: String, turnstile: String?, method: String = "link"): MessageResponse =
+        c.post("/auth/resend-verification", mapOf("email" to email, "turnstileToken" to turnstile, "method" to method))
+    suspend fun forgotPassword(email: String, turnstile: String?, method: String = "link"): MessageResponse =
+        c.post("/auth/forgot-password", mapOf("email" to email, "turnstileToken" to turnstile, "method" to method))
+    /** Verifies the email with the 6-digit code (no session is created). The ticket unlocks specific error messages. */
+    suspend fun verifyEmailOtp(email: String, code: String, ticket: String?): VerifyResult =
+        c.post("/auth/verify-email/otp", mapOf("email" to email, "code" to code, "ticket" to ticket))
+    suspend fun verificationStatus(ticket: String): VerificationStatus = c.post("/auth/verification/status", mapOf("ticket" to ticket))
+    /** Sends a new code or link (switching method supersedes the previous one). */
+    suspend fun sendVerification(ticket: String, method: String): VerificationStatus =
+        c.post("/auth/verification/send", mapOf("ticket" to ticket, "method" to method))
+    /** Step 2 of a code reset: exchanges a correct code for a short-lived reset token. */
+    suspend fun resetOtp(email: String, code: String): ResetOtpResponse = c.post("/auth/reset-password/otp", mapOf("email" to email, "code" to code))
     suspend fun checkReset(token: String): ValidResponse = c.post("/auth/reset-password/check", mapOf("token" to token))
     suspend fun resetPassword(token: String, password: String, confirm: String, turnstile: String?): Ignored =
         c.post("/auth/reset-password", mapOf("token" to token, "password" to password, "confirmPassword" to confirm, "turnstileToken" to turnstile))
@@ -154,6 +181,20 @@ class IncidentApi(private val c: ApiClient) {
 
 class ChatApi(private val c: ApiClient) {
     suspend fun overview(): ChatOverview = c.get("/chat/channels")
+    suspend fun conversations(category: String = "all", q: String? = null): ConversationListResponse {
+        val params = listOfNotNull(
+            "category=${enc(category)}",
+            q?.takeIf { it.isNotBlank() }?.let { "q=${enc(it)}" }
+        ).joinToString("&")
+        return c.get("/chats/conversations?$params")
+    }
+    suspend fun announcements(category: String? = null, q: String? = null): AnnouncementListResponse {
+        val params = listOfNotNull(
+            category?.takeIf { it.isNotBlank() }?.let { "category=${enc(it)}" },
+            q?.takeIf { it.isNotBlank() }?.let { "q=${enc(it)}" }
+        ).joinToString("&")
+        return c.get("/chats/announcements" + if (params.isEmpty()) "" else "?$params")
+    }
     suspend fun openService(serviceId: String): IdResponse = c.post("/chat/services/$serviceId/open")
     suspend fun channel(id: String): ChannelDetail = c.get("/chat/channels/$id")
     suspend fun messages(id: String, before: String? = null, q: String? = null): MessagePage {

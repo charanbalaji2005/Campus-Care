@@ -29,6 +29,19 @@ export const passwordSchema = (min = 10) =>
     .refine((v) => /[a-z]/.test(v) && /[A-Z]/.test(v) && /\d/.test(v), 'Include upper and lower case letters and a number');
 
 // ---------------------------------------------------------------- auth
+/**
+ * Email verification and password recovery can each use a one-time code (OTP) typed into the app or a
+ * single-use link. Super Admin accounts never get a code: they keep the link-only recovery process.
+ */
+export const EMAIL_CHALLENGE_METHODS = ['otp', 'link'] as const;
+export type EmailChallengeMethod = (typeof EMAIL_CHALLENGE_METHODS)[number];
+/** Older clients send no method and keep getting links. */
+export const emailChallengeMethod = z.enum(EMAIL_CHALLENGE_METHODS).default('link');
+export const OTP_LENGTH = 6;
+export const otpCode = z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code');
+/** Signed handle given to the person who just registered (or signed in with an unverified email). */
+export const verificationTicket = z.string().min(20).max(400);
+
 export const registerSchema = z
   .object({
     fullName: trimmed(120).min(2, 'Enter your full name'),
@@ -40,6 +53,7 @@ export const registerSchema = z
     password: passwordSchema(),
     confirmPassword: z.string(),
     acceptPolicy: z.literal(true, { errorMap: () => ({ message: 'You must accept the privacy policy' }) }),
+    verificationMethod: emailChallengeMethod,
     turnstileToken,
   })
   .refine((d) => d.password === d.confirmPassword, { path: ['confirmPassword'], message: 'Passwords do not match' });
@@ -53,8 +67,12 @@ export const loginSchema = z.object({
 });
 
 export const tokenSchema = z.object({ token: z.string().min(20).max(200) });
-export const forgotPasswordSchema = z.object({ email, turnstileToken });
-export const resendVerificationSchema = z.object({ email, turnstileToken });
+export const forgotPasswordSchema = z.object({ email, turnstileToken, method: emailChallengeMethod });
+export const resendVerificationSchema = z.object({ email, turnstileToken, method: emailChallengeMethod });
+export const verifyEmailOtpSchema = z.object({ email, code: otpCode, ticket: verificationTicket.nullish() });
+export const verificationTicketSchema = z.object({ ticket: verificationTicket });
+export const sendVerificationSchema = z.object({ ticket: verificationTicket, method: z.enum(EMAIL_CHALLENGE_METHODS) });
+export const resetOtpSchema = z.object({ email, code: otpCode });
 export const resetPasswordSchema = z
   .object({ token: z.string().min(20).max(200), password: passwordSchema(), confirmPassword: z.string(), turnstileToken })
   .refine((d) => d.password === d.confirmPassword, { path: ['confirmPassword'], message: 'Passwords do not match' });
@@ -63,9 +81,6 @@ export const mfaVerifySchema = z.object({ code: z.string().regex(/^\d{6}$/, 'Ent
 export const changePasswordSchema = z
   .object({ currentPassword: z.string().min(1), password: passwordSchema(), confirmPassword: z.string() })
   .refine((d) => d.password === d.confirmPassword, { path: ['confirmPassword'], message: 'Passwords do not match' });
-/** Languages a user can pick for CampusCare messages; the app itself is in English. */
-export const PROFILE_LANGUAGES = ['English', 'Telugu', 'Hindi', 'Tamil', 'Kannada', 'Malayalam', 'Bengali', 'Odia', 'Marathi'] as const;
-
 /**
  * Self-service profile edits. Verified identifiers (email, student/staff ID, role, assigned campus
  * for staff) are deliberately absent: they change only through verification or administrator workflows.
@@ -74,7 +89,6 @@ export const PROFILE_LANGUAGES = ['English', 'Telugu', 'Hindi', 'Tamil', 'Kannad
 export const profileUpdateSchema = z.object({
   fullName: trimmed(120).min(2).optional(),
   phone: trimmed(20).regex(/^\+?[0-9 ]{7,20}$/).optional().or(z.literal('')),
-  preferredLanguage: z.enum(PROFILE_LANGUAGES).optional(),
   // students
   department: trimmed(120).optional(),
   program: trimmed(120).optional().or(z.literal('')),
@@ -212,11 +226,11 @@ export const chatReportSchema = z.object({ reason: trimmed(500).min(3) });
 export const SOS_TRIGGER_SOURCES = ['in_app', 'quick_tile', 'shortcut', 'notification', 'recovery'] as const;
 export const sosCreateSchema = z.object({
   idempotencyKey: z.string().uuid(),
-  latitude: z.number().min(-90).max(90).optional(),
-  longitude: z.number().min(-180).max(180).optional(),
-  accuracyMeters: z.number().min(0).max(100000).optional(),
-  locationUnavailableReason: trimmed(120).optional(),
-  note: trimmed(300).optional(),
+  latitude: z.number().min(-90).max(90).nullish(),
+  longitude: z.number().min(-180).max(180).nullish(),
+  accuracyMeters: z.number().min(0).max(100000).nullish(),
+  locationUnavailableReason: trimmed(120).nullish(),
+  note: trimmed(300).nullish(),
   /** Email verified trusted contacts as well as Campus Security. */
   notifyTrustedContacts: z.boolean().default(true),
   /**
@@ -226,9 +240,12 @@ export const sosCreateSchema = z.object({
    */
   countdownMode: z.enum(['client', 'server']).default('client'),
   /** How old the device's location fix was when the alert was raised. Informational only. */
-  locationAgeSeconds: z.number().min(0).max(86400).optional(),
+  locationAgeSeconds: z.number().min(0).max(86400).nullish(),
   /** What started it. Recorded for review only: an SOS is never refused because of its trigger. */
-  triggerSource: z.enum(SOS_TRIGGER_SOURCES).optional(),
+  triggerSource: z.enum(SOS_TRIGGER_SOURCES).nullish(),
+  batteryLevel: z.number().nullish(),
+  deviceInfo: z.record(z.string()).nullish(),
+  isCachedFix: z.boolean().nullish(),
 });
 export const sosCancelSchema = z.object({
   reason: trimmed(300).optional(),

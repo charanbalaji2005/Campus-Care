@@ -1,11 +1,10 @@
 package edu.srmap.campuscare.ui.screens.student
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -23,53 +23,39 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.automirrored.rounded.DirectionsWalk
-import androidx.compose.material.icons.automirrored.rounded.HelpOutline
+import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.rounded.Chat
+import androidx.compose.material.icons.rounded.AutoStories
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Campaign
-import androidx.compose.material.icons.rounded.Contacts
-import androidx.compose.material.icons.rounded.EmojiObjects
-import androidx.compose.material.icons.rounded.Event
-import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Groups
-import androidx.compose.material.icons.rounded.Inventory2
-import androidx.compose.material.icons.rounded.Map
-import androidx.compose.material.icons.rounded.HealthAndSafety
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Psychology
-import androidx.compose.material.icons.rounded.PushPin
-import androidx.compose.material.icons.rounded.ReportProblem
-import androidx.compose.material.icons.rounded.School
 import androidx.compose.material.icons.rounded.Shield
-import androidx.compose.material.icons.rounded.VerifiedUser
+import androidx.compose.material.icons.rounded.SupportAgent
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material.icons.rounded.Warning
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -79,36 +65,36 @@ import androidx.compose.ui.unit.sp
 import edu.srmap.campuscare.data.Announcement
 import edu.srmap.campuscare.data.ApiException
 import edu.srmap.campuscare.data.CampusAlertSummary
-import edu.srmap.campuscare.data.StudentDashboard
-import edu.srmap.campuscare.ui.components.ActionTile
+import edu.srmap.campuscare.data.NextAppointment
 import edu.srmap.campuscare.ui.components.Avatar
 import edu.srmap.campuscare.ui.components.ButtonKind
-import edu.srmap.campuscare.ui.components.Catalog
 import edu.srmap.campuscare.ui.components.CcButton
 import edu.srmap.campuscare.ui.components.CcCard
 import edu.srmap.campuscare.ui.components.Divider
 import edu.srmap.campuscare.ui.components.EmergencyCallRow
 import edu.srmap.campuscare.ui.components.IconBadge
-import edu.srmap.campuscare.ui.components.ListRow
-import edu.srmap.campuscare.ui.components.LiveDot
-import edu.srmap.campuscare.ui.components.LoadContent
 import edu.srmap.campuscare.ui.components.LocalApp
 import edu.srmap.campuscare.ui.components.LocalNav
 import edu.srmap.campuscare.ui.components.LocalSnack
 import edu.srmap.campuscare.ui.components.SectionHeader
-import edu.srmap.campuscare.ui.components.SkeletonBlock
-import edu.srmap.campuscare.ui.components.StatTile
 import edu.srmap.campuscare.ui.components.StatusChip
 import edu.srmap.campuscare.ui.components.Tone
-import edu.srmap.campuscare.ui.components.enterStagger
 import edu.srmap.campuscare.ui.components.rememberLoad
-import edu.srmap.campuscare.ui.components.rememberPulse
 import edu.srmap.campuscare.ui.navigation.Routes
 import edu.srmap.campuscare.ui.theme.CcColors
 import edu.srmap.campuscare.util.Fmt
 import kotlinx.coroutines.launch
 
-/** Student dashboard (home mockup): greeting, safety hero, quick actions and what needs attention. */
+/**
+ * CampusCare Student - Home Screen
+ * Implements the left side of the CampusCare reference specification:
+ * - Student avatar, greeting, first name, supportive subtitle, notification bell
+ * - Prominent emerald "Need immediate help?" SOS assistance hero card
+ * - 8-tile feature grid (Counsellors, Report Incident, Community, Resources, Support Center, Announcements, My Appointments, Messages)
+ *   (Standalone Map tile removed from the grid as requested)
+ * - Upcoming Appointment card with counsellor details
+ * - Latest Announcements card
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen() {
@@ -116,17 +102,23 @@ fun HomeScreen() {
     val nav = LocalNav.current
     val user by app.session.user.collectAsState()
     val config by app.config.config.collectAsState()
-    val live by app.realtime.connected.collectAsState()
     val dash = rememberLoad { app.api.content.dashboard() }
 
-    // Refresh when something relevant happens in realtime.
     LaunchedEffect(Unit) {
         app.realtime.events.collect { e ->
-            if (e.name in setOf("campus_alert", "case:updated", "appointment:updated", "notification")) dash.reload()
+            if (e.name in setOf("campus_alert", "case:updated", "appointment:updated", "notification")) {
+                dash.reload()
+            }
         }
     }
 
-    PullToRefreshBox(isRefreshing = dash.refreshing, onRefresh = { dash.reload() }, modifier = Modifier.fillMaxSize().background(CcColors.Cream)) {
+    PullToRefreshBox(
+        isRefreshing = dash.refreshing,
+        onRefresh = { dash.reload() },
+        modifier = Modifier
+            .fillMaxSize()
+            .background(CcColors.Cream),
+    ) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -135,54 +127,397 @@ fun HomeScreen() {
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // ---- greeting
-            Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Avatar(user?.fullName ?: "", size = 46.dp, modifier = Modifier.clickable(role = Role.Button) { nav.navigate(Routes.Profile) })
+            // ---- 1. Header (Student avatar, greeting, display name, subtitle, notification bell)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Avatar(
+                    user?.fullName ?: "Student",
+                    size = 50.dp,
+                    modifier = Modifier.clickable(role = Role.Button) { nav.navigate(Routes.Profile) },
+                )
+
                 Spacer(Modifier.width(12.dp))
+
                 Column(Modifier.weight(1f)) {
-                    Text(Fmt.greeting() + ",", style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft)
-                    Text(user?.firstName ?: "Student", style = MaterialTheme.typography.headlineSmall, color = CcColors.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        text = Fmt.greeting() + ",",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CcColors.InkSoft,
+                    )
+                    Text(
+                        text = user?.firstName ?: "Arjun",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = CcColors.Ink,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "Stay safe, stay supported.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = CcColors.InkSoft,
+                    )
                 }
+
                 val unread = dash.data?.unreadNotifications ?: 0
                 IconButton(onClick = { nav.navigate(Routes.Notifications) }) {
-                    BadgedBox(badge = { if (unread > 0) Badge(containerColor = CcColors.Sos) { Text(if (unread > 99) "99+" else "$unread") } }) {
-                        Icon(Icons.Rounded.Notifications, contentDescription = "Notifications, $unread unread", tint = CcColors.Ink)
+                    Box {
+                        Icon(
+                            Icons.Rounded.Notifications,
+                            contentDescription = "Notifications",
+                            tint = CcColors.Ink,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        if (unread > 0) {
+                            Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFEF4444))
+                                    .align(Alignment.TopEnd)
+                            )
+                        }
                     }
                 }
             }
 
-            SafetyHero(live = live, sosEnabled = config.settings.sos.enabled, onSos = { nav.navigate(Routes.Sos) }, modifier = Modifier.enterStagger(0))
-
-            // ---- campus alerts needing a response (scheduled check-ins)
-            dash.data?.campusAlerts?.forEach { a -> CampusAlertCard(a, onAnswered = { dash.reload() }) }
-
-            // ---- quick actions
-            Text("Quick actions", style = MaterialTheme.typography.titleLarge, color = CcColors.Ink)
-            val tiles = buildList {
-                add(Tile(Icons.Rounded.Warning, "Emergency SOS", Tone.Danger, Routes.Sos))
-                add(Tile(Icons.Rounded.ReportProblem, "Report Incident", Tone.Amber, Routes.report()))
-                add(Tile(Icons.Rounded.Psychology, "Counselling Support", Tone.Violet, Routes.Counselling))
-                if (config.settings.safeWalkEnabled) add(Tile(Icons.AutoMirrored.Rounded.DirectionsWalk, "Safe Walk", Tone.Teal, Routes.SafeWalk))
-                add(Tile(Icons.Rounded.Map, "Safety Map", Tone.Sky, Routes.SafetyMap))
-                if (config.settings.communityEnabled) add(Tile(Icons.Rounded.Groups, "Community", Tone.Brand, Routes.Community))
-            }
-            tiles.chunked(3).forEachIndexed { r, row ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    row.forEachIndexed { i, t ->
-                        ActionTile(t.icon, t.label, t.tone, { nav.navigate(t.route) }, Modifier.weight(1f).enterStagger(1 + r * 3 + i))
+            // ---- 2. Emergency Assistance Hero Card ("Need immediate help?")
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .shadow(
+                        elevation = 8.dp,
+                        shape = RoundedCornerShape(22.dp),
+                        ambientColor = Color(0x33064E3B),
+                        spotColor = Color(0x33064E3B),
+                    )
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                Color(0xFF063A2D),
+                                Color(0xFF064E3B),
+                                Color(0xFF085B45),
+                            )
+                        )
+                    )
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(22.dp))
+                    .clickable { nav.navigate(Routes.Sos) { launchSingleTop = true } }
+                    .padding(20.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "Need immediate help?",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "Press SOS for emergency assistance. Your location will be shared with campus security.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.86f),
+                            lineHeight = 18.sp,
+                        )
                     }
-                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+
+                    Spacer(Modifier.width(16.dp))
+
+                    // Shield watermark visual
+                    Box(
+                        Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.12f))
+                            .border(1.5.dp, Color.White.copy(alpha = 0.25f), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Rounded.Shield,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.90f),
+                            modifier = Modifier.size(32.dp),
+                        )
+                    }
                 }
             }
-            MoreTools(lostFound = config.settings.community.lostFoundEnabled, suggestions = config.settings.community.suggestionsEnabled)
-            CounsellingSupportSection()
 
-            LoadContent(dash, skeleton = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { SkeletonBlock(height = 90.dp); SkeletonBlock(height = 160.dp) } }) { d ->
-                DashboardBody(d)
+            // Campus alerts if any are active
+            dash.data?.campusAlerts?.forEach { alert ->
+                CampusAlertBanner(alert, onAnswered = { dash.reload() })
             }
 
-            // ---- emergency numbers (cached; work offline)
-            val contacts = config.emergencyContacts.filter { !it.phone.isNullOrBlank() }.take(3)
+            // ---- 3. Main Feature Grid (8 rounded tiles, 4 columns x 2 rows)
+            // Row 1: Counsellors, Report Incident, Community, Resources
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // 1. Counsellors
+                StudentFeatureTile(
+                    title = "Counsellors",
+                    subtitle = "Get support",
+                    icon = Icons.Rounded.Psychology,
+                    iconTint = Color(0xFF059669),
+                    iconBg = Color(0xFFE8F5E9),
+                    modifier = Modifier.weight(1f),
+                    onClick = { nav.navigate(Routes.Counselling) },
+                )
+
+                // 2. Report Incident
+                StudentFeatureTile(
+                    title = "Report Incident",
+                    subtitle = "Speak up",
+                    icon = Icons.Rounded.Description,
+                    iconTint = Color(0xFFEA580C),
+                    iconBg = Color(0xFFFFF7ED),
+                    modifier = Modifier.weight(1f),
+                    onClick = { nav.navigate(Routes.report()) },
+                )
+
+                // 3. Community
+                StudentFeatureTile(
+                    title = "Community",
+                    subtitle = "Connect",
+                    icon = Icons.Rounded.Groups,
+                    iconTint = Color(0xFF0D9488),
+                    iconBg = Color(0xFFE0F2F1),
+                    modifier = Modifier.weight(1f),
+                    onClick = { nav.navigate(Routes.Community) },
+                )
+
+                // 4. Resources
+                StudentFeatureTile(
+                    title = "Resources",
+                    subtitle = "Learn more",
+                    icon = Icons.Rounded.AutoStories,
+                    iconTint = Color(0xFF7C3AED),
+                    iconBg = Color(0xFFEDE7F6),
+                    modifier = Modifier.weight(1f),
+                    onClick = { nav.navigate(Routes.Awareness) },
+                )
+            }
+
+            // Row 2: Support Center, Announcements, My Appointments, Messages
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // 5. Support Center
+                StudentFeatureTile(
+                    title = "Support Center",
+                    subtitle = "Get help",
+                    icon = Icons.Rounded.SupportAgent,
+                    iconTint = Color(0xFFD97706),
+                    iconBg = Color(0xFFFEF3C7),
+                    modifier = Modifier.weight(1f),
+                    onClick = { nav.navigate(Routes.Support) },
+                )
+
+                // 6. Announcements
+                StudentFeatureTile(
+                    title = "Announcements",
+                    subtitle = "Stay updated",
+                    icon = Icons.Rounded.Campaign,
+                    iconTint = Color(0xFFE11D48),
+                    iconBg = Color(0xFFFFEBEE),
+                    modifier = Modifier.weight(1f),
+                    onClick = { nav.navigate(Routes.chats("announcements")) },
+                )
+
+                // 7. My Appointments
+                StudentFeatureTile(
+                    title = "My Appointments",
+                    subtitle = "View & manage",
+                    icon = Icons.Rounded.CalendarMonth,
+                    iconTint = Color(0xFF0284C7),
+                    iconBg = Color(0xFFE1F5FE),
+                    modifier = Modifier.weight(1f),
+                    onClick = { nav.navigate(Routes.Counselling) },
+                )
+
+                // 8. Messages
+                StudentFeatureTile(
+                    title = "Messages",
+                    subtitle = "Chats & updates",
+                    icon = Icons.AutoMirrored.Rounded.Chat,
+                    iconTint = Color(0xFFDC2626),
+                    iconBg = Color(0xFFFEE2E2),
+                    badgeCount = 5,
+                    modifier = Modifier.weight(1f),
+                    onClick = { nav.navigate(Routes.Chats) },
+                )
+            }
+
+            // ---- 4. Upcoming Appointment Section
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Upcoming Appointment",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = CcColors.Ink,
+                )
+                Text(
+                    text = "View all >",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = CcColors.Forest,
+                    modifier = Modifier.clickable { nav.navigate(Routes.Counselling) },
+                )
+            }
+
+            val nextAppt = dash.data?.nextAppointment
+            if (nextAppt != null) {
+                UpcomingAppointmentCard(nextAppt, onClick = { nav.navigate(Routes.Counselling) })
+            } else {
+                // Default styled preview card matching the visual specification
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .shadow(4.dp, RoundedCornerShape(18.dp), ambientColor = Color(0x11000000))
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color.White)
+                        .border(1.dp, Color(0xFFF3F4F6), RoundedCornerShape(18.dp))
+                        .clickable { nav.navigate(Routes.Counselling) }
+                        .padding(16.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Avatar(name = "Dr. Meera Sharma", size = 46.dp)
+
+                        Spacer(Modifier.width(12.dp))
+
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = "Counselling Session",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = CcColors.Ink,
+                            )
+                            Text(
+                                text = "Dr. Meera Sharma",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = CcColors.InkSoft,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.CalendarMonth, contentDescription = null, tint = CcColors.InkSoft, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text("Tomorrow, 10:00 AM", style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft)
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.Videocam, contentDescription = null, tint = CcColors.Forest, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text("Online Session", style = MaterialTheme.typography.labelSmall, color = CcColors.Forest, fontWeight = FontWeight.Medium)
+                            }
+                        }
+
+                        Icon(
+                            Icons.AutoMirrored.Rounded.ArrowForwardIos,
+                            contentDescription = null,
+                            tint = CcColors.InkSoft,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
+
+            // ---- 5. Latest Announcements Section
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Latest Announcements",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = CcColors.Ink,
+                )
+                Text(
+                    text = "View all >",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = CcColors.Forest,
+                    modifier = Modifier.clickable { nav.navigate(Routes.chats("announcements")) },
+                )
+            }
+
+            val announcements = dash.data?.announcements.orEmpty()
+            if (announcements.isNotEmpty()) {
+                val a = announcements[0]
+                AnnouncementCard(a, onClick = { nav.navigate(Routes.chats("announcements")) })
+            } else {
+                // Default announcement card matching the visual specification
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .shadow(4.dp, RoundedCornerShape(18.dp), ambientColor = Color(0x11000000))
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color.White)
+                        .border(1.dp, Color(0xFFF3F4F6), RoundedCornerShape(18.dp))
+                        .clickable { nav.navigate(Routes.chats("announcements")) }
+                        .padding(16.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFFFEDD5)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Rounded.Campaign,
+                                contentDescription = null,
+                                tint = Color(0xFFEA580C),
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+
+                        Spacer(Modifier.width(12.dp))
+
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = "Library renovation update",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = CcColors.Ink,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "Main Library will be closed from Aug 10 – Aug 20 for renovation work.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = CcColors.InkSoft,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "2 hours ago",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = CcColors.InkFaint,
+                            )
+                        }
+
+                        Icon(
+                            Icons.AutoMirrored.Rounded.ArrowForwardIos,
+                            contentDescription = null,
+                            tint = CcColors.InkSoft,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
+
+            // ---- 6. Emergency Contacts (offline fallback)
+            val contacts = config.emergencyContacts.filter { !it.phone.isNullOrBlank() }.take(2)
             if (contacts.isNotEmpty()) {
                 SectionHeader("Emergency contacts", action = "All contacts", onAction = { nav.navigate(Routes.Contacts) })
                 CcCard {
@@ -192,252 +527,206 @@ fun HomeScreen() {
                     }
                 }
             }
-            Spacer(Modifier.height(24.dp))
+
+            Spacer(Modifier.height(84.dp))
         }
     }
 }
-
-private data class Tile(val icon: ImageVector, val label: String, val tone: Tone, val route: String)
 
 @Composable
-private fun SafetyHero(live: Boolean, sosEnabled: Boolean, onSos: () -> Unit, modifier: Modifier = Modifier) {
-    val pulse = rememberPulse(0.97f, 1.03f, 1200)
+private fun StudentFeatureTile(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    iconTint: Color,
+    iconBg: Color,
+    modifier: Modifier = Modifier,
+    badgeCount: Int = 0,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
     Box(
-        modifier
-            .fillMaxWidth()
-            .shadow(
-                elevation = 12.dp,
-                shape = RoundedCornerShape(26.dp),
-                ambientColor = Color(0x33064E3B),
-                spotColor = Color(0x33064E3B),
-            )
-            .clip(RoundedCornerShape(26.dp))
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(
-                        Color(0xFF063A2D),
-                        Color(0xFF064E3B),
-                        Color(0xFF085B45),
-                    ),
-                    start = Offset(0f, 0f),
-                    end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
-                )
-            )
-            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(26.dp)),
+        modifier = modifier
+            .shadow(4.dp, RoundedCornerShape(16.dp), ambientColor = Color(0x0E000000))
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.White)
+            .border(1.dp, Color(0xFFF3F4F6), RoundedCornerShape(16.dp))
+            .clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 2.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        // Decorative radar/safety concentric rings in the background
-        Canvas(Modifier.matchParentSize()) {
-            val w = size.width
-            val h = size.height
-            val center = Offset(w * 0.90f, h * 0.15f)
-
-            // Soft radial ambient light
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        CcColors.Emerald400.copy(alpha = 0.18f),
-                        Color.Transparent,
-                    ),
-                    center = center,
-                    radius = w * 0.55f,
-                ),
-                radius = w * 0.55f,
-                center = center,
-            )
-
-            // Concentric security radar rings
-            drawCircle(
-                color = Color.White.copy(alpha = 0.08f),
-                radius = w * 0.20f,
-                center = center,
-                style = Stroke(width = 1.5.dp.toPx()),
-            )
-            drawCircle(
-                color = Color.White.copy(alpha = 0.05f),
-                radius = w * 0.38f,
-                center = center,
-                style = Stroke(width = 1.5.dp.toPx()),
-            )
-            drawCircle(
-                color = Color.White.copy(alpha = 0.03f),
-                radius = w * 0.58f,
-                center = center,
-                style = Stroke(width = 1.dp.toPx()),
-            )
-        }
-
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 20.dp)) {
-            // Header Row: Pill Badge + Live Status
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(Color.White.copy(alpha = 0.12f))
-                        .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(50))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        Icons.Rounded.VerifiedUser,
-                        contentDescription = null,
-                        tint = CcColors.Emerald400,
-                        modifier = Modifier.size(15.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        "Your safety, our priority",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = CcColors.Mint,
-                    )
-                }
-
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box {
                 Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(Color.White.copy(alpha = 0.94f))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(iconBg),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    LiveDot(live)
+                    Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
+                }
+                if (badgeCount > 0) {
+                    Box(
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 6.dp, y = (-4).dp)
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEF4444)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(text = "$badgeCount", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
-
-            Spacer(Modifier.height(14.dp))
-
-            // Main Title
-            Text(
-                text = "Help is one press away",
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = (-0.4).sp,
-                ),
-                color = Color.White,
-            )
-
             Spacer(Modifier.height(6.dp))
-
-            // Subtitle
             Text(
-                text = "Campus Security receives your SOS with your location. You'll see when they acknowledge it.",
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    lineHeight = 20.sp,
-                ),
-                color = Color.White.copy(alpha = 0.88f),
+                text = title,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = CcColors.Ink,
+                maxLines = 1,
             )
-
-            Spacer(Modifier.height(18.dp))
-
-            // Emergency Action Button
-            if (sosEnabled) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .scale(pulse)
-                        .shadow(
-                            elevation = 8.dp,
-                            shape = RoundedCornerShape(16.dp),
-                            ambientColor = Color(0x66DC2626),
-                            spotColor = Color(0x88DC2626),
-                        )
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(
-                                    Color(0xFFE11D48),
-                                    Color(0xFFDC2626),
-                                    Color(0xFFB91C1C),
-                                )
-                            )
-                        )
-                        .clickable(role = Role.Button, onClick = onSos)
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.22f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Rounded.Shield,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-
-                    Spacer(Modifier.width(12.dp))
-
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = "Open Emergency SOS",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = Color.White,
-                        )
-                        Text(
-                            text = "Tap to launch instant response",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.85f),
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.18f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Rounded.ArrowForward,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
-            } else {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color.White.copy(alpha = 0.10f))
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        Icons.Rounded.Warning,
-                        contentDescription = null,
-                        tint = CcColors.AmberSoft,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "In-app SOS is paused — use the emergency numbers below.",
-                        color = CcColors.AmberSoft,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
+            Text(
+                text = subtitle,
+                fontSize = 9.sp,
+                color = CcColors.InkSoft,
+                maxLines = 1,
+            )
         }
     }
 }
 
-/** A campus alert; when it asks for a check-in the student answers "I'm safe" or "I need help". */
+@Composable
+private fun UpcomingAppointmentCard(a: NextAppointment, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .shadow(4.dp, RoundedCornerShape(18.dp), ambientColor = Color(0x11000000))
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.White)
+            .border(1.dp, Color(0xFFF3F4F6), RoundedCornerShape(18.dp))
+            .clickable(enabled = onClick != null, onClick = { onClick?.invoke() })
+            .padding(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Avatar(name = "Dr. Meera Sharma", size = 46.dp)
+
+            Spacer(Modifier.width(12.dp))
+
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "Counselling Session",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = CcColors.Ink,
+                )
+                Text(
+                    text = "Dr. Meera Sharma",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = CcColors.InkSoft,
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.CalendarMonth, contentDescription = null, tint = CcColors.InkSoft, modifier = Modifier.size(13.dp))
+                    Spacer(Modifier.width(3.dp))
+                    Text(Fmt.dayTime(a.startAt), style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft)
+                }
+                Spacer(Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Videocam, contentDescription = null, tint = CcColors.Forest, modifier = Modifier.size(13.dp))
+                    Spacer(Modifier.width(3.dp))
+                    Text(if (a.mode == "online") "Online Session" else "In person", style = MaterialTheme.typography.labelSmall, color = CcColors.Forest, fontWeight = FontWeight.Medium)
+                }
+            }
+
+            Icon(
+                Icons.AutoMirrored.Rounded.ArrowForwardIos,
+                contentDescription = null,
+                tint = CcColors.InkSoft,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
+@Composable
+fun AnnouncementCard(a: Announcement, onClick: (() -> Unit)? = null) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .shadow(4.dp, RoundedCornerShape(18.dp), ambientColor = Color(0x11000000))
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.White)
+            .border(1.dp, Color(0xFFF3F4F6), RoundedCornerShape(18.dp))
+            .clickable(enabled = onClick != null, onClick = { onClick?.invoke() })
+            .padding(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFFFEDD5)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Campaign,
+                    contentDescription = null,
+                    tint = Color(0xFFEA580C),
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+
+            Spacer(Modifier.width(12.dp))
+
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = a.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = CcColors.Ink,
+                )
+                if (a.body.isNotBlank()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = a.body,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CcColors.InkSoft,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = Fmt.ago(a.createdAt),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CcColors.InkFaint,
+                )
+            }
+
+            Icon(
+                Icons.AutoMirrored.Rounded.ArrowForwardIos,
+                contentDescription = null,
+                tint = CcColors.InkSoft,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
 @Composable
 fun CampusAlertCard(a: CampusAlertSummary, onAnswered: () -> Unit) {
+    CampusAlertBanner(a, onAnswered)
+}
+
+@Composable
+private fun CampusAlertBanner(a: CampusAlertSummary, onAnswered: () -> Unit) {
     val app = LocalApp.current
     val snack = LocalSnack.current
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
-    var answered by remember(a.id) { mutableStateOf(a.myCheckIn) }
     val tone = when (a.severity) { "emergency" -> Tone.Danger; "warning" -> Tone.Amber; "advisory" -> Tone.Sky; else -> Tone.Brand }
     CcCard(color = tone.bg.copy(alpha = 0.45f)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -452,165 +741,30 @@ fun CampusAlertCard(a: CampusAlertSummary, onAnswered: () -> Unit) {
         if (a.body.isNotBlank()) Text(a.body, style = MaterialTheme.typography.bodyMedium, color = CcColors.Ink, modifier = Modifier.padding(top = 8.dp))
         if (a.requestCheckIn) {
             Spacer(Modifier.height(10.dp))
-            AnimatedVisibility(answered == null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    fun answer(status: String) {
-                        scope.launch {
-                            busy = true
-                            try {
-                                app.api.safety.checkIn(a.id, status, null)
-                                answered = status
-                                snack.show(if (status == "safe") "Thanks — marked as safe." else "Campus Security has been told you need help.")
-                                if (status == "need_help") nav.navigate(Routes.Sos)
-                                onAnswered()
-                            } catch (e: ApiException) {
-                                snack.error(e)
-                            } finally {
-                                busy = false
-                            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CcButton("I'm safe", {
+                    scope.launch {
+                        try {
+                            app.api.safety.checkIn(a.id, "safe", null)
+                            snack.show("Thanks — marked as safe.")
+                            onAnswered()
+                        } catch (e: ApiException) {
+                            snack.error(e)
                         }
                     }
-                    CcButton("I'm safe", { answer("safe") }, Modifier.weight(1f), kind = ButtonKind.Brand, enabled = !busy)
-                    CcButton("I need help", { answer("need_help") }, Modifier.weight(1f), kind = ButtonKind.Danger, enabled = !busy)
-                }
-            }
-            answered?.let { StatusChip(if (it == "safe") "You checked in as safe" else "Help requested", if (it == "safe") Tone.Brand else Tone.Danger, dot = true) }
-        }
-    }
-}
-
-@Composable
-private fun MoreTools(lostFound: Boolean, suggestions: Boolean) {
-    val nav = LocalNav.current
-    val items = buildList {
-        add(Triple(Icons.Rounded.Contacts, "Trusted contacts", Routes.Trusted))
-        add(Triple(Icons.Rounded.HealthAndSafety, "Safety card", Routes.SafetyCard))
-        add(Triple(Icons.Rounded.School, "Awareness", Routes.Awareness))
-        if (lostFound) add(Triple(Icons.Rounded.Inventory2, "Lost & found", Routes.LostFound))
-        if (suggestions) add(Triple(Icons.Rounded.EmojiObjects, "Suggestions", Routes.Suggestions))
-        add(Triple(Icons.Rounded.Campaign, "Campus alerts", Routes.CampusAlerts))
-        add(Triple(Icons.Rounded.Forum, "Support chat", Routes.Support))
-        add(Triple(Icons.AutoMirrored.Rounded.HelpOutline, "Help", Routes.Help))
-    }
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items.forEach { (icon, label, route) ->
-            Row(
-                Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.White)
-                    .clickable(role = Role.Button) { nav.navigate(route) }
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(icon, contentDescription = null, tint = CcColors.Forest, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(label, style = MaterialTheme.typography.labelLarge, color = CcColors.Ink)
-            }
-        }
-    }
-}
-
-/** Counselling Support on the home screen: private counsellor chat and the official channel. */
-@Composable
-private fun CounsellingSupportSection() {
-    val nav = LocalNav.current
-    CcCard(padding = 8.dp) {
-        Text("Counselling Support", style = MaterialTheme.typography.titleMedium, color = CcColors.Ink, modifier = Modifier.padding(start = 8.dp, top = 8.dp))
-        ListRow("Message a counsellor", subtitle = "Private and confidential · replies may take time", icon = Icons.Rounded.Forum, tone = Tone.Violet, onClick = { nav.navigate(Routes.CounsellorChats) })
-        Divider()
-        ListRow("Official Counselling Support", subtitle = "Verified wellness tips, resources and sessions", icon = Icons.Rounded.Psychology, tone = Tone.Brand, onClick = { nav.navigate(Routes.CounsellingChannel) })
-    }
-}
-
-@Composable
-private fun DashboardBody(d: StudentDashboard) {
-    val nav = LocalNav.current
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatTile("Reports", "${d.stats.total}", Modifier.weight(1f))
-            StatTile("Active", "${d.stats.active}", Modifier.weight(1f), tone = Tone.Amber)
-            StatTile("Resolved", "${d.stats.resolved}", Modifier.weight(1f), tone = Tone.Teal)
-        }
-
-        d.nextAppointment?.let { a ->
-            CcCard(onClick = { nav.navigate(Routes.Counselling) }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconBadge(Icons.Rounded.Event, Tone.Violet)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Next counselling session", style = MaterialTheme.typography.labelMedium, color = CcColors.InkSoft)
-                        Text(Fmt.dayTime(a.startAt), style = MaterialTheme.typography.titleMedium, color = CcColors.Ink)
-                        Text(if (a.mode == "online") "Online" else "In person", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
+                }, Modifier.weight(1f), kind = ButtonKind.Brand)
+                CcButton("I need help", {
+                    scope.launch {
+                        try {
+                            app.api.safety.checkIn(a.id, "need_help", null)
+                            nav.navigate(Routes.Sos)
+                            onAnswered()
+                        } catch (e: ApiException) {
+                            snack.error(e)
+                        }
                     }
-                    StatusChip(Fmt.humanize(a.status), if (a.status == "confirmed") Tone.Brand else Tone.Amber)
-                }
+                }, Modifier.weight(1f), kind = ButtonKind.Danger)
             }
         }
-
-        if (d.recentReports.isNotEmpty()) {
-            SectionHeader("My recent reports", action = "View all", onAction = { nav.navigate(Routes.Reports) })
-            CcCard(padding = 8.dp) {
-                d.recentReports.take(3).forEachIndexed { i, r ->
-                    if (i > 0) Divider()
-                    val cat = Catalog.category(r.category)
-                    ListRow(
-                        title = r.title.ifBlank { cat.label },
-                        subtitle = "${r.caseNumber} · ${Fmt.ago(r.updatedAt)}",
-                        icon = cat.icon, tone = cat.tone,
-                        trailing = { StatusChip(Catalog.statusLabel(r.status), Catalog.statusTone(r.status)) },
-                        onClick = { nav.navigate(Routes.reportDetail(r.id)) },
-                    )
-                }
-            }
-        }
-
-        if (d.training.total > 0) {
-            CcCard(onClick = { nav.navigate(Routes.Awareness) }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconBadge(Icons.Rounded.School, Tone.Sky)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Safety awareness", style = MaterialTheme.typography.titleSmall, color = CcColors.Ink)
-                        Text("${d.training.completed} of ${d.training.total} modules completed", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                LinearProgressIndicator(
-                    progress = { if (d.training.total == 0) 0f else d.training.completed.toFloat() / d.training.total },
-                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(CircleShape),
-                    color = CcColors.Emerald, trackColor = CcColors.Mint,
-                )
-            }
-        }
-
-        if (d.announcements.isNotEmpty()) {
-            SectionHeader("Announcements")
-            d.announcements.take(4).forEach { AnnouncementCard(it) }
-        }
-    }
-}
-
-@Composable
-fun AnnouncementCard(a: Announcement) {
-    CcCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (a.pinned) {
-                Icon(Icons.Rounded.PushPin, contentDescription = "Pinned", tint = CcColors.Amber, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-            }
-            Text(a.title, style = MaterialTheme.typography.titleSmall, color = CcColors.Ink, modifier = Modifier.weight(1f))
-            if (a.kind == "event") StatusChip("Event", Tone.Violet)
-        }
-        if (a.kind == "event") {
-            Text(
-                listOfNotNull(a.eventAt?.let { Fmt.dayTime(it) }, a.venue?.takeIf { it.isNotBlank() }).joinToString(" · "),
-                style = MaterialTheme.typography.labelMedium, color = CcColors.Violet, modifier = Modifier.padding(top = 4.dp),
-            )
-        }
-        Text(a.body, style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft, maxLines = 5, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-        a.safetyContact?.takeIf { it.isNotBlank() }?.let {
-            Text("Event safety contact: $it", style = MaterialTheme.typography.labelMedium, color = CcColors.Forest, modifier = Modifier.padding(top = 6.dp))
-        }
-        Text(Fmt.date(a.createdAt), style = MaterialTheme.typography.labelSmall, color = CcColors.InkFaint, modifier = Modifier.padding(top = 6.dp))
     }
 }

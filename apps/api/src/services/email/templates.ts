@@ -1,7 +1,9 @@
 /** Default email templates. Super Admins can override subject/html/text per key; variables use {{name}}. */
 export const TEMPLATE_KEYS = [
   'verify_email',
+  'verify_email_code',
   'password_reset',
+  'password_reset_code',
   'password_changed',
   'staff_invite',
   'security_alert',
@@ -29,6 +31,8 @@ const layout = (body: string) => `<!doctype html><html><body style="margin:0;bac
 const button = (label: string) =>
   `<p><a href="{{link}}" style="display:inline-block;background:#059669;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600">${label}</a></p><p style="font-size:12px;color:#64748B">If the button doesn't work, copy this link: {{link}}</p>`;
 
+const codeBlock = '<p style="margin:20px 0;text-align:center"><span style="display:inline-block;font-family:Consolas,Menlo,monospace;font-size:30px;font-weight:700;letter-spacing:8px;color:#064E3B;background:#ECFDF5;border:1px solid #A7F3D0;border-radius:12px;padding:12px 22px">{{code}}</span></p>';
+
 export const DEFAULT_TEMPLATES: Record<TemplateKey, { subject: string; html: string; text: string }> = {
   verify_email: {
     subject: 'Verify your {{platformName}} email',
@@ -39,6 +43,16 @@ export const DEFAULT_TEMPLATES: Record<TemplateKey, { subject: string; html: str
     subject: 'Reset your {{platformName}} password',
     html: layout(`<p>Hi {{name}},</p><p>We received a request to reset your password. The link expires in {{expiresIn}} and can be used once. Open it on the phone where the CampusCare app is installed to choose a new password there. If you didn't ask for this, you can ignore this email; your password will not change.</p>${button('Reset password')}`),
     text: 'Hi {{name}},\n\nReset your password (open this on the phone with the CampusCare app): {{link}}\n\nThe link expires in {{expiresIn}} and can be used once. If you did not request this, ignore this email.',
+  },
+  verify_email_code: {
+    subject: '{{code}} is your {{platformName}} verification code',
+    html: layout(`<p>Hi {{name}},</p><p>Enter this code in the CampusCare app to verify your email address:</p>${codeBlock}<p>The code expires in {{expiresIn}} and works once. Only the newest code works. CampusCare staff will never ask you for this code.</p><p>If you didn't create a CampusCare account, you can ignore this email.</p>`),
+    text: 'Hi {{name}},\n\nYour CampusCare verification code is {{code}}\n\nIt expires in {{expiresIn}} and works once. Never share it. If you did not create an account, ignore this email.',
+  },
+  password_reset_code: {
+    subject: '{{code}} is your {{platformName}} password reset code',
+    html: layout(`<p>Hi {{name}},</p><p>We received a request to reset your password. Enter this code in CampusCare to choose a new password:</p>${codeBlock}<p>The code expires in {{expiresIn}} and works once. CampusCare staff will never ask you for this code. If you didn't ask for this, ignore this email; your password will not change.</p>`),
+    text: 'Hi {{name}},\n\nYour CampusCare password reset code is {{code}}\n\nIt expires in {{expiresIn}} and works once. Never share it. If you did not request this, ignore this email; your password will not change.',
   },
   password_changed: {
     subject: 'Your {{platformName}} password was changed',

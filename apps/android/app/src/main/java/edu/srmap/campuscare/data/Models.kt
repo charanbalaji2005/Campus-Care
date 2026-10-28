@@ -33,7 +33,6 @@ data class User(
     /** Student course/programme and class section. */
     val program: String? = null,
     val section: String? = null,
-    val preferredLanguage: String? = null,
     /** Staff job title; counsellor qualifications and years of experience. */
     val designation: String? = null,
     val qualifications: String? = null,
@@ -160,7 +159,38 @@ data class SessionInfo(val mfaVerified: Boolean = false, val method: String = "p
 data class MeResponse(val user: User, val session: SessionInfo = SessionInfo(), val mfaRequired: Boolean = false, val homePath: String = "/")
 
 @Serializable
-data class RegisterResponse(val requiresVerification: Boolean = true, val email: String = "")
+data class RegisterResponse(
+    val requiresVerification: Boolean = true,
+    val email: String = "",
+    val maskedEmail: String? = null,
+    /** otp | link: what the server actually sent (older servers: null, meaning a link). */
+    val verificationMethod: String? = null,
+    /** Lets this person switch between code and link and see whether the email went out. */
+    val verificationTicket: String? = null,
+)
+
+/** Where a verification email stands. Only the ticket holder sees this, and never the address in full. */
+@Serializable
+data class VerificationStatus(
+    val emailVerified: Boolean = false,
+    val maskedEmail: String = "",
+    val otpAvailable: Boolean = true,
+    /** otp | link | null (nothing sent yet) */
+    val method: String? = null,
+    val active: Boolean = false,
+    val expiresAt: String? = null,
+    val attemptsLeft: Int? = null,
+    val delivery: DeliveryInfo? = null,
+    val retryAfterSeconds: Int = 0,
+)
+
+/** sending | accepted | delivered | bounced | rejected | failed */
+@Serializable
+data class DeliveryInfo(val status: String = "sending", val updatedAt: String? = null)
+
+/** A correct reset code is exchanged for a short-lived reset token; the new password is then set as usual. */
+@Serializable
+data class ResetOtpResponse(val resetToken: String = "", val expiresInMinutes: Int = 10)
 
 @Serializable
 data class MessageResponse(
@@ -170,6 +200,8 @@ data class MessageResponse(
     val retryAfterSeconds: Int = 0,
     val expiresInMinutes: Int? = null,
     val expiresInHours: Int? = null,
+    /** otp | link for verification and reset requests. */
+    val method: String? = null,
 )
 
 @Serializable
@@ -540,6 +572,57 @@ data class ServiceSummary(val id: String, val name: String, val description: Str
 
 @Serializable
 data class ThreadSummary(val id: String, val kind: String, val name: String, val closed: Boolean = false, val lastMessageAt: String? = null, val unread: Int = 0, val studentName: String? = null, val assigned: Boolean = false)
+
+@Serializable
+data class ConversationItem(
+    val id: String,
+    val type: String = "channel",
+    val category: String = "all",
+    val kind: String = "general",
+    val title: String,
+    val subtitle: String? = null,
+    val preview: String? = null,
+    val lastActivityAt: String? = null,
+    val unread: Int = 0,
+    val online: Boolean? = null,
+    val status: String? = null,
+    val priority: String? = null,
+    val locked: Boolean = false,
+    val lockedReason: String? = null,
+    val readOnly: Boolean? = false,
+    val needsResponse: Boolean = false,
+    val pinned: Boolean = false,
+    val archived: Boolean = false,
+    val muted: Boolean = false,
+    val markedUnread: Boolean = false,
+)
+
+@Serializable
+data class ConversationListResponse(
+    val items: List<ConversationItem> = emptyList(),
+)
+
+@Serializable
+data class AnnouncementItem(
+    val id: String,
+    val title: String,
+    val body: String,
+    val category: String = "general",
+    val priority: String = "normal",
+    val authorName: String? = null,
+    val authorRole: String? = null,
+    val publishedAt: String? = null,
+    val createdAt: String? = null,
+    val read: Boolean = false,
+    val pinned: Boolean = false,
+)
+
+@Serializable
+data class AnnouncementListResponse(
+    val items: List<AnnouncementItem> = emptyList(),
+    val total: Int = 0,
+    val canPublish: Boolean = false,
+)
 
 @Serializable
 data class ChatOverview(
@@ -1089,5 +1172,29 @@ data class MapReportItem(
     val description: String,
     val status: String,
     val resolutionNote: String? = null,
+    val createdAt: String? = null,
+)
+
+
+@Serializable
+data class IdentityVerificationStatusResponse(
+    val hasSubmitted: Boolean = false,
+    val verificationStatus: String = "pending",
+    val accountStatus: String = "pending_verification",
+    val emailVerified: Boolean = false,
+    val evidence: EvidenceSummary? = null,
+)
+
+@Serializable
+data class EvidenceSummary(
+    val id: String = "",
+    val evidenceType: String = "id_card",
+    val identifier: String = "",
+    val requestedRole: String = "",
+    val department: String? = null,
+    val campus: String? = null,
+    val status: String = "pending",
+    val initialRecommendation: String? = null,
+    val initialReviewNotes: String? = null,
     val createdAt: String? = null,
 )

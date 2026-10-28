@@ -122,14 +122,14 @@ fun CounsellorHomeScreen() {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (requests.isNotEmpty()) {
                     SectionHeader("New requests (${requests.size})")
-                    requests.forEach { CounsellorAppointmentRow(it) }
+                    requests.forEachIndexed { i, a -> Column(Modifier.enterStagger(i)) { CounsellorAppointmentRow(a) } }
                 }
                 SectionHeader("Today")
                 if (today.isEmpty()) CcCard { Text("No sessions today.", style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft) }
-                today.forEach { CounsellorAppointmentRow(it) }
+                today.forEachIndexed { i, a -> Column(Modifier.enterStagger(requests.size + i)) { CounsellorAppointmentRow(a) } }
                 if (later.isNotEmpty()) {
                     SectionHeader("Coming up", action = "All sessions", onAction = { nav.navigate(Routes.CounsellorAppointments) })
-                    later.take(5).forEach { CounsellorAppointmentRow(it) }
+                    later.take(5).forEachIndexed { i, a -> Column(Modifier.enterStagger(requests.size + today.size + i)) { CounsellorAppointmentRow(a) } }
                 }
             }
         }

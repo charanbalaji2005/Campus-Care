@@ -6,6 +6,11 @@ export function randomToken(bytes = 32): string {
   return crypto.randomBytes(bytes).toString('base64url');
 }
 
+/** Uniformly random numeric code from the CSPRNG (crypto.randomInt has no modulo bias). */
+export function randomDigits(length = 6): string {
+  return crypto.randomInt(0, 10 ** length).toString().padStart(length, '0');
+}
+
 export function sha256(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex');
 }

@@ -26,3 +26,6 @@ apps/android/app/google-services.json
 apps/android/.idea/
 *.apk
 *.aab
+
+release-apks/
+*.apk

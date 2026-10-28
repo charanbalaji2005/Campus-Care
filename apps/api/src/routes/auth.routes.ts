@@ -2,18 +2,21 @@ import { Router } from 'express';
 import {
   PRIVILEGED_ROLES, parseAppAudience, type AppAudience, googleIdTokenSchema, changePasswordSchema, forgotPasswordSchema, homePathFor, loginSchema, mfaChallengeSchema, mfaDisableSchema, mfaRecoverySchema, mfaVerifySchema,
   passwordSchema, profileUpdateSchema, reauthSchema, registerSchema, resendVerificationSchema, resetPasswordSchema, tokenSchema, totpCodeSchema, type Role,
+  resetOtpSchema, sendVerificationSchema, verificationTicketSchema, verifyEmailOtpSchema,
 } from '@campuscare/shared';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { AppError, asyncHandler, ok, parse } from '../lib/http';
 import { hashPassword, randomToken, sha256, verifyPassword } from '../lib/crypto';
-import { ExternalIdentity, InviteToken, Session, User, publicUser } from '../models/user';
+import { ExternalIdentity, InviteToken, Session, User, VerificationEvidence, publicUser } from '../models/user';
 import { RealtimeTicket } from '../models/platform';
 import {
   ACCOUNT_EMAIL_COOLDOWN_SECONDS, CSRF_COOKIE, checkEmailVerification, clearAuthCookies, consumeEmailVerification, consumePasswordReset, createSession,
   isDomainAllowed, issueEmailVerification, mfaRequiredFor, requestPasswordReset, resendEmailVerification, resetTokenState, revokeAllSessions, revokeSession, setCsrfCookie,
   verifyMfaCode, assertAppForUser, wrongAppError, wrongAppFor,
+  exchangeResetOtp, issueVerificationTicket, readVerificationTicket, sendVerificationForTicket, verificationStatus, verifyEmailWithOtp,
 } from '../services/auth.service';
+import { maskEmail } from '../services/email/email.service';
 import {
   consumeMfaChallenge, consumeRecoveryCode, createMfaChallenge, failMfaChallenge, loadMfaChallenge, mfaStatus, regenerateRecoveryCodes, removeTotp,
   startTotpEnrollment, verifyTotpEnrollment,
@@ -23,13 +26,17 @@ import { buildGoogleAuthUrl, exchangeGoogleCode, getGoogleConfig, sealState, uns
 import { getSettings, publicSettings } from '../services/settings.service';
 import { emailReadiness, sendEmail } from '../services/email/email.service';
 import { requireAuth, requireRecentAuth } from '../middleware/auth';
-import { authLimiter, emailLimiter, mfaLimiter, requireTurnstile } from '../middleware/security';
+import { authLimiter, emailLimiter, mfaLimiter, requireTurnstile, upload } from '../middleware/security';
 import type { UserDoc } from '../models/user';
 import { env } from '../config/env';
 
 export const authRouter = Router();
 const GENERIC_RESET = 'If an account exists for that email, a password reset link is on its way. It can take a few minutes to arrive; check your spam folder too.';
 const GENERIC_RESEND = 'If that account still needs verification, a new verification link is on its way. It can take a few minutes to arrive; check your spam folder too.';
+// Super Admin accounts are sent a link even when a code is asked for, so the code messages say so without naming anyone.
+const GENERIC_RESET_CODE = 'If an account exists for that email, a password reset code is on its way (protected administrator accounts receive a reset link instead). It can take a few minutes to arrive; check your spam folder too.';
+const GENERIC_RESEND_CODE = 'If that account still needs verification, a new verification code is on its way. It can take a few minutes to arrive; check your spam folder too.';
+const GENERIC_BAD_CODE = 'That code is incorrect or has expired. Check the newest email, or request a new code.';
 
 async function withGenericTiming<T>(work: () => Promise<T>): Promise<T> {
   const floor = new Promise((resolve) => setTimeout(resolve, env.AUTH_GENERIC_RESPONSE_MS));
@@ -113,12 +120,179 @@ authRouter.post(
       academicYear: input.academicYear,
       phone: input.phone || null,
     });
-    if (s.registration.requireEmailVerification) await issueEmailVerification(user);
-    await audit({ action: 'auth.registered', actorId: String(user._id), actorRole: 'student', targetType: 'user', targetId: String(user._id), req });
-    ok(res, { requiresVerification: s.registration.requireEmailVerification, email: user.email }, 201);
+    const verificationMethod = s.registration.requireEmailVerification ? await issueEmailVerification(user, input.verificationMethod) : null;
+    await audit({ action: 'auth.registered', actorId: String(user._id), actorRole: 'student', targetType: 'user', targetId: String(user._id), req, meta: { verificationMethod } });
+    ok(res, {
+      requiresVerification: s.registration.requireEmailVerification,
+      email: user.email,
+      maskedEmail: maskEmail(user.email),
+      verificationMethod,
+      // Lets this person switch between code and link and see whether the email went out.
+      ...(verificationMethod ? { verificationTicket: issueVerificationTicket(String(user._id)) } : {}),
+    }, 201);
   }),
 );
 
+
+// ------------------------------------------------------------------ staff registration
+const registerStaffSchema = z.object({
+  fullName: z.string().trim().min(2).max(120),
+  email: z.string().trim().toLowerCase().email().max(254),
+  password: z.string().min(8).max(128),
+  requestedRole: z.enum(['counsellor', 'security_officer', 'admin', 'committee_member', 'moderator']),
+  staffId: z.string().trim().min(2).max(40),
+  department: z.string().trim().min(2).max(100),
+  designation: z.string().trim().min(2).max(100).optional(),
+  campus: z.string().trim().min(2).max(50).default('main'),
+  phone: z.string().trim().max(30).optional(),
+  verificationMethod: z.enum(['link', 'otp']).default('link'),
+});
+
+authRouter.post(
+  '/register-staff',
+  authLimiter,
+  requireTurnstile('register'),
+  asyncHandler(async (req, res) => {
+    const s = await getSettings();
+    const input = parse(registerStaffSchema, req.body);
+    if (input.password.length < s.security.passwordMinLength) {
+      throw new AppError(422, 'validation_failed', 'Password too short.', { fields: { password: `Use at least ${s.security.passwordMinLength} characters` } });
+    }
+    if (!(await isDomainAllowed(input.email, 'staff'))) {
+      throw new AppError(422, 'validation_failed', 'Use your official university email address.', { fields: { email: 'Staff registration is limited to approved university email domains.' } });
+    }
+    const dupEmail = await User.exists({ email: input.email });
+    const dupStaff = await User.exists({ staffId: input.staffId.toUpperCase() });
+    if (dupEmail || dupStaff) {
+      await audit({ action: 'auth.register_staff_duplicate', req, outcome: 'denied' });
+      throw new AppError(409, 'account_exists', 'An account with these details already exists. Try signing in or resetting your password.', {
+        fields: { ...(dupEmail ? { email: 'Already registered' } : {}), ...(dupStaff ? { staffId: 'Already registered' } : {}) },
+      });
+    }
+    const user = await User.create({
+      fullName: input.fullName,
+      email: input.email,
+      passwordHash: await hashPassword(input.password),
+      role: input.requestedRole,
+      accountStatus: 'pending_verification',
+      emailVerified: false,
+      staffId: input.staffId.toUpperCase(),
+      department: input.department,
+      designation: input.designation ?? null,
+      campusZone: input.campus,
+      phone: input.phone || null,
+      verificationStatus: 'pending',
+    });
+    const verificationMethod = await issueEmailVerification(user, input.verificationMethod);
+    await audit({ action: 'auth.staff_registered', actorId: String(user._id), actorRole: input.requestedRole, targetType: 'user', targetId: String(user._id), req, meta: { requestedRole: input.requestedRole, verificationMethod } });
+    ok(res, {
+      requiresVerification: true,
+      email: user.email,
+      maskedEmail: maskEmail(user.email),
+      verificationMethod,
+      verificationTicket: issueVerificationTicket(String(user._id)),
+    }, 201);
+  }),
+);
+
+// ------------------------------------------------------------------ identity verification evidence
+authRouter.post(
+  '/verification-evidence',
+  requireAuth,
+  upload.single('file'),
+  asyncHandler(async (req, res) => {
+    const file = req.file;
+    let buffer: Buffer;
+    let mime: string;
+    let size: number;
+    if (file) {
+      buffer = file.buffer;
+      mime = file.mimetype;
+      size = file.size;
+    } else if (req.body?.data && typeof req.body.data === 'string') {
+      const base64Data = req.body.data.replace(/^data:image\/\w+;base64,/, '');
+      buffer = Buffer.from(base64Data, 'base64');
+      mime = req.body.mime || 'image/jpeg';
+      size = buffer.length;
+    } else {
+      throw new AppError(400, 'bad_request', 'Choose a verification document or photo to upload.');
+    }
+    if (size > 10 * 1024 * 1024) throw new AppError(413, 'payload_too_large', 'The verification image must be under 10 MB.');
+    if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(mime)) {
+      throw new AppError(415, 'unsupported_media_type', 'Please upload a JPEG, PNG, WEBP photo or PDF document.');
+    }
+
+    const user = req.user!;
+    const evidenceType = ['id_card', 'selfie', 'document'].includes(req.body.evidenceType) ? req.body.evidenceType : 'id_card';
+    const applicantName = req.body.applicantName || user.fullName;
+    const identifier = (req.body.identifier || user.studentId || user.staffId || '').toUpperCase();
+    const requestedRole = req.body.requestedRole || user.role;
+    const department = req.body.department || user.department || null;
+    const campus = req.body.campus || user.campusZone || 'main';
+
+    const evidence = await VerificationEvidence.create({
+      userId: user._id,
+      applicantName,
+      identifier,
+      requestedRole,
+      department,
+      campus,
+      evidenceType,
+      mime,
+      data: buffer,
+      fileSize: size,
+      status: 'pending',
+      consentGiven: true,
+      consentTimestamp: new Date(),
+    });
+
+    user.verificationStatus = 'pending';
+    await user.save();
+
+    await audit({
+      action: 'user.verification_evidence_uploaded',
+      req,
+      targetType: 'verification_evidence',
+      targetId: String(evidence._id),
+      meta: { evidenceType, requestedRole, identifier },
+    });
+
+    ok(res, {
+      id: String(evidence._id),
+      status: 'submitted',
+      evidenceType,
+      message: 'Identity verification evidence uploaded successfully. An authorized administrator will review your application.',
+    }, 201);
+  }),
+);
+
+authRouter.get(
+  '/verification-evidence/status',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = req.user!;
+    const evidence = await VerificationEvidence.findOne({ userId: user._id }).sort({ createdAt: -1 }).lean();
+    ok(res, {
+      hasSubmitted: Boolean(evidence),
+      verificationStatus: user.verificationStatus ?? 'pending',
+      accountStatus: user.accountStatus,
+      emailVerified: user.emailVerified,
+      evidence: evidence ? {
+        id: String(evidence._id),
+        evidenceType: evidence.evidenceType,
+        identifier: evidence.identifier,
+        requestedRole: evidence.requestedRole,
+        department: evidence.department,
+        campus: evidence.campus,
+        status: evidence.status,
+        submittedAt: evidence.createdAt,
+        reviewedAt: evidence.reviewedAt,
+        reviewNotes: evidence.reviewNotes,
+        rejectionReason: evidence.rejectionReason,
+      } : null,
+    });
+  }),
+);
 /**
  * Read-only status of a verification link for the landing screen (valid / expired / invalid / already_verified).
  * Opening the link never verifies anything: only the explicit POST /verify-email below consumes the token,
@@ -151,12 +325,86 @@ authRouter.post(
   emailLimiter,
   requireTurnstile('resendVerification'),
   asyncHandler(async (req, res) => {
-    const { email } = parse(resendVerificationSchema, req.body);
+    const { email, method } = parse(resendVerificationSchema, req.body);
     await requireEmailReady();
     // Per-account cooldown and hourly cap are applied inside; the answer is the same in every case.
-    const outcome = await withGenericTiming(() => resendEmailVerification(email));
-    await audit({ action: 'auth.verification_resend_requested', req, meta: { outcome } });
-    ok(res, { message: GENERIC_RESEND, retryAfterSeconds: ACCOUNT_EMAIL_COOLDOWN_SECONDS, expiresInHours: env.EMAIL_VERIFICATION_TTL_HOURS });
+    const outcome = await withGenericTiming(() => resendEmailVerification(email, method));
+    await audit({ action: 'auth.verification_resend_requested', req, meta: { outcome, method } });
+    ok(res, {
+      message: method === 'otp' ? GENERIC_RESEND_CODE : GENERIC_RESEND,
+      method,
+      retryAfterSeconds: ACCOUNT_EMAIL_COOLDOWN_SECONDS,
+      expiresInHours: env.EMAIL_VERIFICATION_TTL_HOURS,
+      ...(method === 'otp' ? { expiresInMinutes: env.EMAIL_OTP_TTL_MINUTES } : {}),
+    });
+  }),
+);
+
+/**
+ * Verifies an email address with the 6-digit code. Without a matching verification ticket every failure
+ * gets the same answer, so the endpoint says nothing about whether an address is registered. With one
+ * (the person who registered or signed in), the answer says what went wrong. No session is created.
+ */
+authRouter.post(
+  '/verify-email/otp',
+  authLimiter,
+  asyncHandler(async (req, res) => {
+    const input = parse(verifyEmailOtpSchema, req.body);
+    const r = await withGenericTiming(() => verifyEmailWithOtp(input.email, input.code));
+    if (r.user) {
+      await audit({
+        action: r.result === 'verified' ? 'auth.email_verified' : 'auth.email_otp_failed', actorId: String(r.user._id), targetType: 'user', targetId: String(r.user._id),
+        outcome: r.result === 'verified' ? 'success' : 'denied', req, meta: { method: 'otp', result: r.result },
+      });
+    }
+    if (r.result === 'verified') return ok(res, { result: 'verified' });
+    const ticketUser = readVerificationTicket(input.ticket);
+    if (ticketUser && r.user && String(r.user._id) === ticketUser) {
+      if (r.result === 'already_verified') return ok(res, { result: 'already_verified' });
+      if (r.result === 'expired') throw new AppError(410, 'expired_code', 'Code expired. Request a new one.');
+      if (r.result === 'locked') throw new AppError(429, 'too_many_attempts', 'Too many incorrect codes. Request a new code to try again.');
+      if (r.result === 'invalid') {
+        throw new AppError(400, 'invalid_code', `That code is incorrect. ${r.attemptsLeft} ${r.attemptsLeft === 1 ? 'attempt' : 'attempts'} left.`, { attemptsLeft: r.attemptsLeft });
+      }
+      throw new AppError(400, 'no_active_code', 'There is no active code for this account. Request a new one.');
+    }
+    throw new AppError(400, 'invalid_code', GENERIC_BAD_CODE);
+  }),
+);
+
+function ticketUserOrThrow(ticket: string) {
+  const userId = readVerificationTicket(ticket);
+  if (!userId) throw new AppError(401, 'invalid_ticket', 'This verification screen has expired. Sign in again to get a new code or link.');
+  return userId;
+}
+
+/** Verification state for the person holding a ticket: method, masked address, delivery status and resend wait. */
+authRouter.post(
+  '/verification/status',
+  authLimiter,
+  asyncHandler(async (req, res) => {
+    const { ticket } = parse(verificationTicketSchema, req.body);
+    const status = await verificationStatus(ticketUserOrThrow(ticket));
+    if (!status) throw new AppError(401, 'invalid_ticket', 'This verification screen has expired. Sign in again to get a new code or link.');
+    ok(res, status);
+  }),
+);
+
+/** Sends a new verification code or link to a ticket holder (switching method supersedes the old one). */
+authRouter.post(
+  '/verification/send',
+  emailLimiter,
+  asyncHandler(async (req, res) => {
+    const { ticket, method } = parse(sendVerificationSchema, req.body);
+    const userId = ticketUserOrThrow(ticket);
+    await requireEmailReady();
+    const outcome = await sendVerificationForTicket(userId, method);
+    await audit({ action: 'auth.verification_resend_requested', actorId: userId, req, meta: { outcome: typeof outcome === 'string' ? outcome : 'throttled', method, via: 'ticket' } });
+    if (typeof outcome === 'object') {
+      throw new AppError(429, 'resend_cooldown', `Please wait ${outcome.wait} seconds before requesting another email.`, { retryAfterSeconds: outcome.wait });
+    }
+    if (outcome === 'not_eligible') throw new AppError(409, 'not_eligible', 'This account cannot be verified by email. Contact the university support office.');
+    ok(res, await verificationStatus(userId));
   }),
 );
 
@@ -191,7 +439,10 @@ authRouter.post(
     }
     if (user.accountStatus === 'suspended') return fail('account_suspended', 'This account has been suspended. Contact the university support office.');
     if (user.accountStatus === 'pending_verification' || !user.emailVerified) {
-      throw new AppError(403, 'email_not_verified', 'Verify your email before signing in. We can send you a new link.');
+      // The password was right, so this person may choose how to verify and see whether the email went out.
+      throw new AppError(403, 'email_not_verified', 'Verify your email before signing in. We can send you a new code or link.', {
+        verificationTicket: issueVerificationTicket(String(user._id)), maskedEmail: maskEmail(user.email),
+      });
     }
     if (user.accountStatus === 'invited') return fail('invite_pending', 'Accept your invitation email to activate this account.');
     // Super Admins may also use the app as a counsellor; everyone else uses only the app.
@@ -329,12 +580,37 @@ authRouter.post(
   emailLimiter,
   requireTurnstile('forgotPassword'),
   asyncHandler(async (req, res) => {
-    const { email } = parse(forgotPasswordSchema, req.body);
+    const { email, method } = parse(forgotPasswordSchema, req.body);
     await requireEmailReady();
-    const outcome = await withGenericTiming(() => requestPasswordReset(email));
-    await audit({ action: 'auth.password_reset_requested', req, meta: { outcome } });
+    const outcome = await withGenericTiming(() => requestPasswordReset(email, { method }));
+    await audit({ action: 'auth.password_reset_requested', req, meta: { outcome, method } });
     // Identical response whether or not the account exists (and whether or not it was rate limited).
-    ok(res, { message: GENERIC_RESET, retryAfterSeconds: ACCOUNT_EMAIL_COOLDOWN_SECONDS, expiresInMinutes: env.PASSWORD_RESET_TTL_MINUTES });
+    ok(res, {
+      message: method === 'otp' ? GENERIC_RESET_CODE : GENERIC_RESET,
+      method,
+      retryAfterSeconds: ACCOUNT_EMAIL_COOLDOWN_SECONDS,
+      expiresInMinutes: method === 'otp' ? env.EMAIL_OTP_TTL_MINUTES : env.PASSWORD_RESET_TTL_MINUTES,
+    });
+  }),
+);
+
+/**
+ * Step 2 of a code reset: a correct code is exchanged for a short-lived, single-use reset token, which
+ * POST /reset-password then uses with the new password. Nobody is signed in. Every failure (wrong,
+ * expired or used code, unknown address, Super Admin account) gets the same answer.
+ */
+authRouter.post(
+  '/reset-password/otp',
+  authLimiter,
+  asyncHandler(async (req, res) => {
+    const { email, code } = parse(resetOtpSchema, req.body);
+    const exchanged = await withGenericTiming(() => exchangeResetOtp(email, code));
+    if (!exchanged) {
+      await audit({ action: 'auth.password_reset_code_failed', outcome: 'denied', req });
+      throw new AppError(400, 'invalid_code', GENERIC_BAD_CODE);
+    }
+    await audit({ action: 'auth.password_reset_code_verified', actorId: String(exchanged.user._id), targetType: 'user', targetId: String(exchanged.user._id), req });
+    ok(res, { resetToken: exchanged.token, expiresInMinutes: 10 });
   }),
 );
 
@@ -406,13 +682,12 @@ authRouter.patch(
     const u = req.user!;
     const isStudent = u.role === 'student';
     const before: Record<string, unknown> = {
-      fullName: u.fullName, phone: u.phone, preferredLanguage: u.preferredLanguage, department: u.department, program: u.program,
+      fullName: u.fullName, phone: u.phone, department: u.department, program: u.program,
       academicYear: u.academicYear, section: u.section, hostel: u.hostel, designation: u.designation,
       qualifications: u.qualifications, experienceYears: u.experienceYears, studentId: u.studentId,
     };
     if (input.fullName) u.fullName = input.fullName;
     if (input.phone !== undefined) u.phone = input.phone || null;
-    if (input.preferredLanguage) u.preferredLanguage = input.preferredLanguage;
     // Fields that don't belong to the caller's role are ignored rather than stored.
     if (isStudent) {
       if (input.department) u.department = input.department;

@@ -1,5 +1,13 @@
 package edu.srmap.campuscare.ui.screens.student
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.material3.Icon
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.semantics.stateDescription
+import edu.srmap.campuscare.ui.components.Expandable
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -332,13 +340,17 @@ fun HelpScreen() {
         SectionHeader("Frequently Asked Questions")
         faqs.forEachIndexed { i, (q, a) ->
             var expanded by rememberSaveable { mutableStateOf(i == 0) }
-            CcCard(Modifier.enterStagger(i), onClick = { expanded = !expanded }) {
+            val chevron by animateFloatAsState(if (expanded) 180f else 0f, label = "faqChevron")
+            CcCard(Modifier.enterStagger(i).semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }, onClick = { expanded = !expanded }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconBadge(Icons.AutoMirrored.Rounded.HelpOutline, Tone.Sky, size = 34.dp, iconSize = 18.dp)
                     Spacer(Modifier.width(10.dp))
                     Text(q, style = MaterialTheme.typography.titleSmall, color = CcColors.Ink, modifier = Modifier.weight(1f))
+                    Icon(Icons.Rounded.ExpandMore, contentDescription = null, tint = CcColors.InkSoft, modifier = Modifier.rotate(chevron))
                 }
-                if (expanded) Text(a, style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft, modifier = Modifier.padding(top = 8.dp))
+                Expandable(expanded) {
+                    Text(a, style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft, modifier = Modifier.padding(top = 8.dp))
+                }
             }
         }
         SectionHeader("Safety tools & Support")

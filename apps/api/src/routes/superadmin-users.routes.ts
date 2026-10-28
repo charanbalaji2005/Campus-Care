@@ -7,7 +7,7 @@ import {
 } from '@campuscare/shared';
 import { AppError, asyncHandler, escapeRegex, notFound, ok, pageParams, parse } from '../lib/http';
 import { randomToken, sha256 } from '../lib/crypto';
-import { InviteToken, Session, User, publicUser, type UserDoc } from '../models/user';
+import { InviteToken, Session, User, VerificationEvidence, publicUser, type UserDoc } from '../models/user';
 import { Committee, Incident } from '../models/incident';
 import { ResponderAvailability, DutyStatusEvent, ResponseZone } from '../models/duty';
 import { ChannelPublisher } from '../models/feed';
@@ -1072,12 +1072,19 @@ superAdminUsersRouter.post(
   }),
 );
 
-// ------------------------------------------------------------------ 18. Verification Queue with Duplicate ID Detection
+// ------------------------------------------------------------------ 18. Verification Queue (Students & Staff) with Evidence
 superAdminUsersRouter.get(
   '/verifications/queue',
   asyncHandler(async (req, res) => {
     const { page, limit, skip } = pageParams(req.query);
-    const filter: Record<string, unknown> = { role: 'student' };
+    const filter: Record<string, unknown> = {};
+
+    if (req.query.role && req.query.role !== 'all') {
+      filter.role = req.query.role;
+    }
+    if (req.query.campus && req.query.campus !== 'all') {
+      filter.campusZone = req.query.campus;
+    }
 
     if (req.query.status && STUDENT_VERIFICATION_STATUSES.includes(req.query.status as StudentVerificationStatus)) {
       filter.verificationStatus = req.query.status;
@@ -1092,6 +1099,7 @@ superAdminUsersRouter.get(
         { fullName: { $regex: regex, $options: 'i' } },
         { email: { $regex: regex, $options: 'i' } },
         { studentId: { $regex: regex, $options: 'i' } },
+        { staffId: { $regex: regex, $options: 'i' } },
         { department: { $regex: regex, $options: 'i' } },
       ];
     }
@@ -1101,7 +1109,6 @@ superAdminUsersRouter.get(
       User.countDocuments(filter),
     ]);
 
-    // Check duplicate student IDs
     const studentIds = items.map((u) => u.studentId).filter((id): id is string => Boolean(id));
     const duplicates = await User.aggregate([
       { $match: { studentId: { $in: studentIds } } },
@@ -1110,15 +1117,146 @@ superAdminUsersRouter.get(
     ]);
     const duplicateIds = new Set(duplicates.map((d) => d._id));
 
+    const uids = items.map((u) => u._id);
+    const evidences = await VerificationEvidence.find({ userId: { $in: uids } }).sort({ createdAt: -1 }).lean();
+    const evMap = new Map<string, any>();
+    for (const ev of evidences) {
+      const key = String(ev.userId);
+      if (!evMap.has(key)) evMap.set(key, ev);
+    }
+
     ok(res, {
-      items: items.map((u) => ({
-        ...publicUser(u),
-        isDuplicateStudentId: u.studentId ? duplicateIds.has(u.studentId) : false,
-      })),
+      items: items.map((u) => {
+        const ev = evMap.get(String(u._id));
+        return {
+          ...publicUser(u),
+          isDuplicateStudentId: u.studentId ? duplicateIds.has(u.studentId) : false,
+          evidence: ev ? {
+            id: String(ev._id),
+            evidenceType: ev.evidenceType,
+            identifier: ev.identifier,
+            requestedRole: ev.requestedRole,
+            campus: ev.campus,
+            department: ev.department,
+            mime: ev.mime,
+            size: ev.size,
+            status: ev.status,
+            consentGiven: ev.consentGiven,
+            consentTimestamp: ev.consentTimestamp,
+            initialRecommendation: ev.initialRecommendation ?? null,
+            initialReviewNotes: ev.initialReviewNotes ?? null,
+            initialReviewedAt: ev.initialReviewedAt ?? null,
+            createdAt: ev.createdAt,
+          } : null,
+        };
+      }),
       total,
       page,
       limit,
       pages: Math.ceil(total / limit) || 1,
+    });
+  }),
+);
+
+// ------------------------------------------------------------------ 18b. Stream Verification Evidence Image (Reviewers Only)
+superAdminUsersRouter.get(
+  '/verifications/evidence/:id/file',
+  asyncHandler(async (req, res) => {
+    const evId = checkObjectId(req.params.id);
+    const ev = await VerificationEvidence.findById(evId).select('+data');
+    if (!ev || !ev.data) throw notFound('Verification evidence file not found.');
+    res.setHeader('Content-Type', ev.mime || 'image/jpeg');
+    res.setHeader('Content-Length', ev.data.length);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Disposition', `inline; filename="verification-${ev.evidenceType}-${ev._id}.jpg"`);
+    return res.end(ev.data);
+  }),
+);
+
+// ------------------------------------------------------------------ 18c. Verification Evidence Final Decision (Super Admin)
+superAdminUsersRouter.post(
+  '/verifications/evidence/:id/decision',
+  requireRecentAuth,
+  asyncHandler(async (req, res) => {
+    const evId = checkObjectId(req.params.id);
+    const ev = await VerificationEvidence.findById(evId);
+    if (!ev) throw notFound('Verification evidence not found.');
+
+    const target = await User.findById(ev.userId);
+    if (!target) throw notFound('Applicant account not found.');
+
+    const input = parse(studentVerificationDecisionSchema, req.body);
+    const beforeStatus = target.verificationStatus ?? 'pending';
+
+    if (input.status === 'approved') ev.status = 'verified';
+    else if (input.status === 'needs_info') ev.status = 'more_info_required';
+    else if (input.status === 'rejected') ev.status = 'rejected';
+    else if (input.status === 'under_review') ev.status = 'under_review';
+    else ev.status = 'pending';
+    ev.reviewedBy = req.user!._id;
+    ev.reviewedAt = new Date();
+    ev.reviewNotes = input.notes ?? null;
+    ev.rejectionReason = input.reason ?? input.notes ?? null;
+    await ev.save();
+
+    target.verificationStatus = input.status;
+    target.verificationReviewedAt = new Date();
+    target.verificationReviewedBy = req.user!._id;
+    target.verificationReason = input.reason ?? null;
+    target.verificationNotes = input.notes ?? null;
+
+    if (input.status === 'approved') {
+      if (target.emailVerified) {
+        target.accountStatus = 'active';
+      }
+      if (target.role === 'counsellor') {
+        target.counsellorApproved = true;
+        target.counsellorApprovedAt = new Date();
+      }
+      await sendEmail('security_alert', target.email, {
+        name: target.fullName,
+        message: 'Your institutional identity verification has been reviewed and approved. Your account is now active.',
+      }).catch(() => {});
+    } else if (input.status === 'rejected') {
+      target.accountStatus = 'suspended';
+      target.suspendedReason = input.notes || input.reason || 'Verification rejected by administrator';
+      await sendEmail('security_alert', target.email, {
+        name: target.fullName,
+        message: `Your institutional identity verification was rejected. Reason: ${input.notes || input.reason || 'Unable to verify credentials'}.`,
+      }).catch(() => {});
+    } else if (input.status === 'needs_info') {
+      await sendEmail('security_alert', target.email, {
+        name: target.fullName,
+        message: `Additional institutional verification details are required for your account. Notes: ${input.notes || 'Please resubmit your verification evidence'}.`,
+      }).catch(() => {});
+    }
+
+    await target.save();
+
+    await audit({
+      action: 'user.verification_decided',
+      req,
+      targetType: 'user',
+      targetId: String(target._id),
+      reason: input.reason ?? null,
+      meta: {
+        evidenceId: String(ev._id),
+        evidenceType: ev.evidenceType,
+        before: beforeStatus,
+        after: input.status,
+        role: target.role,
+        notes: input.notes ?? null,
+      },
+    });
+
+    ok(res, {
+      user: publicUser(target),
+      evidence: {
+        id: String(ev._id),
+        status: ev.status,
+        reviewedAt: ev.reviewedAt,
+        reviewNotes: ev.reviewNotes,
+      },
     });
   }),
 );

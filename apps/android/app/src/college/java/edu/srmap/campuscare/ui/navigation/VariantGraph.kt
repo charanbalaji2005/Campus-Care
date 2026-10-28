@@ -2,6 +2,7 @@ package edu.srmap.campuscare.ui.navigation
 
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
+import edu.srmap.campuscare.ui.screens.college.CollegeHomeScreen
 import edu.srmap.campuscare.ui.screens.common.CaseScreen
 import edu.srmap.campuscare.ui.screens.community.ChannelComposeScreen
 import edu.srmap.campuscare.ui.screens.community.ChannelDashboardScreen
@@ -29,9 +30,10 @@ import edu.srmap.campuscare.ui.screens.staff.ResponderLocationsScreen
 /**
  * CampusCare College: the staff screens. Which of them a person sees is decided by their role
  * (home destination and bottom bar per role), and every action is authorised again by the API.
- * Student-only screens (SOS raising, own reports, booking…) lead to a page pointing to CampusCare Student.
+ * Student-only screens (SOS raising, own reports, booking) lead to a page pointing to CampusCare Student.
  */
 internal fun NavGraphBuilder.variantGraph() {
+    composable(Routes.Home) { CollegeHomeScreen() }
     composable(Routes.CounsellorHome) { CounsellorHomeScreen() }
     composable(Routes.CounsellorAppointments) { CounsellorAppointmentsScreen() }
     composable(Routes.Appointment, arguments = listOf(reqArg("id"))) { AppointmentScreen(it.argOf("id")) }

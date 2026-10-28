@@ -1,3 +1,4 @@
+import { User } from '../models/user';
 import type { NextFunction, Request, Response } from 'express';
 import { hasPermission, parseAppAudience, type Permission, type Role } from '@campuscare/shared';
 import { AppError, forbidden, unauthorized } from '../lib/http';
@@ -43,10 +44,32 @@ export async function loadSession(req: Request, res: Response, next: NextFunctio
   }
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (req.wrongApp) return next(wrongAppError(req.wrongApp, 401));
   if (!req.user || !req.authSession) return next(new AppError(401, 'session_expired', 'Your session has expired. Please sign in again.'));
-  if (req.user.accountStatus !== 'active') return next(new AppError(403, 'account_inactive', 'Your account is not active. Verify your email or contact support.'));
+
+  // Automatic expiration of temporary suspension
+  if (req.user.accountStatus === 'suspended') {
+    if (req.user.suspendedUntil && new Date() >= req.user.suspendedUntil) {
+      req.user.accountStatus = 'active';
+      req.user.suspendedUntil = null;
+      req.user.suspendedReason = null;
+      await User.updateOne({ _id: req.user._id }, { $set: { accountStatus: 'active', suspendedUntil: null, suspendedReason: null } });
+      void audit({ action: 'user.suspension_expired', req, targetType: 'user', targetId: String(req.user._id) });
+    } else {
+      const untilMsg = req.user.suspendedUntil ? ` until ${req.user.suspendedUntil.toISOString()}` : '';
+      const reasonMsg = req.user.suspendedReason ? `. Reason: ${req.user.suspendedReason}` : '';
+      return next(new AppError(403, 'account_suspended', `Your account has been suspended${untilMsg}${reasonMsg}. Contact administration.`));
+    }
+  }
+
+  if (req.user.accountStatus !== 'active') {
+    const isVerificationEndpoint = req.path.includes('/verification-evidence') || req.path.includes('/me') || req.path.includes('/auth/status');
+    if (!isVerificationEndpoint) {
+      return next(new AppError(403, 'account_inactive', 'Your account is not active. Complete verification to continue.'));
+    }
+  }
+
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');

@@ -82,6 +82,8 @@ const schema = z.object({
   PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().min(15).max(30).default(30),
   /** Email verification links: single use, valid for this many hours (1-72). */
   EMAIL_VERIFICATION_TTL_HOURS: z.coerce.number().int().min(1).max(72).default(24),
+  /** One-time email codes (verification and password recovery): valid for this many minutes (5-30). */
+  EMAIL_OTP_TTL_MINUTES: z.coerce.number().int().min(5).max(30).default(10),
   /**
    * Forgot-password / resend-verification always take at least this long, so response timing does not
    * reveal whether an account exists (the work for a real account is a few database writes).

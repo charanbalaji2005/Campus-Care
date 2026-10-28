@@ -7,12 +7,12 @@ import { toast } from 'sonner';
 import {
   Bell, Camera, FileClock, History, KeyRound, Lock, LogOut, Monitor, ShieldAlert, ShieldCheck, Smartphone, Trash2, UserCog,
 } from 'lucide-react';
-import { PROFILE_LANGUAGES, ROLE_LABELS, profileUpdateSchema } from '@campuscare/shared';
+import { ROLE_LABELS, profileUpdateSchema } from '@campuscare/shared';
 import { api, ApiError } from '@/lib/api';
 import { useApi, useMe } from '@/lib/hooks';
 import { useForm } from '@/lib/form';
 import { formatDateTime, humanize, timeAgo } from '@/lib/utils';
-import { Alert, Avatar, Badge, Button, Card, CardHeader, Field, Input, PageHeader, Select, Skeleton } from '@/components/ui/primitives';
+import { Alert, Avatar, Badge, Button, Card, CardHeader, Field, Input, PageHeader, Skeleton } from '@/components/ui/primitives';
 
 interface Activity { action: string; at: string; outcome?: string | null; targetType?: string | null }
 interface ProfileOverview {
@@ -23,7 +23,7 @@ interface SessionRow { id: string; current: boolean; createdAt: string; lastSeen
 type Prefs = Record<string, { inApp: boolean; email: boolean; push: boolean }>;
 interface ProfileUser {
   id: string; fullName: string; email: string; emailVerified: boolean; role: keyof typeof ROLE_LABELS; accountStatus: string; phone: string | null;
-  staffId?: string | null; designation?: string | null; preferredLanguage?: string | null; avatarUpdatedAt?: string | null; mfaEnabled: boolean;
+  staffId?: string | null; designation?: string | null; avatarUpdatedAt?: string | null; mfaEnabled: boolean;
 }
 
 const PREF_LABELS: Record<string, string> = {
@@ -300,7 +300,7 @@ function ProfileHeader({ user, account, onChanged }: { user: ProfileUser; accoun
 }
 
 function PersonalInfo({ user, onSaved }: { user: ProfileUser; onSaved: () => void }) {
-  const initial = { fullName: user.fullName, phone: user.phone ?? '', designation: user.designation ?? '', preferredLanguage: (user.preferredLanguage ?? 'English') as (typeof PROFILE_LANGUAGES)[number] };
+  const initial = { fullName: user.fullName, phone: user.phone ?? '', designation: user.designation ?? '' };
   const form = useForm(profileUpdateSchema, initial);
   const [editing, setEditing] = React.useState(false);
 
@@ -336,9 +336,6 @@ function PersonalInfo({ user, onSaved }: { user: ProfileUser; onSaved: () => voi
             <Field id="fullName" label="Full name" error={form.errors.fullName} required><Input {...form.bind('fullName')} id="fullName" autoComplete="name" /></Field>
             <Field id="phone" label="Phone" error={form.errors.phone} hint="Optional. Used by the control room to reach you."><Input {...form.bind('phone')} id="phone" type="tel" autoComplete="tel" /></Field>
             <Field id="designation" label="Designation" error={form.errors.designation}><Input {...form.bind('designation')} id="designation" placeholder="e.g. Director, Student Welfare" /></Field>
-            <Field id="preferredLanguage" label="Preferred language" error={form.errors.preferredLanguage}>
-              <Select {...form.bind('preferredLanguage')} id="preferredLanguage">{PROFILE_LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}</Select>
-            </Field>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={cancel}>Cancel</Button>
               <Button type="submit" loading={form.submitting}>Save changes</Button>
@@ -349,7 +346,6 @@ function PersonalInfo({ user, onSaved }: { user: ProfileUser; onSaved: () => voi
             <Detail label="Full name" value={user.fullName} />
             <Detail label="Phone" value={user.phone} />
             <Detail label="Designation" value={user.designation} />
-            <Detail label="Preferred language" value={user.preferredLanguage ?? 'English'} />
           </div>
         )}
       </div>

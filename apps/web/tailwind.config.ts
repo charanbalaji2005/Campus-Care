@@ -28,8 +28,9 @@ const config: Config = {
       },
       keyframes: {
         pulseRing: { '0%': { transform: 'scale(0.9)', opacity: '0.7' }, '100%': { transform: 'scale(1.6)', opacity: '0' } },
+        stepIn: { '0%': { transform: 'translateY(8px)', opacity: '0' }, '100%': { transform: 'translateY(0)', opacity: '1' } },
       },
-      animation: { 'pulse-ring': 'pulseRing 1.8s ease-out infinite' },
+      animation: { 'pulse-ring': 'pulseRing 1.8s ease-out infinite', 'step-in': 'stepIn 260ms ease-out' },
     },
   },
   plugins: [],

@@ -119,6 +119,7 @@ These emails carry single-use links. Configure them with the variables below (AP
 | `WEB_ORIGIN` | `http://localhost:3000` | Public origin used to build every link (`/verify-email?token=…`, `/reset-password?token=…`). It must be `https://` in production (the API refuses to start otherwise) and must be the same host the Android app was built with (`campuscare.webUrl`), so App Links open the app. |
 | `PASSWORD_RESET_TTL_MINUTES` | `30` | Reset link lifetime, 15–30 minutes. |
 | `EMAIL_VERIFICATION_TTL_HOURS` | `24` | Verification link lifetime, 1–72 hours. |
+| `EMAIL_OTP_TTL_MINUTES` | `10` | Lifetime of the 6-digit email codes (verification and password reset), 5–30 minutes. |
 | `AUTH_GENERIC_RESPONSE_MS` | `400` | Minimum response time of forgot-password and resend-verification, so timing does not reveal whether an account exists. |
 
 There is no separate `APP_PUBLIC_URL`: the website at `WEB_ORIGIN` is both the App Link host and the fallback page when the app is not installed.
@@ -133,6 +134,32 @@ How the flows behave:
 - **When email cannot be sent**, these endpoints return `503 email_unavailable` and the screens show an error, never "sent". This happens when no provider is usable (console in production, or a mail service without credentials) or when the last 3 delivery attempts in the past 10 minutes all failed. The check looks only at the mail service, never at the requested account, so it does not reveal whether an address is registered. It clears by itself after the next successful delivery (queued emails keep retrying) or after 10 minutes. Registration that needs verification is refused in the same way, so no account gets stuck waiting for an email that cannot be sent. Watch **Super Admin → Email → Delivery log** for failures.
 - **After a password reset** every session and pending sign-in is ended, other reset links stop working, and a "password changed" email (without the password) is sent. Nobody is signed in automatically: the person signs in again, and two-step verification still applies. The reset link also counts as proof of the email address, so a pending account becomes verified.
 - `GET /api/v1/auth/verification-status` returns the signed-in account's own verification state.
+
+**Code (OTP) or link.** Students and staff choose how to verify their email and how to reset a password: a
+6-digit code typed into the app or website, or the link described above. The same email service, limits and
+generic answers apply to both.
+
+- Codes come from the CSPRNG (`crypto.randomInt`). Only an HMAC of the code (keyed with `SESSION_SECRET` and bound
+  to the account and purpose) is stored. Codes never appear in logs, API responses, URLs or the delivery log,
+  and the queued email job's copy is wiped once it is sent or given up.
+- A code works once, expires after `EMAIL_OTP_TTL_MINUTES`, and is burned after 5 wrong guesses (attempts are
+  reserved atomically, so parallel guesses cannot exceed 5). Asking for a new code or link ends the previous
+  one, whichever kind it was. Links and codes share the per-account limits (one a minute, 5 an hour).
+- **Verification:** `POST /auth/register` takes `verificationMethod: otp | link` (older clients: link) and returns a
+  signed, 24-hour `verificationTicket`. So does a sign-in with the right password to an unverified account
+  (`email_not_verified` error details). The ticket lets that person call `POST /auth/verification/status` (masked
+  address, method, delivery status, resend wait) and `POST /auth/verification/send` (new code or link). The code is
+  checked by `POST /auth/verify-email/otp`; without a matching ticket every failure gets the same answer. Queuing
+  an email never verifies anything, and no session is created.
+- **Password reset:** `POST /auth/forgot-password` takes `method: otp | link`. `POST /auth/reset-password/otp` exchanges
+  a correct code for a 10-minute single-use reset token (same generic error for every failure), which
+  `POST /auth/reset-password` then uses with the new password. The password rules, session revocation, "password
+  changed" email and "no automatic sign-in" are the same as for links.
+- **Super Admin accounts never get a code.** A code requested for one is answered with the usual reset or
+  verification link instead (the public answer does not say so), and `/reset-password/otp` refuses them.
+- Delivery status shown to a ticket holder is `sending`, `accepted` (handed to the mail service: not proof of
+  delivery), `delivered` (only if the provider reports it), `bounced`, `rejected` or `failed`. Super Admin → Email
+  diagnostics lists code emails next to link emails.
 
 **Local development.** With `EMAIL_PROVIDER=console`, open the newest file in `apps/api/.dev-mail/` and copy the link into a browser. Debug builds of the app use `http://10.0.2.2:3000` as the web URL, and App Links need HTTPS, so in development open links in the browser, or send one to the emulator: `adb shell am start -a android.intent.action.VIEW -d "campuscare://open?link=/verify-email?token=<token>"`.
 

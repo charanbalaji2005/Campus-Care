@@ -421,7 +421,34 @@ export async function listConversations(user: UserDoc, opts: { category: ChatCat
   const { category } = opts;
   const view = opts.view ?? (category === 'archived' ? 'archived' : category === 'unread' ? 'unread' : undefined);
   if (category === 'counselling') return finish(await counsellingRequests(user), view, opts.q);
-  if (category === 'announcements' || category === 'reports') return [];
+  if (category === 'announcements') return [];
+  if (category === 'reports') {
+    const scope = reportScopeFilter(user);
+    if (!scope) return [];
+    const incidents = await Incident.find(scope).sort({ updatedAt: -1 }).limit(100).lean();
+    const items: ConversationItem[] = incidents.map((i) => ({
+      type: 'report',
+      id: String(i._id),
+      category: 'reports',
+      kind: 'incident',
+      title: `${i.caseNumber} · ${i.title || i.category}`,
+      subtitle: `Status: ${i.status} · Priority: ${i.priority || 'standard'}`,
+      preview: i.description ? i.description.slice(0, 160) : null,
+      lastActivityAt: (i.updatedAt ?? i.createdAt) as Date,
+      unread: 0,
+      online: null,
+      status: i.status,
+      priority: (i.priority as string) ?? null,
+      locked: false,
+      readOnly: false,
+      needsResponse: ['submitted', 'in_review'].includes(i.status),
+      pinned: false,
+      archived: ['resolved', 'closed', 'rejected', 'withdrawn'].includes(i.status),
+      muted: false,
+      markedUnread: false,
+    }));
+    return finish(items, view, opts.q);
+  }
   if (category === 'bookings') return finish(await bookingItems(user, category), view, opts.q);
   if (category === 'security') return finish(await sosAlertItems(user, category), view, opts.q);
   if (category === 'notifications') return finish(await notificationDeliveryItems(user, category), view, opts.q);

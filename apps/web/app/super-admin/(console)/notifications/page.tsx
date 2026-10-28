@@ -3,8 +3,9 @@
 import * as React from 'react';
 import {
   Bell, BellRing, CheckCircle2, Clock, Filter, History, Megaphone, Radio,
-  Send, ShieldAlert, Smartphone, Sparkles, Users, AlertTriangle, Info
+  Send, ShieldAlert, Smartphone, Sparkles, Users, AlertTriangle, Info, ArrowLeft
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { Button, Badge, Alert, Card, Input } from '@/components/ui/primitives';
 import { toast } from 'sonner';
@@ -124,6 +125,7 @@ export default function NotificationsBroadcastPage() {
     <div className="space-y-6">
       {/* Page Header */}
       <div>
+        <BackButton />
         <h1 className="text-2xl font-bold tracking-tight text-ink-strong flex items-center gap-2">
           <BellRing className="h-6 w-6 text-brand-600" />
           Broadcast Notifications Hub
@@ -315,5 +317,19 @@ export default function NotificationsBroadcastPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Back to the previous console page, or to the dashboard when this page was opened directly. */
+function BackButton() {
+  const router = useRouter();
+  return (
+    <button
+      type="button"
+      onClick={() => (window.history.length > 1 ? router.back() : router.push('/super-admin/dashboard'))}
+      className="mb-2 inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-medium text-brand-700 hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+    >
+      <ArrowLeft className="h-4 w-4" aria-hidden /> Back
+    </button>
   );
 }

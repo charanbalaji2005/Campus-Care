@@ -97,7 +97,7 @@ export function EmailDiagnostics() {
                   return (
                     <tr key={d.id}>
                       <td className="whitespace-nowrap py-1.5 pr-3">{formatDateTime(d.createdAt)}</td>
-                      <td className="pr-3">{d.template === 'verify_email' ? 'Verification' : 'Password reset'}</td>
+                      <td className="pr-3">{d.template.startsWith('verify_email') ? 'Verification' : 'Password reset'}{d.template.endsWith('_code') ? ' (code)' : ' (link)'}</td>
                       <td className="pr-3 font-mono">{d.to}</td>
                       <td className="pr-3"><Badge tone={st.tone}>{st.label}</Badge>{d.attempts > 1 ? ` ×${d.attempts}` : ''}</td>
                       <td className={d.bounceReason || d.lastError ? 'text-rose-700' : 'text-ink-soft'}>{d.bounceReason ?? d.lastError ?? d.providerResponse ?? '—'}</td>

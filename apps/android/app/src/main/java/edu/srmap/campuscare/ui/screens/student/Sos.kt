@@ -113,6 +113,12 @@ import edu.srmap.campuscare.ui.components.Tone
 import edu.srmap.campuscare.ui.components.rememberLoad
 import edu.srmap.campuscare.ui.components.rememberLocationRequest
 import edu.srmap.campuscare.ui.components.rememberPulse
+import edu.srmap.campuscare.ui.components.rememberBump
+import edu.srmap.campuscare.ui.components.rememberTapGuard
+import edu.srmap.campuscare.ui.theme.LocalReducedMotion
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.ui.graphics.graphicsLayer
 import edu.srmap.campuscare.ui.navigation.Routes
 import edu.srmap.campuscare.ui.theme.CcColors
 import edu.srmap.campuscare.util.Fix
@@ -233,6 +239,9 @@ fun SosScreen() {
         }
     }
 
+    val reducedMotion = LocalReducedMotion.current
+    // One tap = one action: nervous double taps on Send / Retry / Start cannot queue a second request.
+    val tapGuard = rememberTapGuard(2000)
     val phase = when {
         startError != null -> SosPhase.Failed
         countdown == null -> SosPhase.Idle
@@ -291,7 +300,10 @@ fun SosScreen() {
 
         AnimatedContent(
             targetState = phase,
-            transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
+            transitionSpec = {
+                if (reducedMotion) fadeIn(tween(90)) togetherWith fadeOut(tween(60))
+                else (fadeIn(tween(240)) + scaleIn(tween(260), initialScale = 0.94f)) togetherWith (fadeOut(tween(160)) + scaleOut(tween(160), targetScale = 1.03f))
+            },
             label = "sos_phase",
         ) { p ->
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -318,6 +330,11 @@ fun SosScreen() {
                             CcButton(
                                 text = "Cancel Alert",
                                 onClick = {
+                                    // Cancel is never guarded: it must always work, however many times it is tapped.
+                                    val cur = SosCountdownStore.load(context)
+                                    if (cur != null && cur.active) {
+                                        SosCountdownStore.save(context, SosCountdownRules.cancel(cur, System.currentTimeMillis()))
+                                    }
                                     SosCountdownService.cancel(context)
                                     if (a11y.haptics) view.performHapticFeedback(HapticFeedbackConstants.REJECT)
                                 },
@@ -327,7 +344,12 @@ fun SosScreen() {
                             )
                             CcButton(
                                 text = "Send Now",
-                                onClick = { SosCountdownService.sendNow(context) },
+                                onClick = {
+                                    tapGuard.run {
+                                        if (a11y.haptics) view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                        SosCountdownService.sendNow(context)
+                                    }
+                                },
                                 modifier = Modifier.weight(0.9f).height(52.dp),
                                 kind = ButtonKind.Danger,
                                 leadingIcon = Icons.AutoMirrored.Rounded.Send,
@@ -348,7 +370,7 @@ fun SosScreen() {
                         }
                         CcButton(
                             text = "Start SOS Countdown",
-                            onClick = { startCountdown() },
+                            onClick = { tapGuard.run { startCountdown() } },
                             modifier = Modifier.fillMaxWidth(),
                             kind = ButtonKind.Danger,
                             leadingIcon = Icons.Rounded.RestartAlt,
@@ -423,7 +445,7 @@ fun SosScreen() {
                         ) {
                             CcButton(
                                 text = "Retry sending",
-                                onClick = { if (startError != null) startCountdown() else SosCountdownService.sendNow(context) },
+                                onClick = { tapGuard.run { if (startError != null) startCountdown() else SosCountdownService.sendNow(context) } },
                                 modifier = Modifier.weight(1f),
                                 kind = ButtonKind.Outline,
                             )
@@ -507,10 +529,13 @@ fun SosScreen() {
 
 @Composable
 private fun CountdownRing(secondsLeft: Int, total: Int) {
-    val sweep = remember { Animatable(1f) }
+    val reduced = LocalReducedMotion.current
+    val sweep = remember { Animatable(secondsLeft / total.toFloat().coerceAtLeast(1f)) }
     LaunchedEffect(secondsLeft) {
-        sweep.animateTo(secondsLeft / total.toFloat(), tween(180, easing = LinearEasing))
+        val target = secondsLeft / total.toFloat().coerceAtLeast(1f)
+        if (reduced) sweep.snapTo(target) else sweep.animateTo(target, tween(900, easing = LinearEasing))
     }
+    val tick = rememberBump(secondsLeft, peak = 1.14f)
     Box(
         Modifier.size(200.dp).semantics { contentDescription = "Emergency countdown: $secondsLeft seconds remaining" },
         contentAlignment = Alignment.Center,
@@ -531,7 +556,7 @@ private fun CountdownRing(secondsLeft: Int, total: Int) {
             )
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("$secondsLeft", fontSize = 68.sp, fontWeight = FontWeight.Black, color = CcColors.Sos)
+            Text("$secondsLeft", fontSize = 68.sp, fontWeight = FontWeight.Black, color = CcColors.Sos, modifier = Modifier.graphicsLayer { scaleX = tick; scaleY = tick })
             Text("SECONDS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = CcColors.InkSoft)
         }
     }

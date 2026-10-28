@@ -1,14 +1,14 @@
 import type { Request, Response } from 'express';
 import { env } from '../config/env';
-import { hmac, randomToken, sha256 } from '../lib/crypto';
+import { hmac, randomDigits, randomToken, safeEqual, sha256 } from '../lib/crypto';
 import {
-  EmailVerificationToken, PasswordResetToken, Session, User, type SessionDoc, type UserDoc,
+  EmailOtp, EmailVerificationToken, PasswordResetToken, Session, User, type SessionDoc, type UserDoc,
 } from '../models/user';
-import { isAllowedAccountEmail, ACCOUNT_EMAIL_DOMAIN, APP_NAMES, appAudienceForRole, type AppAudience, type Role } from '@campuscare/shared';
+import { isAllowedAccountEmail, ACCOUNT_EMAIL_DOMAIN, APP_NAMES, appAudienceForRole, type AppAudience, type EmailChallengeMethod, type Role } from '@campuscare/shared';
 import { AppError } from '../lib/http';
-import { EmailDomain } from '../models/platform';
+import { EmailDelivery, EmailDomain } from '../models/platform';
 import { getSettings } from './settings.service';
-import { accountLink, appLink, sendEmail } from './email/email.service';
+import { accountLink, appLink, maskEmail, sendEmail } from './email/email.service';
 import { disconnectUser } from '../realtime/socket';
 import { DeviceRegistration } from '../models/mobile';
 import { MfaChallenge } from '../models/mfa';
@@ -22,6 +22,7 @@ export const MOBILE_APP_HEADER = 'x-campuscare-app';
 export const CSRF_COOKIE = 'cc_csrf';
 const VERIFY_TTL_MS = env.EMAIL_VERIFICATION_TTL_HOURS * 3600 * 1000;
 const RESET_TTL_MS = env.PASSWORD_RESET_TTL_MINUTES * 60 * 1000;
+const OTP_TTL_MS = env.EMAIL_OTP_TTL_MINUTES * 60 * 1000;
 
 
 function cookieBase() {
@@ -193,14 +194,161 @@ const ACCOUNT_EMAIL_MAX_PER_HOUR = 5;
 /** What happened to a request for an account email. Never shown to the caller (responses stay generic). */
 export type AccountEmailOutcome = 'queued' | 'throttled' | 'not_eligible';
 
-async function accountEmailThrottled(kind: 'verify' | 'reset', userId: unknown): Promise<boolean> {
+/** Seconds until this account may be sent another verification (or reset) email; 0 = now. Links and codes count together. */
+export async function accountEmailWait(kind: 'verify' | 'reset', userId: unknown): Promise<number> {
   const filter = { userId, createdAt: { $gt: new Date(Date.now() - 3600_000) } };
-  const recent = kind === 'verify'
-    ? await EmailVerificationToken.find(filter).sort({ createdAt: -1 }).limit(ACCOUNT_EMAIL_MAX_PER_HOUR).select('createdAt').lean()
-    : await PasswordResetToken.find(filter).sort({ createdAt: -1 }).limit(ACCOUNT_EMAIL_MAX_PER_HOUR).select('createdAt').lean();
-  if (recent.length >= ACCOUNT_EMAIL_MAX_PER_HOUR) return true;
-  const last = recent[0]?.createdAt as Date | undefined;
-  return Boolean(last && Date.now() - last.getTime() < ACCOUNT_EMAIL_COOLDOWN_SECONDS * 1000);
+  const opts = { sort: { createdAt: -1 as const }, limit: ACCOUNT_EMAIL_MAX_PER_HOUR };
+  const [links, codes] = await Promise.all([
+    kind === 'verify'
+      ? EmailVerificationToken.find(filter, 'createdAt', opts).lean()
+      : PasswordResetToken.find({ ...filter, via: { $ne: 'otp' } }, 'createdAt', opts).lean(),
+    EmailOtp.find({ ...filter, purpose: kind === 'verify' ? 'verify_email' : 'password_reset' }, 'createdAt', opts).lean(),
+  ]);
+  const times = [...links, ...codes].map((d) => (d.createdAt as Date).getTime()).sort((a, b) => b - a);
+  const now = Date.now();
+  if (times.length >= ACCOUNT_EMAIL_MAX_PER_HOUR) return Math.max(1, Math.ceil((times[ACCOUNT_EMAIL_MAX_PER_HOUR - 1]! + 3600_000 - now) / 1000));
+  const last = times[0];
+  return last ? Math.max(0, Math.ceil((last + ACCOUNT_EMAIL_COOLDOWN_SECONDS * 1000 - now) / 1000)) : 0;
+}
+
+async function accountEmailThrottled(kind: 'verify' | 'reset', userId: unknown): Promise<boolean> {
+  return (await accountEmailWait(kind, userId)) > 0;
+}
+
+// ------------------------------------------------------------------ one-time email codes (OTP)
+export type OtpPurpose = 'verify_email' | 'password_reset';
+/** Wrong guesses allowed per code before it is burned (a new code must be requested). */
+export const OTP_MAX_ATTEMPTS = 5;
+/** Lifetime of the reset token handed out for a correct reset code: just long enough to type a new password. */
+const OTP_EXCHANGE_TTL_MS = 10 * 60_000;
+
+/**
+ * Codes are for students and staff. Super Admin accounts never get one: their recovery stays link-only
+ * (plus MFA at the next sign-in), and a request for a code is answered with a link instead.
+ */
+export function otpAllowedFor(user: { role: string }): boolean {
+  return user.role !== 'super_admin';
+}
+
+/** Keyed hash of a code, bound to the account and purpose. The code itself is never stored or logged. */
+function otpHash(purpose: OtpPurpose, userId: string, code: string) {
+  return hmac(env.SESSION_SECRET, `email-otp:${purpose}:${userId}:${code}`);
+}
+
+/** Ends every outstanding code and link for this purpose, so only the newest credential works. */
+async function endOutstandingChallenges(userId: unknown, purpose: OtpPurpose, reason = 'superseded') {
+  const now = new Date();
+  await EmailOtp.updateMany({ userId, purpose, consumedAt: null }, { $set: { consumedAt: now, endedReason: reason } });
+  if (purpose === 'verify_email') await EmailVerificationToken.updateMany({ userId, consumedAt: null }, { $set: { consumedAt: now } });
+  else await PasswordResetToken.updateMany({ userId, consumedAt: null }, { $set: { consumedAt: now } });
+}
+
+async function issueEmailOtp(user: UserDoc, purpose: OtpPurpose) {
+  await endOutstandingChallenges(user._id, purpose);
+  const code = randomDigits(6);
+  const otp = await EmailOtp.create({
+    userId: user._id, email: user.email, purpose, codeHash: otpHash(purpose, String(user._id), code), expiresAt: new Date(Date.now() + OTP_TTL_MS),
+  });
+  // The code travels only in the queued email job (its payload is wiped once sent or given up) and the email.
+  const delivery = await sendEmail(purpose === 'verify_email' ? 'verify_email_code' : 'password_reset_code', user.email, {
+    name: user.fullName, code, expiresIn: `${env.EMAIL_OTP_TTL_MINUTES} minutes`,
+  });
+  if (delivery) await EmailOtp.updateOne({ _id: otp._id }, { $set: { deliveryId: delivery._id } });
+  return otp;
+}
+
+export type OtpCheck =
+  | { result: 'ok'; email: string }
+  | { result: 'invalid'; attemptsLeft: number }
+  | { result: 'expired' | 'locked' | 'none' };
+
+/**
+ * Checks a code against the newest one for this account and purpose. Every check first reserves an
+ * attempt atomically, so even parallel guesses cannot exceed OTP_MAX_ATTEMPTS; the matching check then
+ * claims the code (single use). After the last wrong guess the code is burned.
+ */
+async function checkEmailOtp(userId: unknown, purpose: OtpPurpose, code: string): Promise<OtpCheck> {
+  const now = new Date();
+  const latest = await EmailOtp.findOne({ userId, purpose }).sort({ createdAt: -1 }).lean();
+  if (!latest) return { result: 'none' };
+  if (latest.consumedAt) return { result: latest.endedReason === 'too_many_attempts' ? 'locked' : 'none' };
+  if (latest.expiresAt <= now) return { result: 'expired' };
+  const reserved = await EmailOtp.findOneAndUpdate(
+    { _id: latest._id, consumedAt: null, expiresAt: { $gt: now }, attempts: { $lt: OTP_MAX_ATTEMPTS } },
+    { $inc: { attempts: 1 } },
+    { new: true },
+  );
+  if (!reserved) return { result: 'locked' };
+  if (safeEqual(otpHash(purpose, String(userId), code), reserved.codeHash)) {
+    const claimed = await EmailOtp.findOneAndUpdate({ _id: reserved._id, consumedAt: null }, { $set: { consumedAt: new Date(), endedReason: 'used' } }, { new: true });
+    return claimed ? { result: 'ok', email: claimed.email } : { result: 'none' };
+  }
+  if (reserved.attempts >= OTP_MAX_ATTEMPTS) {
+    await EmailOtp.updateOne({ _id: reserved._id, consumedAt: null }, { $set: { consumedAt: new Date(), endedReason: 'too_many_attempts' } });
+    return { result: 'locked' };
+  }
+  return { result: 'invalid', attemptsLeft: OTP_MAX_ATTEMPTS - reserved.attempts };
+}
+
+// ------------------------------------------------------------------ verification tickets
+const TICKET_TTL_MS = 24 * 3600_000;
+
+/**
+ * Signed handle for the person who just created an account (or signed in with the right password to an
+ * unverified one). It lets that person choose a code or a link and see whether the email was sent,
+ * without the API answering such questions for an arbitrary address.
+ */
+export function issueVerificationTicket(userId: string): string {
+  const body = `${userId}.${(Date.now() + TICKET_TTL_MS).toString(36)}`;
+  return `vt1.${body}.${hmac(env.SESSION_SECRET, `verify-ticket:${body}`)}`;
+}
+
+export function readVerificationTicket(ticket: string | null | undefined): string | null {
+  const parts = (ticket ?? '').split('.');
+  if (parts.length !== 4 || parts[0] !== 'vt1' || !/^[a-f0-9]{24}$/.test(parts[1]!)) return null;
+  const body = `${parts[1]}.${parts[2]}`;
+  if (!safeEqual(parts[3]!, hmac(env.SESSION_SECRET, `verify-ticket:${body}`))) return null;
+  if (!(parseInt(parts[2]!, 36) > Date.now())) return null;
+  return parts[1]!;
+}
+
+/** Delivery states shown to the person: never "delivered" unless the provider reported delivery. */
+export type PublicDeliveryStatus = 'sending' | 'accepted' | 'delivered' | 'bounced' | 'rejected' | 'failed';
+export function publicDeliveryStatus(status: string): PublicDeliveryStatus {
+  switch (status) {
+    case 'queued': case 'sending': return 'sending';
+    case 'accepted_by_provider': case 'sent': return 'accepted';
+    case 'delivered': return 'delivered';
+    case 'bounced': return 'bounced';
+    case 'rejected': return 'rejected';
+    default: return 'failed';
+  }
+}
+
+/** Verification state for a ticket holder: method in use, whether the email went out, and the resend wait. */
+export async function verificationStatus(userId: string) {
+  const user = await User.findById(userId);
+  if (!user) return null;
+  const [link, code] = await Promise.all([
+    EmailVerificationToken.findOne({ userId }).sort({ createdAt: -1 }).lean(),
+    EmailOtp.findOne({ userId, purpose: 'verify_email' }).sort({ createdAt: -1 }).lean(),
+  ]);
+  const useCode = Boolean(code && (!link || (code.createdAt as Date) >= (link.createdAt as Date)));
+  const latest = useCode ? code : link;
+  const delivery = latest?.deliveryId ? await EmailDelivery.findById(latest.deliveryId).select('status updatedAt').lean() : null;
+  const now = new Date();
+  const method: EmailChallengeMethod | null = latest ? (useCode ? 'otp' : 'link') : null;
+  return {
+    emailVerified: Boolean(user.emailVerified),
+    maskedEmail: maskEmail(user.email),
+    otpAvailable: otpAllowedFor(user),
+    method,
+    active: Boolean(latest && !latest.consumedAt && latest.expiresAt > now),
+    expiresAt: latest && !latest.consumedAt ? latest.expiresAt : null,
+    attemptsLeft: useCode && code && !code.consumedAt ? Math.max(0, OTP_MAX_ATTEMPTS - (code.attempts ?? 0)) : null,
+    delivery: delivery ? { status: publicDeliveryStatus(delivery.status), updatedAt: delivery.updatedAt } : null,
+    retryAfterSeconds: user.emailVerified ? 0 : await accountEmailWait('verify', user._id),
+  };
 }
 
 // ------------------------------------------------------------------ email verification
@@ -208,25 +356,66 @@ async function accountEmailThrottled(kind: 'verify' | 'reset', userId: unknown):
  * Issues a fresh single-use verification link (only its SHA-256 hash is stored) and supersedes older ones.
  * The link carries the token only: no email address or other personal data in the URL.
  */
-export async function issueEmailVerification(user: UserDoc) {
-  await EmailVerificationToken.updateMany({ userId: user._id, consumedAt: null }, { $set: { consumedAt: new Date() } });
+export async function issueEmailVerification(user: UserDoc, method: EmailChallengeMethod = 'link'): Promise<EmailChallengeMethod> {
+  if (method === 'otp' && otpAllowedFor(user)) {
+    await issueEmailOtp(user, 'verify_email');
+    return 'otp';
+  }
+  await endOutstandingChallenges(user._id, 'verify_email');
   const token = randomToken(32);
-  await EmailVerificationToken.create({ userId: user._id, email: user.email, tokenHash: sha256(token), expiresAt: new Date(Date.now() + VERIFY_TTL_MS) });
-  await sendEmail('verify_email', user.email, {
+  const doc = await EmailVerificationToken.create({ userId: user._id, email: user.email, tokenHash: sha256(token), expiresAt: new Date(Date.now() + VERIFY_TTL_MS) });
+  const delivery = await sendEmail('verify_email', user.email, {
     name: user.fullName,
     link: accountLink('/verify-email', token),
     expiresIn: `${env.EMAIL_VERIFICATION_TTL_HOURS} hours`,
   });
+  if (delivery) await EmailVerificationToken.updateOne({ _id: doc._id }, { $set: { deliveryId: delivery._id } });
+  return 'link';
+}
+
+function verificationEligible(user: UserDoc | null): user is UserDoc {
+  return Boolean(user && !user.emailVerified && (user.accountStatus === 'pending_verification' || user.accountStatus === 'active'));
 }
 
 /** Resend for a pending account, subject to the per-account cooldown and hourly cap. */
-export async function resendEmailVerification(email: string): Promise<AccountEmailOutcome> {
+export async function resendEmailVerification(email: string, method: EmailChallengeMethod = 'link'): Promise<AccountEmailOutcome> {
   const normalized = email.trim().toLowerCase();
   const user = await User.findOne({ email: normalized });
-  if (!user || user.emailVerified || (user.accountStatus !== 'pending_verification' && user.accountStatus !== 'active')) return 'not_eligible';
+  if (!verificationEligible(user)) return 'not_eligible';
   if (await accountEmailThrottled('verify', user._id)) return 'throttled';
-  await issueEmailVerification(user);
+  await issueEmailVerification(user, method);
   return 'queued';
+}
+
+/** Ticket-holder resend: the same limits, but the answer may say what happened (the holder knows the account exists). */
+export async function sendVerificationForTicket(userId: string, method: EmailChallengeMethod): Promise<'queued' | 'already_verified' | 'not_eligible' | { wait: number }> {
+  const user = await User.findById(userId);
+  if (user?.emailVerified) return 'already_verified';
+  if (!verificationEligible(user)) return 'not_eligible';
+  const wait = await accountEmailWait('verify', user._id);
+  if (wait > 0) return { wait };
+  await issueEmailVerification(user, method);
+  return 'queued';
+}
+
+export type OtpVerifyResult = 'verified' | 'already_verified' | 'invalid' | 'expired' | 'locked' | 'none';
+
+/** Verifies an email address with a code. Marks it verified only when the code matches; no session is created. */
+export async function verifyEmailWithOtp(email: string, code: string): Promise<{ result: OtpVerifyResult; attemptsLeft?: number; user?: UserDoc }> {
+  const user = await User.findOne({ email: email.trim().toLowerCase() });
+  if (!user || !otpAllowedFor(user)) return { result: 'none' };
+  if (user.emailVerified) return { result: 'already_verified', user };
+  const check = await checkEmailOtp(user._id, 'verify_email', code);
+  if (check.result !== 'ok') return { result: check.result, attemptsLeft: check.result === 'invalid' ? check.attemptsLeft : undefined, user };
+  if (check.email !== user.email) return { result: 'none', user }; // the address changed after the code was sent
+  // Conditional update: a concurrent link verification cannot make this run twice.
+  const updated = await User.findOneAndUpdate(
+    { _id: user._id, email: check.email, emailVerified: { $ne: true } },
+    { $set: { emailVerified: true, emailVerifiedAt: new Date(), ...(user.accountStatus === 'pending_verification' ? { accountStatus: 'active' } : {}) } },
+    { new: true },
+  );
+  await endOutstandingChallenges(user._id, 'verify_email', 'used');
+  return { result: updated ? 'verified' : 'already_verified', user: updated ?? user };
 }
 
 export type VerifyResult = 'verified' | 'expired' | 'invalid' | 'already_verified';
@@ -265,6 +454,7 @@ export async function consumeEmailVerification(token: string): Promise<{ result:
   user.emailVerifiedAt = new Date();
   if (user.accountStatus === 'pending_verification') user.accountStatus = 'active';
   await user.save();
+  await endOutstandingChallenges(user._id, 'verify_email', 'used');
   return { result: 'verified', user };
 }
 
@@ -272,21 +462,43 @@ export async function consumeEmailVerification(token: string): Promise<{ result:
 /** Accounts that may reset a password by email. Suspended, invited, deactivated and archived accounts may not. */
 const RESETTABLE_STATUSES = ['active', 'pending_verification'];
 
-export async function requestPasswordReset(email: string, opts: { ignoreAccountLimit?: boolean } = {}): Promise<AccountEmailOutcome> {
+export async function requestPasswordReset(email: string, opts: { ignoreAccountLimit?: boolean; method?: EmailChallengeMethod } = {}): Promise<AccountEmailOutcome> {
   const normalized = email.trim().toLowerCase();
   const user = await User.findOne({ email: normalized });
   // Only eligible accounts get an email, but the caller always returns the same generic response.
   if (!user || !RESETTABLE_STATUSES.includes(user.accountStatus)) return 'not_eligible';
   if (!opts.ignoreAccountLimit && (await accountEmailThrottled('reset', user._id))) return 'throttled';
-  await PasswordResetToken.updateMany({ userId: user._id, consumedAt: null }, { $set: { consumedAt: new Date() } });
+  if (opts.method === 'otp' && otpAllowedFor(user)) {
+    await issueEmailOtp(user, 'password_reset');
+    return 'queued';
+  }
+  // A link. Also what a Super Admin gets when a code is asked for: their recovery stays link-only.
+  await endOutstandingChallenges(user._id, 'password_reset');
   const token = randomToken(32); // 256 bits from crypto.randomBytes; only the SHA-256 hash is stored
-  await PasswordResetToken.create({ userId: user._id, email: user.email, tokenHash: sha256(token), expiresAt: new Date(Date.now() + RESET_TTL_MS) });
-  await sendEmail('password_reset', user.email, {
+  const doc = await PasswordResetToken.create({ userId: user._id, email: user.email, tokenHash: sha256(token), expiresAt: new Date(Date.now() + RESET_TTL_MS) });
+  const delivery = await sendEmail('password_reset', user.email, {
     name: user.fullName,
     link: accountLink('/reset-password', token),
     expiresIn: `${env.PASSWORD_RESET_TTL_MINUTES} minutes`,
   });
+  if (delivery) await PasswordResetToken.updateOne({ _id: doc._id }, { $set: { deliveryId: delivery._id } });
   return 'queued';
+}
+
+/**
+ * Exchanges a correct reset code for a short-lived, single-use reset token. The code only proves control
+ * of the inbox: it never signs anyone in. The new password is then set through the normal reset (same
+ * password rules, session revocation and "password changed" email). Returns null on any failure, so the
+ * caller can answer generically.
+ */
+export async function exchangeResetOtp(email: string, code: string): Promise<{ token: string; user: UserDoc } | null> {
+  const user = await User.findOne({ email: email.trim().toLowerCase() });
+  if (!user || !RESETTABLE_STATUSES.includes(user.accountStatus) || !otpAllowedFor(user)) return null;
+  const check = await checkEmailOtp(user._id, 'password_reset', code);
+  if (check.result !== 'ok' || check.email !== user.email) return null;
+  const token = randomToken(32);
+  await PasswordResetToken.create({ userId: user._id, email: user.email, tokenHash: sha256(token), expiresAt: new Date(Date.now() + OTP_EXCHANGE_TTL_MS), via: 'otp' });
+  return { token, user };
 }
 
 export type ResetTokenState = 'valid' | 'expired' | 'used' | 'invalid';
@@ -356,6 +568,7 @@ export async function consumePasswordReset(token: string, newHash: string): Prom
   }
   const now = new Date();
   await PasswordResetToken.updateMany({ userId: user._id, consumedAt: null }, { $set: { consumedAt: now } });
+  await EmailOtp.updateMany({ userId: user._id, purpose: 'password_reset', consumedAt: null }, { $set: { consumedAt: now, endedReason: 'superseded' } });
   await MfaChallenge.updateMany({ userId: user._id, consumedAt: null }, { $set: { consumedAt: now } });
   await revokeAllSessions(String(user._id));
   await sendEmail('password_changed', user.email, { name: user.fullName });

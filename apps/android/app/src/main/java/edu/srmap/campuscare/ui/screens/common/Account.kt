@@ -113,6 +113,12 @@ fun NotificationsScreen() {
     CcScreen(
         title = "Notifications",
         subtitle = page.data?.let { if (it.unread > 0) "${it.unread} unread" else "You're all caught up" },
+        // Back to where it was opened from; when it is the first screen (e.g. a staff "Alerts" tab or a
+        // notification tap), back goes to the role's home instead of leaving an empty screen.
+        onBack = {
+            if (nav.previousBackStackEntry != null) nav.popBackStack()
+            else nav.navigate(Routes.homeFor(user?.role ?: "")) { popUpTo(0) { inclusive = true } }
+        },
         refreshing = page.refreshing, onRefresh = { page.reload() },
         actions = {
             TextButton(onClick = {

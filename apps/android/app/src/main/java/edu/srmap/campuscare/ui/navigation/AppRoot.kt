@@ -5,7 +5,9 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import edu.srmap.campuscare.ui.theme.LocalReducedMotion
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -74,6 +76,8 @@ import edu.srmap.campuscare.ui.screens.auth.SplashScreen
 import edu.srmap.campuscare.ui.screens.auth.UpdateRequiredScreen
 import edu.srmap.campuscare.ui.screens.auth.VerifyEmailScreen
 import edu.srmap.campuscare.ui.screens.common.ChatScreen
+import edu.srmap.campuscare.ui.screens.common.ChatsCenterScreen
+import edu.srmap.campuscare.ui.screens.auth.IdentityVerificationScreen
 import edu.srmap.campuscare.ui.screens.common.EditProfileScreen
 import edu.srmap.campuscare.ui.screens.common.NotificationPrefsScreen
 import edu.srmap.campuscare.ui.screens.common.NotificationsScreen
@@ -107,7 +111,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /** Destinations that show the role's bottom navigation bar. */
 private val TOP_LEVEL = setOf(
-    Routes.Home, Routes.Support, Routes.Reports, Routes.Profile, Routes.Notifications,
+    Routes.Home, Routes.Counselling, Routes.Support, Routes.Chats, Routes.Reports, Routes.Profile, Routes.Notifications,
     Routes.CounsellorHome, Routes.CounsellorAppointments, Routes.Inbox,
     Routes.CommitteeCases, Routes.ResponderAlerts, Routes.ResponderLocations, Routes.ResponderCases,
     Routes.AdminHome, Routes.AdminTriage, Routes.Moderation,
@@ -244,13 +248,34 @@ fun AppRoot(container: AppContainer, pendingLink: String?, onLinkHandled: () -> 
                     }
                 }
                 Box(Modifier.weight(1f)) {
+                    val reducedMotion = LocalReducedMotion.current
                     NavHost(
                         navController = nav,
                         startDestination = Routes.Splash,
-                        enterTransition = { slideInHorizontally(tween(260)) { it / 8 } + fadeIn(tween(260)) },
-                        exitTransition = { fadeOut(tween(180)) },
-                        popEnterTransition = { fadeIn(tween(220)) },
-                        popExitTransition = { slideOutHorizontally(tween(240)) { it / 8 } + fadeOut(tween(200)) },
+                        // Tabs cross-fade (they are siblings); detail screens slide in from the side and back out.
+                        // With reduced motion every change is a short fade.
+                        enterTransition = {
+                            when {
+                                reducedMotion -> fadeIn(tween(120))
+                                initialState.destination.route in TOP_LEVEL && targetState.destination.route in TOP_LEVEL -> fadeIn(tween(220, delayMillis = 60))
+                                else -> slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 6 } + fadeIn(tween(240))
+                            }
+                        },
+                        exitTransition = {
+                            when {
+                                reducedMotion -> fadeOut(tween(90))
+                                initialState.destination.route in TOP_LEVEL && targetState.destination.route in TOP_LEVEL -> fadeOut(tween(120))
+                                else -> slideOutHorizontally(tween(280, easing = FastOutSlowInEasing)) { -it / 12 } + fadeOut(tween(200))
+                            }
+                        },
+                        popEnterTransition = {
+                            if (reducedMotion) fadeIn(tween(120))
+                            else slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { -it / 12 } + fadeIn(tween(240))
+                        },
+                        popExitTransition = {
+                            if (reducedMotion) fadeOut(tween(90))
+                            else slideOutHorizontally(tween(260, easing = FastOutSlowInEasing)) { it / 6 } + fadeOut(tween(200))
+                        },
                     ) { graph() }
                 }
                 val role = user?.role
@@ -283,8 +308,10 @@ private fun NavGraphBuilder.graph() {
     composable(Routes.Login) { LoginScreen() }
     composable(Routes.Register) { RegisterScreen() }
     composable(Routes.Forgot) { ForgotPasswordScreen() }
-    composable(Routes.Reset, arguments = listOf(opt("token"))) { ResetPasswordScreen(it.arg("token")) }
-    composable(Routes.Verify, arguments = listOf(opt("token"), opt("email"))) { VerifyEmailScreen(it.arg("token"), it.arg("email")) }
+    composable(Routes.Reset, arguments = listOf(opt("token"), opt("via"))) { ResetPasswordScreen(it.arg("token"), viaCode = it.arg("via") == "code") }
+    composable(Routes.Verify, arguments = listOf(opt("token"), opt("email"), opt("ticket"), opt("method"))) {
+        VerifyEmailScreen(it.arg("token"), it.arg("email"), ticket = it.arg("ticket"), method = it.arg("method"))
+    }
     composable(Routes.AcceptInvite, arguments = listOf(opt("token"))) { AcceptInviteScreen(it.arg("token")) }
     composable(Routes.Mfa) { MfaScreen() }
     composable(Routes.CompleteProfile) { CompleteProfileScreen() }
@@ -318,6 +345,9 @@ private fun NavGraphBuilder.graph() {
     composable(Routes.NotificationPrefs) { NotificationPrefsScreen() }
     composable(Routes.Security) { SecurityScreen() }
     composable(Routes.Chat, arguments = listOf(req("id"))) { ChatScreen(it.arg("id")) }
+    composable(Routes.Chats) { ChatsCenterScreen() }
+    composable(Routes.ChatsCategory, arguments = listOf(opt("category"))) { ChatsCenterScreen(it.arg("category").ifBlank { null }) }
+    composable(Routes.IdentityVerification) { IdentityVerificationScreen() }
 
     // CampusCare Student / CampusCare College: each app's own screens (src/student, src/college).
     variantGraph()

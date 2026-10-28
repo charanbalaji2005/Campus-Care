@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import {
@@ -6,7 +7,7 @@ import {
 } from '@campuscare/shared';
 import { AppError, asyncHandler, escapeRegex, notFound, ok, pageParams, parse } from '../lib/http';
 import { randomToken, sha256 } from '../lib/crypto';
-import { InviteToken, Session, User, publicUser } from '../models/user';
+import { InviteToken, Session, User, VerificationEvidence, publicUser } from '../models/user';
 import { Committee, Incident } from '../models/incident';
 import { Appointment } from '../models/counselling';
 import { Announcement, Contact, TrainingModule, TrainingProgress } from '../models/content';
@@ -133,7 +134,7 @@ adminRouter.get(
       filter.$or = [{ fullName: { $regex: q, $options: 'i' } }, { email: { $regex: q, $options: 'i' } }, { studentId: { $regex: q, $options: 'i' } }];
     }
     // Ordinary admins cannot see or manage super admin accounts.
-    if (req.user!.role !== 'super_admin') filter.role = filter.role && filter.role !== 'super_admin' ? filter.role : { $ne: 'super_admin' };
+    if (req.user!.role !== 'super_admin') { filter.role = filter.role && filter.role !== 'super_admin' ? filter.role : { $ne: 'super_admin' }; if (req.user!.campusZone) { filter.campusZone = req.user!.campusZone; } }
     const [items, total] = await Promise.all([User.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit), User.countDocuments(filter)]);
     ok(res, { items: items.map((u) => ({ ...publicUser(u), createdAt: u.createdAt, lastLoginAt: u.lastLoginAt, suspendedReason: u.suspendedReason })), total, page, limit });
   }),
@@ -643,3 +644,106 @@ adminRouter.post(
 adminRouter.get('/sessions/active-count', requirePermission('users:manage'), asyncHandler(async (_req, res) => {
   ok(res, { active: await Session.countDocuments({ revokedAt: null, expiresAt: { $gt: new Date() } }) });
 }));
+
+
+// ------------------------------------------------------------------ campus admin verifications
+adminRouter.get(
+  '/verifications/queue',
+  requirePermission('users:manage'),
+  asyncHandler(async (req, res) => {
+    const { page, limit, skip } = pageParams(req.query);
+    const campus = req.user!.campusZone || req.user!.managedCampuses?.[0] || 'main';
+    const filter: Record<string, unknown> = {
+      campusZone: campus,
+      verificationStatus: { $in: ['pending', 'under_review', 'needs_info'] },
+    };
+    if (req.query.role && req.query.role !== 'all') {
+      filter.role = req.query.role;
+    }
+    if (req.query.q) {
+      const q = escapeRegex(String(req.query.q).slice(0, 60));
+      filter.$or = [{ fullName: { $regex: q, $options: 'i' } }, { email: { $regex: q, $options: 'i' } }, { studentId: { $regex: q, $options: 'i' } }, { staffId: { $regex: q, $options: 'i' } }];
+    }
+    const [items, total] = await Promise.all([
+      User.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      User.countDocuments(filter),
+    ]);
+    const uids = items.map((u) => u._id);
+    const evidences = await VerificationEvidence.find({ userId: { $in: uids } }).sort({ createdAt: -1 }).lean();
+    const evMap = new Map<string, any>();
+    for (const ev of evidences) {
+      const key = String(ev.userId);
+      if (!evMap.has(key)) evMap.set(key, ev);
+    }
+    ok(res, {
+      items: items.map((u) => ({
+        ...publicUser(u),
+        evidence: evMap.get(String(u._id)) ? {
+          id: String(evMap.get(String(u._id))!._id),
+          evidenceType: evMap.get(String(u._id))!.evidenceType,
+          identifier: evMap.get(String(u._id))!.identifier,
+          requestedRole: evMap.get(String(u._id))!.requestedRole,
+          campus: evMap.get(String(u._id))!.campus,
+          department: evMap.get(String(u._id))!.department,
+          status: evMap.get(String(u._id))!.status,
+          initialRecommendation: evMap.get(String(u._id))!.initialRecommendation ?? null,
+          initialReviewNotes: evMap.get(String(u._id))!.initialReviewNotes ?? null,
+          createdAt: evMap.get(String(u._id))!.createdAt,
+        } : null,
+      })),
+      total,
+      page,
+      limit,
+      campus,
+    });
+  }),
+);
+
+adminRouter.post(
+  '/verifications/evidence/:id/initial-review',
+  requirePermission('users:manage'),
+  asyncHandler(async (req, res) => {
+    const ev = await VerificationEvidence.findById(req.params.id);
+    if (!ev) throw notFound('Verification evidence not found.');
+    const campus = req.user!.campusZone || req.user!.managedCampuses?.[0] || 'main';
+    if (req.user!.role !== 'super_admin' && ev.campus !== campus) {
+      throw new AppError(403, 'forbidden', 'You can only review applications for your assigned campus.');
+    }
+    const input = parse(z.object({
+      recommendation: z.enum(['recommend_approval', 'recommend_rejection', 'needs_info']),
+      notes: z.string().trim().min(3).max(1000),
+    }), req.body);
+    ev.initialReviewerId = req.user!._id;
+    ev.initialReviewedAt = new Date();
+    ev.initialReviewNotes = input.notes;
+    ev.initialRecommendation = input.recommendation;
+    ev.status = 'under_review';
+    await ev.save();
+    await User.updateOne({ _id: ev.userId }, { $set: { verificationStatus: 'under_review', verificationNotes: `[Campus Admin Note]: ${input.notes}` } });
+    await audit({
+      action: 'verification.campus_initial_review',
+      req,
+      targetType: 'verification_evidence',
+      targetId: String(ev._id),
+      meta: { campus: ev.campus, recommendation: input.recommendation, notes: input.notes },
+    });
+    ok(res, { ok: true, evidenceId: String(ev._id), recommendation: input.recommendation });
+  }),
+);
+
+adminRouter.get(
+  '/verifications/evidence/:id/file',
+  requirePermission('users:manage'),
+  asyncHandler(async (req, res) => {
+    const ev = await VerificationEvidence.findById(req.params.id).select('+data');
+    if (!ev || !ev.data) throw notFound('Verification evidence file not found.');
+    const campus = req.user!.campusZone || req.user!.managedCampuses?.[0] || 'main';
+    if (req.user!.role !== 'super_admin' && ev.campus !== campus) {
+      throw new AppError(403, 'forbidden', 'You can only access files for your assigned campus.');
+    }
+    res.setHeader('Content-Type', ev.mime || 'image/jpeg');
+    res.setHeader('Content-Length', ev.data.length);
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.end(ev.data);
+  }),
+);

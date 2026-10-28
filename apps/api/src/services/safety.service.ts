@@ -87,18 +87,18 @@ export function serializeAlert(a: EmergencyAlertDoc | Record<string, unknown>, f
 
 export interface RaiseSosInput {
   idempotencyKey: string;
-  latitude?: number;
-  longitude?: number;
-  accuracyMeters?: number;
-  locationUnavailableReason?: string;
-  note?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracyMeters?: number | null;
+  locationUnavailableReason?: string | null;
+  note?: string | null;
   notifyTrustedContacts?: boolean;
   countdownMode?: 'client' | 'server';
-  triggerSource?: string;
-  locationAgeSeconds?: number;
+  triggerSource?: string | null;
+  locationAgeSeconds?: number | null;
   batteryLevel?: number | null;
-  deviceInfo?: { appVersion?: string; osVersion?: string; model?: string };
-  isCachedFix?: boolean;
+  deviceInfo?: Record<string, unknown> | null;
+  isCachedFix?: boolean | null;
 }
 
 /**

@@ -121,27 +121,26 @@ d('role-based profile (integration)', () => {
 
   it('updates role fields, ignores other roles’ fields and never changes verified identifiers', async () => {
     const r = await student.patch('/api/v1/auth/me').send({
-      fullName: 'Asha Rao', program: 'B.Sc Physics', section: 'b2', preferredLanguage: 'Telugu',
+      fullName: 'Asha Rao', program: 'B.Sc Physics', section: 'b2', preferredLanguage: 'Telugu', // no longer a setting: ignored
       designation: 'Should be ignored', qualifications: 'Should be ignored',
       email: 'hijack@srmap.edu.in', role: 'super_admin', studentId: 'AP00000000000', staffId: 'X',
     });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const u = r.body.data.user;
-    expect(u).toMatchObject({ fullName: 'Asha Rao', program: 'B.Sc Physics', section: 'B2', preferredLanguage: 'Telugu', designation: null, qualifications: null });
+    expect(u).toMatchObject({ fullName: 'Asha Rao', program: 'B.Sc Physics', section: 'B2', designation: null, qualifications: null });
+    expect(u.preferredLanguage).toBeUndefined();
     expect(u).toMatchObject({ email: 'prof-student@srmap.edu.in', role: 'student', studentId: 'AP22110010042', staffId: null });
 
     // Field names (never values) are audited.
     const log = await M.AuditLog.findOne({ action: 'user.profile_updated', targetId: studentId }).sort({ at: -1 }).lean();
-    expect(log?.changedFields?.sort()).toEqual(['fullName', 'preferredLanguage', 'program', 'section']);
+    expect(log?.changedFields?.sort()).toEqual(['fullName', 'program', 'section']);
     expect(JSON.stringify(log)).not.toContain('B.Sc Physics');
   });
 
-  it('lets counsellors set professional details and rejects an unknown language', async () => {
+  it('lets counsellors set professional details', async () => {
     const ok = await counsellor.patch('/api/v1/auth/me').send({ designation: 'Senior Counsellor', qualifications: 'M.Phil Clinical Psychology', experienceYears: 7, program: 'ignored' });
     expect(ok.status).toBe(200);
     expect(ok.body.data.user).toMatchObject({ designation: 'Senior Counsellor', qualifications: 'M.Phil Clinical Psychology', experienceYears: 7, program: null });
-    const bad = await counsellor.patch('/api/v1/auth/me').send({ preferredLanguage: 'Klingon' });
-    expect(bad.status).toBe(422);
   });
 
   it('stores, serves and removes a profile photo, refusing non-images', async () => {

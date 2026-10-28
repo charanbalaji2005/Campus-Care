@@ -12,6 +12,7 @@ import edu.srmap.campuscare.ui.screens.student.CounsellorProfileScreen
 import edu.srmap.campuscare.ui.screens.student.FindCounsellorScreen
 import edu.srmap.campuscare.ui.screens.student.HomeScreen
 import edu.srmap.campuscare.ui.screens.student.ModuleScreen
+import edu.srmap.campuscare.ui.screens.common.ChatsCenterScreen
 import edu.srmap.campuscare.ui.screens.student.MyReportsScreen
 import edu.srmap.campuscare.ui.screens.student.QuickSosSetupScreen
 import edu.srmap.campuscare.ui.screens.student.ReportDetailScreen
@@ -34,7 +35,7 @@ internal fun NavGraphBuilder.variantGraph() {
     composable(Routes.QuickSos) { QuickSosSetupScreen() }
     composable(Routes.SosStatus, arguments = listOf(reqArg("id"))) { SosStatusScreen(it.argOf("id")) }
     composable(Routes.Report, arguments = listOf(optArg("category"))) { ReportIncidentScreen(it.argOf("category").ifBlank { null }) }
-    composable(Routes.Reports) { MyReportsScreen() }
+    composable(Routes.Reports) { ChatsCenterScreen("reports") }
     composable(Routes.ReportDetail, arguments = listOf(reqArg("id"), optArg("tab"))) { ReportDetailScreen(it.argOf("id"), it.argOf("tab").ifBlank { null }) }
     composable(Routes.Support) { SupportScreen() }
     composable(Routes.Counselling) { CounsellingScreen() }

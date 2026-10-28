@@ -60,7 +60,8 @@ fun ScreenHeader(
         } else {
             Spacer(Modifier.width(12.dp))
         }
-        Column(Modifier.weight(1f).padding(start = 4.dp)) {
+        // The title (e.g. a staff home's greeting) fades and rises in once when the screen opens.
+        Column(Modifier.weight(1f).padding(start = 4.dp).enterStagger(0)) {
             Text(title, style = MaterialTheme.typography.headlineMedium, color = CcColors.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, maxLines = 2) }
         }
@@ -100,6 +101,7 @@ fun CcScreen(
             Column(
                 Modifier
                     .fillMaxSize()
+                    .enterStagger(1) // dashboard content follows the header in, once (data refreshes do not replay it)
                     .then(if (scroll) Modifier.verticalScroll(rememberScrollState()) else Modifier)
                     .imePadding()
                     .padding(contentPadding),

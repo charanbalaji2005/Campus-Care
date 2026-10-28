@@ -1,5 +1,7 @@
 package edu.srmap.campuscare.ui.screens.community
 
+import edu.srmap.campuscare.ui.components.Expandable
+
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -355,7 +357,7 @@ fun CounsellingThreadBanner(c: edu.srmap.campuscare.data.ThreadCounsellor, stude
             Spacer(Modifier.weight(1f))
             if (student) TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Less" else "Options") }
         }
-        if (student && expanded) {
+        Expandable(student && expanded) {
             if (c.availabilityMessage.isNotBlank()) Text(c.availabilityMessage, style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, modifier = Modifier.padding(top = 4.dp))
             Text(
                 "Not an emergency service — if you or someone else is in immediate danger, use SOS or call campus security / 112.",

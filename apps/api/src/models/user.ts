@@ -38,7 +38,6 @@ const userSchema = new Schema(
     program: { type: String, trim: true, default: null },
     section: { type: String, trim: true, default: null },
     /** Language for CampusCare messages where available. */
-    preferredLanguage: { type: String, trim: true, default: null },
     /** Staff job title shown on their profile (e.g. "Senior Counsellor", "Hostel Warden"). */
     designation: { type: String, trim: true, default: null },
     /** Counsellor professional details shown to colleagues; never contains student information. */
@@ -138,7 +137,6 @@ export function publicUser(u: UserDoc | (UserAttrs & { _id: Types.ObjectId; crea
     hostel: u.hostel ?? null,
     program: (u as { program?: string | null }).program ?? null,
     section: (u as { section?: string | null }).section ?? null,
-    preferredLanguage: (u as { preferredLanguage?: string | null }).preferredLanguage ?? null,
     designation: (u as { designation?: string | null }).designation ?? null,
     qualifications: (u as { qualifications?: string | null }).qualifications ?? null,
     experienceYears: (u as { experienceYears?: number | null }).experienceYears ?? null,
@@ -184,6 +182,41 @@ const userAvatarSchema = new Schema(
 );
 userAvatarSchema.index({ userId: 1 }, { unique: true });
 export const UserAvatar = model('UserAvatar', userAvatarSchema);
+
+// ------------------------------------------------------------------ verification evidence (ID card / selfie)
+/**
+ * Institutional identity verification evidence (official ID card photo, verification selfie, or doc).
+ * Strictly separated from the public profile photo (UserAvatar). Only accessible to authorized reviewers.
+ */
+const verificationEvidenceSchema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    applicantName: { type: String, required: true },
+    identifier: { type: String, required: true },
+    requestedRole: { type: String, required: true },
+    department: { type: String, default: null },
+    campus: { type: String, default: 'main' },
+    evidenceType: { type: String, enum: ['id_card', 'selfie', 'document'], default: 'id_card' },
+    mime: { type: String, required: true },
+    data: { type: Buffer, required: true, select: false },
+    fileSize: { type: Number, required: true },
+    status: { type: String, enum: ['pending', 'under_review', 'more_info_required', 'verified', 'rejected'], default: 'pending', index: true },
+    reviewedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    reviewedAt: { type: Date, default: null },
+    reviewNotes: { type: String, default: null },
+    rejectionReason: { type: String, default: null },
+    initialReviewerId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    initialReviewedAt: { type: Date, default: null },
+    initialReviewNotes: { type: String, default: null },
+    initialRecommendation: { type: String, default: null },
+    consentGiven: { type: Boolean, default: true },
+    consentTimestamp: { type: Date, default: Date.now },
+  },
+  { timestamps: true },
+);
+verificationEvidenceSchema.index({ campus: 1, status: 1 });
+export const VerificationEvidence = model('VerificationEvidence', verificationEvidenceSchema);
+export type VerificationEvidenceDoc = HydratedDocument<InferSchemaType<typeof verificationEvidenceSchema>>;
 
 // ------------------------------------------------------------------ external identities (Google)
 const externalIdentitySchema = new Schema(
@@ -237,18 +270,52 @@ const tokenFields = {
   consumedAt: { type: Date, default: null },
 };
 
-const emailVerificationTokenSchema = new Schema({ ...tokenFields, email: { type: String, required: true } }, { timestamps: true });
+/** `deliveryId`: the EmailDelivery that carried the link, so the person can see whether it was sent. */
+const emailVerificationTokenSchema = new Schema({ ...tokenFields, email: { type: String, required: true }, deliveryId: { type: Schema.Types.ObjectId, default: null } }, { timestamps: true });
 emailVerificationTokenSchema.index({ tokenHash: 1 }, { unique: true });
 emailVerificationTokenSchema.index({ userId: 1, createdAt: -1 });
 emailVerificationTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 7 * 24 * 3600 });
 export const EmailVerificationToken = model('EmailVerificationToken', emailVerificationTokenSchema);
 
-/** `email`: the address the link was sent to. If the account email changes, the link stops working. */
-const passwordResetTokenSchema = new Schema({ ...tokenFields, email: { type: String, default: null } }, { timestamps: true });
+/**
+ * `email`: the address the link was sent to. If the account email changes, the link stops working.
+ * `via`: 'email' for an emailed link; 'otp' for the short-lived token handed out after a correct reset code
+ * (never emailed, so it does not count towards the per-account email limits).
+ */
+const passwordResetTokenSchema = new Schema({
+  ...tokenFields,
+  email: { type: String, default: null },
+  via: { type: String, enum: ['email', 'otp'], default: 'email' },
+  deliveryId: { type: Schema.Types.ObjectId, default: null },
+}, { timestamps: true });
 passwordResetTokenSchema.index({ tokenHash: 1 }, { unique: true });
 passwordResetTokenSchema.index({ userId: 1, createdAt: -1 });
 passwordResetTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 24 * 3600 });
 export const PasswordResetToken = model('PasswordResetToken', passwordResetTokenSchema);
+
+/**
+ * One-time email codes (6 digits) for email verification and password recovery. Only an HMAC of the code
+ * is stored. A code is single-use, expires quickly, is burned after too many wrong guesses, and is
+ * superseded by any newer code or link for the same purpose.
+ */
+const emailOtpSchema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    email: { type: String, required: true },
+    purpose: { type: String, enum: ['verify_email', 'password_reset'], required: true },
+    codeHash: { type: String, required: true },
+    expiresAt: { type: Date, required: true },
+    attempts: { type: Number, default: 0 },
+    consumedAt: { type: Date, default: null },
+    /** Why it stopped working: used, superseded, too_many_attempts. */
+    endedReason: { type: String, default: null },
+    deliveryId: { type: Schema.Types.ObjectId, default: null },
+  },
+  { timestamps: true },
+);
+emailOtpSchema.index({ userId: 1, purpose: 1, createdAt: -1 });
+emailOtpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 24 * 3600 });
+export const EmailOtp = model('EmailOtp', emailOtpSchema);
 
 /** Invitation tokens for staff accounts (set-password link). */
 const inviteTokenSchema = new Schema({ ...tokenFields }, { timestamps: true });

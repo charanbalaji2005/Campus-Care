@@ -166,7 +166,17 @@ class SosCountdownService : Service() {
     /** First contact: the server takes over the countdown. Once it is due, an immediate send instead. */
     private suspend fun raise(e: SosCountdownEvent, now: Long) {
         val due = e.due(now)
-        val fix = if (hasLocationPermission()) LocationHelper.current(this, timeoutMs = 3_000) else null
+        val curBefore = SosCountdownStore.load(this)
+        if (curBefore?.state == SosCountdownState.Cancelled) {
+            debug("aborting raise: user cancelled before fix")
+            return
+        }
+        val fix = if (hasLocationPermission()) LocationHelper.current(this, timeoutMs = 2_000) else null
+        val curAfter = SosCountdownStore.load(this)
+        if (curAfter?.state == SosCountdownState.Cancelled) {
+            debug("aborting raise: user cancelled during fix")
+            return
+        }
         try {
             val alert = app.container.api.safety.raiseSos(
                 key = e.eventId,
@@ -419,6 +429,11 @@ class SosCountdownService : Service() {
         }.isSuccess
 
         fun cancel(context: Context) {
+            val cur = SosCountdownStore.load(context)
+            if (cur != null && cur.active) {
+                SosCountdownStore.save(context, SosCountdownRules.cancel(cur, System.currentTimeMillis()))
+            }
+            LocationShareService.stopAll(context)
             runCatching { ContextCompat.startForegroundService(context, Intent(context, SosCountdownService::class.java).setAction(ACTION_CANCEL)) }
         }
 

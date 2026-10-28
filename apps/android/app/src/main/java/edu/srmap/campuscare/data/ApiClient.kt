@@ -30,6 +30,8 @@ class ApiException(
     val code: String,
     message: String,
     val fields: Map<String, String> = emptyMap(),
+    /** Other primitive values from `error.details` (e.g. verificationTicket, attemptsLeft, retryAfterSeconds). */
+    val details: Map<String, String> = emptyMap(),
 ) : Exception(message) {
     val isNetwork: Boolean get() = status == 0
 }
@@ -135,12 +137,15 @@ class ApiClient(val baseUrl: String, private val session: SessionStore, val json
         val fields = runCatching {
             err?.get("details")?.jsonObject?.get("fields")?.jsonObject?.mapValues { it.value.jsonPrimitive.contentOrNull ?: "" }
         }.getOrNull() ?: emptyMap()
+        val details = runCatching {
+            err?.get("details")?.jsonObject?.filterValues { it is JsonPrimitive }?.mapValues { it.value.jsonPrimitive.contentOrNull ?: "" }
+        }.getOrNull() ?: emptyMap()
         if (code == 401 && (errCode == "session_expired" || errCode == "unauthorized") && session.isSignedIn) {
             session.clear(SessionEvent.Expired)
         } else if (code == 401 && errCode == "wrong_app" && session.isSignedIn) {
             session.clear(SessionEvent.WrongApp)
         }
-        return ApiException(code, errCode, message, fields)
+        return ApiException(code, errCode, message, fields, details)
     }
 
     companion object {
@@ -155,7 +160,7 @@ class ApiClient(val baseUrl: String, private val session: SessionStore, val json
             is Number -> JsonPrimitive(value)
             is Boolean -> JsonPrimitive(value)
             is Enum<*> -> JsonPrimitive(value.name)
-            is Map<*, *> -> JsonObject(value.entries.filter { it.key != null }.associate { it.key.toString() to toJson(it.value) })
+            is Map<*, *> -> JsonObject(value.entries.filter { it.key != null && it.value != null }.associate { it.key.toString() to toJson(it.value) })
             is Iterable<*> -> JsonArray(value.map { toJson(it) })
             is Array<*> -> JsonArray(value.map { toJson(it) })
             else -> JsonPrimitive(value.toString())

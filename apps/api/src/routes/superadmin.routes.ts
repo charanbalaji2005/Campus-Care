@@ -296,7 +296,7 @@ superAdminRouter.get('/email/diagnostics', requirePermission('email:manage'), as
     Job.findOne({ type: 'email.send', status: 'pending' }).sort({ createdAt: 1 }).select('createdAt runAt attempts lastError').lean(),
     Job.countDocuments({ type: 'email.send', status: 'failed', updatedAt: { $gte: day } }),
     EmailDelivery.aggregate([{ $match: { createdAt: { $gte: week } } }, { $group: { _id: { t: '$template', s: '$status' }, n: { $sum: 1 } } }]),
-    EmailDelivery.find({ template: { $in: ['verify_email', 'password_reset'] } }).sort({ createdAt: -1 }).limit(20).lean(),
+    EmailDelivery.find({ template: { $in: ['verify_email', 'verify_email_code', 'password_reset', 'password_reset_code'] } }).sort({ createdAt: -1 }).limit(20).lean(),
     EmailDelivery.findOne({ status: { $in: ['accepted_by_provider', 'sent'] } }).sort({ sentAt: -1 }).select('sentAt').lean(),
   ]);
   ok(res, {
@@ -343,6 +343,9 @@ superAdminRouter.put('/email/templates/:key', requirePermission('email:manage'),
   const input = parse(emailTemplateSchema, req.body);
   if (['verify_email', 'password_reset', 'staff_invite', 'trusted_contact_consent'].includes(key) && !input.html.includes('{{link}}')) {
     throw new AppError(422, 'validation_failed', 'This template must include {{link}}.');
+  }
+  if (['verify_email_code', 'password_reset_code'].includes(key) && !(input.html.includes('{{code}}') && input.text.includes('{{code}}'))) {
+    throw new AppError(422, 'validation_failed', 'This template must include {{code}} in both the HTML and the text version.');
   }
   await EmailTemplate.findOneAndUpdate({ key }, { $set: { ...input, updatedBy: req.user!._id } }, { upsert: true });
   await audit({ action: 'email_template.updated', req, targetType: 'email_template', targetId: key });

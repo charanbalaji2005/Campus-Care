@@ -114,6 +114,22 @@ top of the workflow. Artifacts are attached to the workflow run.
    realtime connection while the app is open; Campus Security responders should switch **On duty**
    so SOS alerts keep arriving with the app in the background.
 
+## Email verification and password recovery
+
+Both apps (and the website) offer a choice: a **6-digit code** typed into the app, or an **email link** that
+opens the app. Registration (Student app) asks which one to use; the "check your email" screen shows the
+masked address and whether the email went out, and lets the person resend or switch method after a cooldown.
+Forgot password works the same way: a correct code leads to the new-password screen; nobody is signed in by
+a code. Super Admin accounts always receive links. See docs/DEPLOYMENT.md section 6 for the server side.
+
+## Motion and accessibility
+
+Animations use Compose's own APIs and are skipped or reduced to short fades when the system "remove
+animations" setting or the in-app **Reduce motion** switch is on (`LocalReducedMotion`). The SOS button draws
+attention with a brief ring when the home screen opens and then rests (no endless pulsing); SOS actions ignore
+repeated taps for a moment (`TapGuard`), Cancel always works, and countdown and incident status stay readable
+and announced without animation. Data refreshes update lists in place instead of replaying entrance effects.
+
 ## Security notes
 
 - Session tokens are stored only in Android Keystore–encrypted storage and sent as a bearer token

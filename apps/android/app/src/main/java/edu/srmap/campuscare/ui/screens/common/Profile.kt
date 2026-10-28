@@ -41,7 +41,6 @@ import androidx.compose.material.icons.rounded.EditCalendar
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.HealthAndSafety
 import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.MyLocation
@@ -280,7 +279,7 @@ fun ProfileScreen() {
             )
         }
 
-        PreferencesSection(u)
+        PreferencesSection()
 
         CcCard(padding = 8.dp) {
             ListRow("Help & FAQ", icon = Icons.AutoMirrored.Rounded.HelpOutline, tone = Tone.Sky, onClick = { nav.navigate(Routes.Help) })
@@ -740,32 +739,11 @@ private fun SecuritySection(u: User, account: ProfileAccount?) {
 }
 
 @Composable
-private fun PreferencesSection(u: User) {
+private fun PreferencesSection() {
     val app = LocalApp.current
-    val snack = LocalSnack.current
-    val scope = rememberCoroutineScope()
     val a11y by app.a11y.collectAsState()
     SectionHeader("Preferences")
     CcCard {
-        CcSelect(
-            "Preferred language", Catalog.languages.map { it to it }, u.preferredLanguage ?: "English",
-            { lang ->
-                scope.launch {
-                    try {
-                        app.session.updateUser(app.api.auth.updateProfile(mapOf("preferredLanguage" to lang)).user)
-                        snack.show("Language preference saved.")
-                    } catch (e: ApiException) {
-                        snack.error(e)
-                    }
-                }
-            },
-            leadingIcon = Icons.Rounded.Language,
-        )
-        Text(
-            "Used for CampusCare messages where a translation is available. The app itself is in English.",
-            style = MaterialTheme.typography.labelSmall, color = CcColors.InkFaint, modifier = Modifier.padding(top = 4.dp, bottom = 6.dp),
-        )
-        Divider()
         SwitchRow("Reduce motion", a11y.reduceMotion, { app.setA11y(a11y.copy(reduceMotion = it)) }, description = "Turns off decorative animations and pulsing.")
         Divider()
         SwitchRow("Larger text", a11y.largeText, { app.setA11y(a11y.copy(largeText = it)) }, description = "Increases text size across the app.")

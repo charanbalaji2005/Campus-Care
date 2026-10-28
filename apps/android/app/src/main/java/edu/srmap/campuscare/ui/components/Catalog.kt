@@ -152,7 +152,7 @@ object Catalog {
 
     fun counsellingType(key: String) = counsellingTypes.firstOrNull { it.first == key }?.second ?: key.replace('_', ' ').replaceFirstChar { it.uppercase() }
 
-    /** Languages offered for CampusCare messages (matches PROFILE_LANGUAGES on the server). */
+    /** Languages a counsellor can list as spoken in sessions (directory filter). */
     val languages = listOf("English", "Telugu", "Hindi", "Tamil", "Kannada", "Malayalam", "Bengali", "Odia", "Marathi")
     val personIcon = Icons.Rounded.Person
 }
