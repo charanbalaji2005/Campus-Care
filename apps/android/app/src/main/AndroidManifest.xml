@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <!-- Only to re-offer an SOS that a reboot interrupted before it reached the server (no work runs at boot otherwise). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
@@ -157,5 +159,20 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+        <!-- SOS countdown: runs only for the few seconds of a countdown (plus brief retries), always with a
+             visible notification offering Cancel and Send SOS. Location type only when location was granted. -->
+        <service
+            android:name=".services.SosCountdownService"
+            android:exported="false"
+            android:foregroundServiceType="location|shortService" />
+
+        <receiver
+            android:name=".services.SosBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

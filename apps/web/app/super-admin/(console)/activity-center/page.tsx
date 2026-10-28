@@ -171,7 +171,7 @@ export default function ActivityCenterPage() {
         severity: 'warn',
         timestamp: ops.generatedAt || new Date().toISOString(),
         actionLabel: 'Triage Cases',
-        actionHref: '/super-admin/incidents',
+        actionHref: '/super-admin/chats?cat=reports',
         badgeText: 'SLA OVERDUE',
       });
     }
@@ -185,7 +185,7 @@ export default function ActivityCenterPage() {
         severity: 'warn',
         timestamp: ops.generatedAt || new Date().toISOString(),
         actionLabel: 'Review Cases',
-        actionHref: '/super-admin/incidents',
+        actionHref: '/super-admin/chats?cat=reports',
         badgeText: 'RESOLUTION OVERDUE',
       });
     }

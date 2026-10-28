@@ -80,7 +80,7 @@ const QUICK_ACTIONS: QuickAction[] = [
     id: 'qa-incidents',
     label: 'Triage Complaints & Incidents',
     description: 'Review new case submissions, assign handlers and track resolution',
-    href: '/super-admin/incidents',
+    href: '/super-admin/chats?cat=reports',
     icon: FolderKanban,
     shortcut: 'I',
     tone: 'blue',

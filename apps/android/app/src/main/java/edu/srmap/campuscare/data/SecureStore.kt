@@ -15,7 +15,13 @@ import javax.crypto.spec.GCMParameterSpec
  * the Android Keystore (non-exportable), then saved in private SharedPreferences. Used for the
  * session token and cached profile; excluded from backups (see data_extraction_rules.xml).
  */
-class SecureStore(context: Context) {
+interface KeyValueStore {
+    fun put(name: String, value: String?)
+    fun get(name: String): String?
+    fun clear()
+}
+
+class SecureStore(context: Context) : KeyValueStore {
     private val prefs = context.getSharedPreferences("cc_secure", Context.MODE_PRIVATE)
 
     private fun key(): SecretKey {
@@ -32,7 +38,7 @@ class SecureStore(context: Context) {
         return gen.generateKey()
     }
 
-    fun put(name: String, value: String?) {
+    override fun put(name: String, value: String?) {
         if (value == null) {
             prefs.edit().remove(name).apply()
             return
@@ -44,7 +50,7 @@ class SecureStore(context: Context) {
         prefs.edit().putString(name, Base64.encodeToString(packed, Base64.NO_WRAP)).apply()
     }
 
-    fun get(name: String): String? {
+    override fun get(name: String): String? {
         val stored = prefs.getString(name, null) ?: return null
         return runCatching {
             val packed = Base64.decode(stored, Base64.NO_WRAP)
@@ -60,7 +66,7 @@ class SecureStore(context: Context) {
         }
     }
 
-    fun clear() = prefs.edit().clear().apply()
+    override fun clear() = prefs.edit().clear().apply()
 
     private companion object {
         const val ALIAS = "campuscare_session_key"

@@ -12,10 +12,14 @@ export function middleware(req: NextRequest) {
     const url = req.nextUrl.clone();
     const next = req.nextUrl.pathname + req.nextUrl.search;
     url.pathname = '/super-admin/login';
-    url.search = `?next=${encodeURIComponent(next)}`;
-    return NextResponse.redirect(url);
+    url.search = `?reason=expired&next=${encodeURIComponent(next)}`;
+    const res = NextResponse.redirect(url);
+    res.headers.set('Cache-Control', 'no-store, max-age=0');
+    return res;
   }
-  return NextResponse.next();
+  const res = NextResponse.next();
+  res.headers.set('Cache-Control', 'no-store, max-age=0');
+  return res;
 }
 
 export const config = {

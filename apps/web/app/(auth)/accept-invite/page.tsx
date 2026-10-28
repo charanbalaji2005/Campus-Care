@@ -28,7 +28,7 @@ export default function AcceptInvitePage() {
   if (done) {
     return (
       <AuthShell title="All set" subtitle="Your account is active. Sign in to the CampusCare app with your university email and the password you just set.">
-        <AppHandoff path="/login" />
+        <AppHandoff message="Open the app and sign in with your university email and new password." />
       </AuthShell>
     );
   }

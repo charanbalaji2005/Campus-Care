@@ -30,9 +30,12 @@ export async function loadSession(req: Request, res: Response, next: NextFunctio
   }
 }
 
-export function requireAuth(req: Request, _res: Response, next: NextFunction) {
+export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.user || !req.authSession) return next(new AppError(401, 'session_expired', 'Your session has expired. Please sign in again.'));
   if (req.user.accountStatus !== 'active') return next(new AppError(403, 'account_inactive', 'Your account is not active. Verify your email or contact support.'));
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   next();
 }
 

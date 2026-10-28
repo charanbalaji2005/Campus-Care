@@ -7,7 +7,7 @@ import {
 import { isAllowedAccountEmail, ACCOUNT_EMAIL_DOMAIN } from '@campuscare/shared';
 import { EmailDomain } from '../models/platform';
 import { getSettings } from './settings.service';
-import { appLink, sendEmail } from './email/email.service';
+import { accountLink, appLink, sendEmail } from './email/email.service';
 import { disconnectUser } from '../realtime/socket';
 import { DeviceRegistration } from '../models/mobile';
 import { MfaChallenge } from '../models/mfa';
@@ -41,10 +41,21 @@ export async function createSession(
   const token = randomToken(32);
   const now = Date.now();
   const mobile = Boolean(req.isMobileClient);
-  // Students on the mobile app stay signed in for the "remember me" period; staff keep the standard limits.
-  const longLived = (opts.remember || mobile) && user.role === 'student';
-  const absoluteMs = longLived ? s.security.rememberMeDays * 86400_000 : s.security.sessionAbsoluteHours * 3600_000;
-  const idleMs = mobile && longLived ? absoluteMs : s.security.sessionIdleMinutes * 60_000;
+  const isSuperAdminWeb = user.role === 'super_admin' && !mobile;
+  // Students on the mobile app stay signed in for the "remember me" period when checked.
+  const longLived = Boolean(opts.remember) && user.role === 'student' && mobile;
+  // Super Admin on the Next.js web portal has a fixed absolute maximum session lifetime of 12 hours.
+  // Active usage, token renewal, or idle extension must never extend past this absolute 12-hour mark.
+  const absoluteMs = isSuperAdminWeb
+    ? 12 * 3600_000
+    : longLived
+    ? s.security.rememberMeDays * 86400_000
+    : s.security.sessionAbsoluteHours * 3600_000;
+  const idleMs = isSuperAdminWeb
+    ? Math.min(s.security.sessionIdleMinutes * 60_000, absoluteMs)
+    : mobile && longLived
+    ? absoluteMs
+    : s.security.sessionIdleMinutes * 60_000;
   const knownDevice = await isKnownDevice(String(user._id), req);
   const session = await Session.create({
     tokenHash: sha256(token),
@@ -178,15 +189,16 @@ export async function issueEmailVerification(user: UserDoc) {
   await EmailVerificationToken.create({ userId: user._id, email: user.email, tokenHash: sha256(token), expiresAt: new Date(Date.now() + VERIFY_TTL_MS) });
   await sendEmail('verify_email', user.email, {
     name: user.fullName,
-    link: appLink(`/verify-email?token=${encodeURIComponent(token)}`),
+    link: accountLink('/verify-email', token),
     expiresIn: `${env.EMAIL_VERIFICATION_TTL_HOURS} hours`,
   });
 }
 
 /** Resend for a pending account, subject to the per-account cooldown and hourly cap. */
 export async function resendEmailVerification(email: string): Promise<AccountEmailOutcome> {
-  const user = await User.findOne({ email });
-  if (!user || user.emailVerified || user.accountStatus !== 'pending_verification') return 'not_eligible';
+  const normalized = email.trim().toLowerCase();
+  const user = await User.findOne({ email: normalized });
+  if (!user || user.emailVerified || (user.accountStatus !== 'pending_verification' && user.accountStatus !== 'active')) return 'not_eligible';
   if (await accountEmailThrottled('verify', user._id)) return 'throttled';
   await issueEmailVerification(user);
   return 'queued';
@@ -236,7 +248,8 @@ export async function consumeEmailVerification(token: string): Promise<{ result:
 const RESETTABLE_STATUSES = ['active', 'pending_verification'];
 
 export async function requestPasswordReset(email: string, opts: { ignoreAccountLimit?: boolean } = {}): Promise<AccountEmailOutcome> {
-  const user = await User.findOne({ email });
+  const normalized = email.trim().toLowerCase();
+  const user = await User.findOne({ email: normalized });
   // Only eligible accounts get an email, but the caller always returns the same generic response.
   if (!user || !RESETTABLE_STATUSES.includes(user.accountStatus)) return 'not_eligible';
   if (!opts.ignoreAccountLimit && (await accountEmailThrottled('reset', user._id))) return 'throttled';
@@ -245,7 +258,7 @@ export async function requestPasswordReset(email: string, opts: { ignoreAccountL
   await PasswordResetToken.create({ userId: user._id, email: user.email, tokenHash: sha256(token), expiresAt: new Date(Date.now() + RESET_TTL_MS) });
   await sendEmail('password_reset', user.email, {
     name: user.fullName,
-    link: appLink(`/reset-password?token=${encodeURIComponent(token)}`),
+    link: accountLink('/reset-password', token),
     expiresIn: `${env.PASSWORD_RESET_TTL_MINUTES} minutes`,
   });
   return 'queued';

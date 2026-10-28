@@ -12,9 +12,8 @@ import {
   type Role,
 } from '@campuscare/shared';
 import { AppError, asyncHandler, notFound, ok, parse } from '../lib/http';
-import { generateSlots } from '../lib/time';
+import { nextAvailable } from '../lib/schedule';
 import { Appointment, Availability, CounsellingNote, type AppointmentDoc } from '../models/counselling';
-import { ChatChannel, ChatMembership } from '../models/chat';
 import { User, type UserDoc } from '../models/user';
 import { AuditLog } from '../models/platform';
 import { requireAuth, requirePermission, requireRole } from '../middleware/auth';
@@ -26,17 +25,15 @@ import {
   ALGORITHM_VERSION,
   DEFAULT_MAX_ACTIVE_CASELOAD,
 } from '../services/counsellor-assignment.service';
+import { conflictError, slotConflict, slotsFor, startResponseClock } from '../services/counselling-schedule.service';
+import { activateCounsellingChat, declineRequest, onAppointmentStatus, scheduleFollowUp, scheduleUpcomingReminders } from '../services/counselling-workflow.service';
+import { counsellorPresence } from '../services/counsellor-availability';
 
 export const counsellingRouter = Router();
 counsellingRouter.use(requireAuth);
 
 const slotLockOf = (counsellorId: unknown, startAt: Date) => `${String(counsellorId)}:${startAt.toISOString()}`;
 const fmt = (d?: Date | null) => (d ? d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }) : 'TBD');
-
-async function bookedStarts(counsellorId: unknown) {
-  const active = await Appointment.find({ counsellorId, status: { $in: ACTIVE_APPOINTMENT_STATUSES }, startAt: { $gt: new Date() } }, { startAt: 1 }).lean();
-  return new Set(active.map((a) => a.startAt ? a.startAt.toISOString() : ''));
-}
 
 function serializeAppointment(
   a: AppointmentDoc | Record<string, unknown>,
@@ -60,6 +57,9 @@ function serializeAppointment(
     // Counsellors/Admins see student details for triage and session context.
     student: (viewer === 'counsellor' || viewer === 'admin') && student ? { id: String(ap.studentId), name: student.fullName, studentId: student.studentId ?? null, department: student.department ?? null } : undefined,
     followUpAt: ap.followUpAt,
+    responseDueAt: ap.status === 'requested' ? ap.responseDueAt ?? null : null,
+    allowReassignment: ap.allowReassignment ?? false,
+    chatOpen: Boolean(ap.chatActivatedAt),
     createdAt: (ap as unknown as { createdAt: Date }).createdAt,
   };
 }
@@ -71,16 +71,74 @@ async function peopleFor(list: { studentId: unknown; counsellorId?: unknown }[])
 }
 
 // ------------------------------------------------------------------ directory and slots (students)
+const listParam = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 60) : null);
+const dateParam = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+
+/** Public counsellor profile. Never includes workload, other students or internal notes. */
+async function directoryEntry(c: { _id: unknown; fullName: string }, a: Record<string, any> | undefined, opts: { date?: string | null; withSlots?: boolean }) {
+  const { schedule, days } = await slotsFor(c._id, { days: 14 });
+  const presence = counsellorPresence(a as never);
+  const bookable = schedule.acceptingRequests !== false;
+  const day = opts.date ? days.find((d) => d.date === opts.date) : undefined;
+  return {
+    id: String(c._id),
+    name: c.fullName,
+    title: a?.title ?? 'Counsellor',
+    bio: a?.bio ?? '',
+    avatarUrl: a?.avatarUrl ?? null,
+    specializations: a?.specializations ?? [],
+    languages: a?.languages ?? [],
+    supportedModes: a?.supportedModes ?? ['in_person'],
+    campus: a?.campus ?? 'main',
+    acceptingRequests: bookable,
+    onDuty: bookable,
+    availability: !bookable ? 'unavailable' : presence.status === 'available' ? 'available_now' : 'by_appointment',
+    nextAvailableAt: nextAvailable(days),
+    slotsToday: days[0]?.slots.length ?? 0,
+    timezone: schedule.timezone,
+    slotMinutes: schedule.slotMinutes,
+    ...(opts.withSlots ? { days: days.map((d) => ({ date: d.date, slots: d.slots.map((x) => x.toISOString()), full: d.remaining === 0 })) } : {}),
+    ...(opts.date ? { slotsOnDate: day?.slots.length ?? 0 } : {}),
+  };
+}
+
 counsellingRouter.get(
   '/counsellors',
-  asyncHandler(async (_req, res) => {
-    const counsellors = await User.find({ role: 'counsellor', accountStatus: 'active' }, { fullName: 1 }).lean();
+  asyncHandler(async (req, res) => {
+    const staffView = req.user!.role !== 'student';
+    const counsellors = await User.find({ role: 'counsellor', accountStatus: 'active' }, { fullName: 1 }).sort({ fullName: 1 }).limit(200).lean();
     const avail = await Availability.find({ counsellorId: { $in: counsellors.map((c) => c._id) } }).lean();
     const map = new Map(avail.map((a) => [String(a.counsellorId), a]));
-    ok(res, counsellors.map((c) => {
-      const a = map.get(String(c._id));
-      return { id: String(c._id), name: c.fullName, title: a?.title ?? 'Counsellor', bio: a?.bio ?? '', acceptingRequests: a?.acceptingRequests ?? false };
-    }));
+    const spec = listParam(req.query.specialization);
+    const lang = listParam(req.query.language);
+    const mode = listParam(req.query.mode);
+    const campus = listParam(req.query.campus);
+    const date = dateParam(req.query.date);
+    const rows = [];
+    for (const c of counsellors) {
+      const a = map.get(String(c._id)) as Record<string, any> | undefined;
+      if (spec && !(a?.specializations ?? []).includes(spec)) continue;
+      if (lang && !(a?.languages ?? []).some((l: string) => l.toLowerCase() === lang.toLowerCase())) continue;
+      if (mode && !(a?.supportedModes ?? []).includes(mode)) continue;
+      if (campus && (a?.campus ?? 'main') !== campus) continue;
+      const entry = await directoryEntry(c, a, { date });
+      // Students only see counsellors they can actually book: on duty, accepting, with an open slot.
+      if (!staffView && (!entry.acceptingRequests || !entry.nextAvailableAt)) continue;
+      if (date && !entry.slotsOnDate) continue;
+      rows.push(entry);
+    }
+    ok(res, rows);
+  }),
+);
+
+counsellingRouter.get(
+  '/counsellors/:id',
+  asyncHandler(async (req, res) => {
+    if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
+    const c = await User.findOne({ _id: req.params.id, role: 'counsellor', accountStatus: 'active' }, { fullName: 1 }).lean();
+    if (!c) throw notFound();
+    const a = await Availability.findOne({ counsellorId: c._id }).lean();
+    ok(res, await directoryEntry(c, a as never, { withSlots: true }));
   }),
 );
 
@@ -88,12 +146,15 @@ counsellingRouter.get(
   '/counsellors/:id/slots',
   asyncHandler(async (req, res) => {
     if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
-    const a = await Availability.findOne({ counsellorId: req.params.id }).lean();
-    if (!a || !a.acceptingRequests) return ok(res, { slots: [], slotMinutes: a?.slotMinutes ?? 50 });
-    const booked = await bookedStarts(req.params.id);
-    const slots = generateSlots({ weekly: a.weekly as never, slotMinutes: a.slotMinutes, timezone: a.timezone, blockedDates: a.blockedDates })
-      .filter((s) => !booked.has(s.toISOString()));
-    ok(res, { slots: slots.map((s) => s.toISOString()), slotMinutes: a.slotMinutes, timezone: a.timezone });
+    const date = dateParam(req.query.date) ?? undefined;
+    const { schedule, days } = await slotsFor(req.params.id, { onlyDate: date, days: date ? 31 : 14 });
+    ok(res, {
+      slots: days.flatMap((d) => d.slots).map((x) => x.toISOString()),
+      days: days.map((d) => ({ date: d.date, slots: d.slots.map((x) => x.toISOString()), full: d.remaining === 0 })),
+      slotMinutes: schedule.slotMinutes,
+      timezone: schedule.timezone,
+      onDuty: schedule.acceptingRequests !== false,
+    });
   }),
 );
 
@@ -152,15 +213,14 @@ counsellingRouter.post(
 
     if (!isAuto) {
       assignedCounsellorId = new Types.ObjectId(input.counsellorId as string);
-      const avail = await Availability.findOne({ counsellorId: assignedCounsellorId }).lean();
-      if (!avail?.acceptingRequests) {
+      const { schedule, days } = await slotsFor(assignedCounsellorId, { days: 31 });
+      if (!schedule.acceptingRequests) {
         throw new AppError(422, 'not_accepting', 'This counsellor is not accepting requests right now.');
       }
-      const slots = generateSlots({ weekly: avail.weekly as never, slotMinutes: avail.slotMinutes, timezone: avail.timezone, blockedDates: avail.blockedDates });
-      if (!startAt || !slots.some((s) => s.getTime() === startAt!.getTime())) {
+      if (!startAt || !days.some((d) => d.slots.some((x) => x.getTime() === startAt!.getTime()))) {
         throw new AppError(422, 'invalid_slot', 'Choose one of the available time slots.');
       }
-      endAt = new Date(startAt.getTime() + avail.slotMinutes * 60_000);
+      endAt = new Date(startAt.getTime() + schedule.slotMinutes * 60_000);
       slotLock = slotLockOf(assignedCounsellorId, startAt);
     }
 
@@ -176,6 +236,8 @@ counsellingRouter.post(
         status: 'requested',
         slotLock,
         idempotencyKey: input.idempotencyKey,
+        // Auto-assignment implies consent to move between counsellors; a chosen counsellor is only replaced if the student agreed.
+        allowReassignment: isAuto ? true : input.allowReassignment ?? false,
       });
     } catch (err) {
       if ((err as { code?: number }).code === 11000) {
@@ -184,21 +246,13 @@ counsellingRouter.post(
       throw err;
     }
 
-    // Private appointment thread (student + counsellor)
-    const thread = await ChatChannel.create({
-      kind: 'counselling_thread',
-      name: 'Counselling',
-      appointmentId: appt._id,
-      studentId: req.user!._id,
-      published: true,
-    });
-    const memberships = [{ channelId: thread._id, userId: req.user!._id, role: 'student' }];
-    if (assignedCounsellorId) {
-      memberships.push({ channelId: thread._id, userId: assignedCounsellorId, role: 'staff' });
+    // Concurrency guard: overlapping or over-capacity bookings lose deterministically and are removed.
+    const conflict = await slotConflict(appt);
+    if (conflict) {
+      await appt.deleteOne();
+      throw conflictError(conflict);
     }
-    await ChatMembership.insertMany(memberships);
-    appt.threadId = thread._id;
-    await appt.save();
+    // The private conversation is created only when the assigned counsellor accepts (see PATCH below).
 
     await audit({ action: 'appointment.requested', req, targetType: 'appointment', targetId: String(appt._id) });
 
@@ -219,16 +273,19 @@ counsellingRouter.post(
       );
     }
 
+    await startResponseClock(appt);
     await notify({
       userId: String(assignedCounsellorId),
       kind: 'appointment',
       category: 'appointments',
+      priority: 'high',
       title: 'New appointment request',
-      body: `Requested for ${fmt(startAt)}.`,
+      body: `Requested for ${fmt(startAt)}. Please accept or decline within an hour.`,
       link: `/consultancy/appointments?focus=${appt._id}`,
     });
+    await notify({ userId: String(req.user!._id), kind: 'appointment', category: 'appointments', title: 'Request sent', body: `Your request for ${fmt(startAt)} was sent. You will be notified when it is accepted.`, link: '/student/counselling' });
 
-    ok(res, { id: String(appt._id), status: appt.status }, 201);
+    ok(res, { id: String(appt._id), status: appt.status, responseDueAt: appt.responseDueAt }, 201);
   }),
 );
 
@@ -240,16 +297,31 @@ async function loadAppointmentFor(user: UserDoc, id: string) {
   const isCounsellor = appt.counsellorId && String(appt.counsellorId) === String(user._id);
   const isSuperAdmin = user.role === 'super_admin' || hasPermission({ role: user.role as Role, permissions: user.permissions }, 'appointments:read_aggregate');
   if (!isStudent && !isCounsellor && !isSuperAdmin) throw notFound();
-  return { appt, isStudent, isCounsellor: Boolean(isCounsellor || isSuperAdmin) };
+  return { appt, isStudent, isCounsellor: Boolean(isCounsellor || isSuperAdmin), isAssigned: Boolean(isCounsellor) };
 }
 
 counsellingRouter.patch(
   '/appointments/:id',
   asyncHandler(async (req, res) => {
     const input = parse(appointmentUpdateSchema, req.body);
-    const { appt, isStudent, isCounsellor } = await loadAppointmentFor(req.user!, req.params.id);
+    const { appt, isStudent, isCounsellor, isAssigned } = await loadAppointmentFor(req.user!, req.params.id);
     const from = appt.status as AppointmentStatus;
     const to = input.status;
+    // Accepting or declining a request is the assigned counsellor's decision; accepting opens the private chat.
+    if (from === 'requested' && (to === 'confirmed' || to === 'rejected') && !isAssigned) {
+      throw new AppError(403, 'forbidden', 'Only the assigned counsellor can accept or decline this request.');
+    }
+    if (from === 'requested' && to === 'rejected' && isAssigned) {
+      if (!input.reason) throw new AppError(422, 'reason_required', 'Please give the student a reason.');
+      const outcome = await declineRequest(appt, req.user!, input.reason, req);
+      if (outcome.reassigned) {
+        // Shown from the declining counsellor's side (existing app builds parse this as an appointment).
+        const people = await peopleFor([{ studentId: appt.studentId }]);
+        return ok(res, { ...serializeAppointment(appt, 'counsellor', people), status: 'rejected', statusReason: 'Passed to another counsellor', counsellor: null, chatOpen: false, reassigned: true });
+      }
+      const people = await peopleFor([appt]);
+      return ok(res, serializeAppointment(appt, 'counsellor', people));
+    }
     const allowedForStudent: AppointmentStatus[] = ['cancelled'];
     const counsellorTransitions: Record<string, AppointmentStatus[]> = {
       requested: ['confirmed', 'rejected', 'rescheduled', 'cancelled'],
@@ -267,8 +339,11 @@ counsellingRouter.patch(
       const avail = appt.counsellorId ? await Availability.findOne({ counsellorId: appt.counsellorId }).lean() : null;
       const newStart = new Date(input.startAt);
       if (newStart <= new Date()) throw new AppError(422, 'invalid_slot', 'Choose a future time.');
+      const newEnd = new Date(newStart.getTime() + (avail?.slotMinutes ?? 50) * 60_000);
+      const clash = appt.counsellorId && await Appointment.exists({ _id: { $ne: appt._id }, counsellorId: appt.counsellorId, status: { $in: ACTIVE_APPOINTMENT_STATUSES }, startAt: { $lt: newEnd }, endAt: { $gt: newStart } });
+      if (clash) throw new AppError(409, 'slot_taken', 'You already have an appointment overlapping that time.');
       appt.startAt = newStart;
-      appt.endAt = new Date(newStart.getTime() + (avail?.slotMinutes ?? 50) * 60_000);
+      appt.endAt = newEnd;
       appt.reminderSentAt = null;
     }
     if (to) appt.status = to;
@@ -284,6 +359,10 @@ counsellingRouter.patch(
       throw err;
     }
     await audit({ action: 'appointment.updated', req, targetType: 'appointment', targetId: String(appt._id), meta: { from, to: appt.status } });
+    // The assigned counsellor accepting a request is what opens the private chat.
+    if (from === 'requested' && appt.status === 'confirmed' && isAssigned) await activateCounsellingChat(appt, req.user!);
+    if (from !== appt.status) await onAppointmentStatus(appt, from);
+    else if (input.startAt) await scheduleUpcomingReminders(appt);
     if (appt.counsellorId) {
       const otherParty = isCounsellor ? String(appt.studentId) : String(appt.counsellorId);
       await notify({
@@ -464,7 +543,11 @@ counsellingRouter.post(
     const appt = await Appointment.findById(req.params.id);
     if (!appt || String(appt.counsellorId) !== String(req.user!._id)) throw notFound();
     const note = await CounsellingNote.create({ appointmentId: appt._id, studentId: appt.studentId, counsellorId: req.user!._id, body: input.body, supportPlan: input.supportPlan ?? null, followUpAt: input.followUpAt ?? null });
-    if (input.followUpAt) { appt.followUpAt = input.followUpAt; await appt.save(); }
+    if (input.followUpAt) {
+      appt.followUpAt = input.followUpAt;
+      await appt.save();
+      await scheduleFollowUp(appt, input.followUpAt);
+    }
     await audit({ action: 'counselling_notes.created', req, targetType: 'appointment', targetId: String(appt._id) });
     ok(res, { id: String(note._id), body: note.body, supportPlan: note.supportPlan, followUpAt: note.followUpAt, createdAt: note.createdAt }, 201);
   }),
@@ -476,7 +559,7 @@ counsellingRouter.get(
   requireRole('counsellor'),
   asyncHandler(async (req, res) => {
     const a = await Availability.findOne({ counsellorId: req.user!._id }).lean();
-    ok(res, a ?? { weekly: [], slotMinutes: 50, timezone: 'Asia/Kolkata', blockedDates: [], acceptingRequests: false, title: 'Counsellor', bio: '' });
+    ok(res, a ?? { weekly: [], slotMinutes: 50, maxDailySessions: 0, timezone: 'Asia/Kolkata', blockedDates: [], acceptingRequests: false, title: 'Counsellor', bio: '', specializations: [], languages: [] });
   }),
 );
 
@@ -487,8 +570,16 @@ counsellingRouter.put(
     const input = parse(availabilitySchema, req.body);
     for (const w of input.weekly) if (w.end <= w.start) throw new AppError(422, 'validation_failed', 'Each window must end after it starts.');
     const extra = { title: typeof req.body?.title === 'string' ? req.body.title.slice(0, 80) : undefined, bio: typeof req.body?.bio === 'string' ? req.body.bio.slice(0, 600) : undefined };
-    const a = await Availability.findOneAndUpdate({ counsellorId: req.user!._id }, { $set: { ...input, ...Object.fromEntries(Object.entries(extra).filter(([, v]) => v !== undefined)) } }, { upsert: true, new: true });
-    await audit({ action: 'availability.updated', req });
+    const prev = await Availability.findOne({ counsellorId: req.user!._id }, { acceptingRequests: 1 }).lean();
+    const fields: Record<string, unknown> = Object.fromEntries(Object.entries({ ...input, ...extra }).filter(([, v]) => v !== undefined));
+    if (fields.maxDailySessions === 0) fields.maxDailySessions = 10; // older app builds send 0 for "not set"
+    if (input.acceptingRequests !== undefined && Boolean(prev?.acceptingRequests) !== input.acceptingRequests) fields.dutyChangedAt = new Date();
+    const a = await Availability.findOneAndUpdate({ counsellorId: req.user!._id }, { $set: fields }, { upsert: true, new: true });
+    await audit({ action: 'availability.updated', req, changedFields: Object.keys(fields) });
+    // On/off duty is recorded on its own so it is easy to find in the audit log.
+    if (Boolean(prev?.acceptingRequests) !== a.acceptingRequests) {
+      await audit({ action: a.acceptingRequests ? 'counsellor.on_duty' : 'counsellor.off_duty', req, targetType: 'user', targetId: String(req.user!._id) });
+    }
     ok(res, a);
   }),
 );

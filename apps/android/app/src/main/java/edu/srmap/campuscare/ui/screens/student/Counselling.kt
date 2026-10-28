@@ -95,6 +95,9 @@ import androidx.compose.material.icons.rounded.Verified
 import edu.srmap.campuscare.data.counsellingChannel
 import edu.srmap.campuscare.ui.components.ListRow
 import edu.srmap.campuscare.ui.components.Divider
+import edu.srmap.campuscare.ui.components.SwitchRow
+import edu.srmap.campuscare.data.newIdempotencyKey
+import edu.srmap.campuscare.data.wellness
 
 private val ACTIVE_APPT = setOf("requested", "confirmed", "rescheduled")
 
@@ -140,7 +143,7 @@ fun CounsellingScreen() {
                 Text("You're not alone", style = MaterialTheme.typography.headlineSmall, color = CcColors.Ink)
                 Text("Sessions are confidential. Your counsellor's notes are private to them — not shared with committees or administrators.", style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft)
                 Spacer(Modifier.height(12.dp))
-                CcButton("Book a session", { nav.navigate(Routes.bookSession()) }, kind = ButtonKind.Primary, leadingIcon = Icons.Rounded.CalendarMonth)
+                CcButton("Find a counsellor", { nav.navigate(Routes.FindCounsellor) }, kind = ButtonKind.Primary, leadingIcon = Icons.Rounded.CalendarMonth)
             }
         }
 
@@ -205,6 +208,7 @@ fun CounsellingScreen() {
             }
         }
 
+        PendingFeedbackBanner()
         SectionHeader("Self-care")
         CcCard(onClick = { breathing = true }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -265,9 +269,15 @@ private fun AppointmentCard(a: Appointment, onCancel: (() -> Unit)?) {
             StatusChip(Fmt.humanize(a.status), appointmentTone(a.status))
         }
         a.statusReason?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, modifier = Modifier.padding(top = 6.dp)) }
+        if (a.status == "completed") {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
+                CcButton("Give feedback", { nav.navigate(Routes.feedback(a.id)) }, kind = ButtonKind.Outline)
+            }
+        }
         if (a.status in ACTIVE_APPT) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
                 a.threadId?.let { t -> CcButton("Message", { nav.navigate(Routes.chat(t)) }, kind = ButtonKind.Soft, leadingIcon = Icons.AutoMirrored.Rounded.Chat) }
+                if (a.status != "requested") CcButton("Remind me", { nav.navigate(Routes.appointmentReminders(a.id)) }, kind = ButtonKind.Ghost)
                 a.meetingLink?.takeIf { it.isNotBlank() && a.status == "confirmed" }?.let { link -> CcButton("Join", { context.openUrl(link) }, kind = ButtonKind.Brand, leadingIcon = Icons.Rounded.Videocam) }
                 onCancel?.let { CcButton("Cancel", it, kind = ButtonKind.Ghost) }
             }
@@ -335,13 +345,14 @@ fun BookSessionScreen(counsellorId: String?) {
     var reason by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var done by remember { mutableStateOf(false) }
+    var allowOther by rememberSaveable { mutableStateOf(true) }
     val zone = ZoneId.systemDefault()
 
     if (done) {
         CcScreen(title = "Request sent", onBack = { nav.popBackStack() }) {
             EmptyState(
                 "Session requested",
-                message = "Your counsellor will confirm or suggest another time. You'll get a notification.",
+                message = "Your counsellor will confirm or suggest another time. You'll get a notification." + if (allowOther) " If they can't take it, another counsellor will be offered your request." else "",
                 icon = Icons.Rounded.EventAvailable, tone = Tone.Violet,
                 action = { CcButton("Back to counselling", { nav.popBackStack() }) },
             )
@@ -363,7 +374,7 @@ fun BookSessionScreen(counsellorId: String?) {
                         scope.launch {
                             busy = true
                             try {
-                                app.api.counselling.request(c, s, mode, reason.trim().ifBlank { null })
+                                app.api.wellness.book(c, s, mode, reason.trim().ifBlank { null }, allowOther, newIdempotencyKey())
                                 done = true
                             } catch (e: ApiException) {
                                 snack.error(e)
@@ -444,5 +455,10 @@ fun BookSessionScreen(counsellorId: String?) {
         Text("How would you like to meet?", style = MaterialTheme.typography.titleSmall, color = CcColors.Ink)
         ChoiceChips(listOf("in_person" to "In person", "online" to "Online"), mode, { mode = it })
         CcTextField(reason, { reason = it }, label = "Anything you'd like to share beforehand? (optional)", singleLine = false, minLines = 3, maxLength = 500, hint = "Only your counsellor sees this.")
+        SwitchRow(
+            "Let another counsellor take it if needed",
+            allowOther, { allowOther = it },
+            description = "If your chosen counsellor declines or doesn't reply within an hour, another counsellor can take your request.",
+        )
     }
 }

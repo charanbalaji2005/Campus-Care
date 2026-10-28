@@ -33,6 +33,9 @@ services:
         value: https://campuscare-web.onrender.com
       - key: API_PUBLIC_URL
         value: https://campuscare-api-gywg.onrender.com
+      # User-facing authentication website: verification / password-reset links (also the Android App Links host).
+      - key: FRONTEND_AUTH_URL
+        value: https://campuscare-web.onrender.com
       - key: MONGODB_URI
         sync: false
       - key: SESSION_SECRET

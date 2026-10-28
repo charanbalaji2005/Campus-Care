@@ -205,10 +205,11 @@ d('Counsellor Assignment Service (integration)', () => {
     expect(updated?.status).toBe('requested');
     expect(updated?.slotLock).toBeTruthy();
 
-    // Verify chat thread staff membership was created
+    // The private chat opens only when the counsellor accepts: no staff member yet, and the one-hour clock is running.
     const staffMember = await ChatMembership.findOne({ channelId: thread._id, role: 'staff' });
-    expect(staffMember).not.toBeNull();
-    expect(String(staffMember?.userId)).toBe(String(updated?.counsellorId));
+    expect(staffMember).toBeNull();
+    expect(updated?.assignedAt).toBeTruthy();
+    expect(updated!.responseDueAt!.getTime() - updated!.assignedAt!.getTime()).toBe(60 * 60_000);
 
     // Verify audit log entry
     const auditRecord = await AuditLog.findOne({

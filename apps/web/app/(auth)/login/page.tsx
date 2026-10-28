@@ -154,7 +154,7 @@ export default function LoginPage() {
           )}
         </Alert>
       )}
-      {notice?.app && <div className="mb-5"><AppHandoff path="/login" showAdminLink={false} /></div>}
+      {notice?.app && <div className="mb-5"><AppHandoff /></div>}
       <form onSubmit={onSubmit} className="space-y-4" noValidate>
         {!mfaStep ? (
           <>
@@ -178,7 +178,7 @@ export default function LoginPage() {
                 <input type="checkbox" className="h-4 w-4 rounded border-line accent-brand-600" checked={Boolean(form.values.rememberMe)} onChange={(e) => form.set('rememberMe', e.target.checked)} />
                 Remember me
               </label>
-              <Link href="/forgot-password" className="text-sm font-semibold text-brand-700 hover:underline">Forgot password?</Link>
+              <Link href="/forgot-password?from=admin" className="text-sm font-semibold text-brand-700 hover:underline">Forgot password?</Link>
             </div>
           </>
         ) : (

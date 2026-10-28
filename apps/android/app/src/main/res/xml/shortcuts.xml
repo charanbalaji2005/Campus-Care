@@ -10,7 +10,7 @@
             android:action="android.intent.action.VIEW"
             android:targetPackage="in.edu.srmap.campuscare"
             android:targetClass="edu.srmap.campuscare.MainActivity"
-            android:data="campuscare://student/emergency" />
+            android:data="campuscare://student/emergency?source=shortcut" />
         <categories android:name="android.shortcut.conversation" />
     </shortcut>
 </shortcuts>

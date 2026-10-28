@@ -86,6 +86,7 @@ import edu.srmap.campuscare.ui.screens.staff.AdminStaffScreen
 import edu.srmap.campuscare.ui.screens.staff.AdminTriageScreen
 import edu.srmap.campuscare.ui.screens.staff.AppointmentScreen
 import edu.srmap.campuscare.ui.screens.staff.AvailabilityScreen
+import edu.srmap.campuscare.ui.screens.staff.MyScheduleScreen
 import edu.srmap.campuscare.ui.screens.staff.CommitteeCasesScreen
 import edu.srmap.campuscare.ui.screens.staff.CounsellorAppointmentsScreen
 import edu.srmap.campuscare.ui.screens.staff.CounsellorHomeScreen
@@ -97,7 +98,12 @@ import edu.srmap.campuscare.ui.screens.staff.ResponderAlertsScreen
 import edu.srmap.campuscare.ui.screens.staff.ResponderCasesScreen
 import edu.srmap.campuscare.ui.screens.staff.ResponderLocationsScreen
 import edu.srmap.campuscare.ui.screens.student.AwarenessScreen
+import edu.srmap.campuscare.ui.screens.student.QuickSosSetupScreen
 import edu.srmap.campuscare.ui.screens.student.BookSessionScreen
+import edu.srmap.campuscare.ui.screens.student.AppointmentRemindersScreen
+import edu.srmap.campuscare.ui.screens.student.CounsellingFeedbackScreen
+import edu.srmap.campuscare.ui.screens.student.CounsellorProfileScreen
+import edu.srmap.campuscare.ui.screens.student.FindCounsellorScreen
 import edu.srmap.campuscare.ui.screens.student.CampusAlertsScreen
 import edu.srmap.campuscare.ui.screens.student.CertificateScreen
 import edu.srmap.campuscare.ui.screens.student.CommitteesScreen
@@ -252,7 +258,7 @@ fun AppRoot(container: AppContainer, pendingLink: String?, onLinkHandled: () -> 
             Column(Modifier.fillMaxSize()) {
                 AnimatedVisibility(visible = !reachable && user != null, enter = slideInVertically() + fadeIn(), exit = slideOutVertically() + fadeOut()) {
                     InfoBanner(
-                        "CampusCare can't reach the server. Emergency calling still works — open SOS to call directly.",
+                        "Offline — reconnecting. Emergency calling still works — open SOS to call directly.",
                         tone = Tone.Amber, icon = Icons.Rounded.CloudOff,
                         modifier = Modifier.statusBarsPadding().padding(horizontal = 12.dp, vertical = 4.dp),
                     )
@@ -316,6 +322,7 @@ private fun NavGraphBuilder.graph() {
 
     composable(Routes.Home) { HomeScreen() }
     composable(Routes.Sos) { SosScreen() }
+    composable(Routes.QuickSos) { QuickSosSetupScreen() }
     composable(Routes.SosStatus, arguments = listOf(req("id"))) { SosStatusScreen(it.arg("id")) }
     composable(Routes.Report, arguments = listOf(opt("category"))) { ReportIncidentScreen(it.arg("category").ifBlank { null }) }
     composable(Routes.Reports) { MyReportsScreen() }
@@ -333,6 +340,10 @@ private fun NavGraphBuilder.graph() {
     composable(Routes.CounsellorChats) { CounsellorChatsScreen() }
     composable(Routes.Counselling) { CounsellingScreen() }
     composable(Routes.BookSession, arguments = listOf(opt("counsellor"))) { BookSessionScreen(it.arg("counsellor").ifBlank { null }) }
+    composable(Routes.FindCounsellor) { FindCounsellorScreen() }
+    composable(Routes.CounsellorProfile) { CounsellorProfileScreen(it.arg("id")) }
+    composable(Routes.CounsellingFeedback) { CounsellingFeedbackScreen(it.arg("id")) }
+    composable(Routes.AppointmentReminders, arguments = listOf(opt("counsellor"))) { AppointmentRemindersScreen(it.arg("id"), it.arg("counsellor") == "true") }
     composable(Routes.SafeWalk) { SafeWalkScreen() }
     composable(Routes.SafetyMap) { SafetyMapScreen() }
     composable(Routes.Hazard) { HazardScreen() }
@@ -363,6 +374,7 @@ private fun NavGraphBuilder.graph() {
     composable(Routes.CounsellorAppointments) { CounsellorAppointmentsScreen() }
     composable(Routes.Appointment, arguments = listOf(req("id"))) { AppointmentScreen(it.arg("id")) }
     composable(Routes.Availability) { AvailabilityScreen() }
+    composable(Routes.MySchedule) { MyScheduleScreen() }
     composable(Routes.CounsellorStudents) { CounsellorStudentsScreen() }
     composable(Routes.Inbox) { InboxScreen() }
     composable(Routes.ChannelDashboard) { ChannelDashboardScreen() }
@@ -395,7 +407,7 @@ fun rememberSignOut(): () -> Unit {
             PushRegistrar.unregister(app.api)
             runCatching { app.api.auth.logout() }
             app.realtime.disconnect()
-            app.session.clear()
+            app.session.clear(SessionEvent.SignedOut)
             nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } }
         }
     }

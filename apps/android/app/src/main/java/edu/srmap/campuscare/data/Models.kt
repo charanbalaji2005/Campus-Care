@@ -30,10 +30,116 @@ data class User(
     val mfaEnabled: Boolean = false,
     val committeeMemberships: List<Membership> = emptyList(),
     val privacy: Privacy? = null,
+    /** Student course/programme and class section. */
+    val program: String? = null,
+    val section: String? = null,
+    val preferredLanguage: String? = null,
+    /** Staff job title; counsellor qualifications and years of experience. */
+    val designation: String? = null,
+    val qualifications: String? = null,
+    val experienceYears: Int? = null,
+    /** Set while a profile photo exists; changes whenever the photo is replaced. */
+    val avatarUpdatedAt: String? = null,
+    /** Verified identifiers and assignments, managed by administrators (read-only here). */
+    val staffId: String? = null,
+    val managedCampuses: List<String> = emptyList(),
+    val campusZone: String? = null,
+    val dutyZone: String? = null,
+    val lastLoginAt: String? = null,
+    val createdAt: String? = null,
 ) {
     val firstName: String get() = fullName.substringBefore(' ')
     val isStudent: Boolean get() = role == "student"
 }
+
+// ------------------------------------------------------------------ profile overview (GET /me/profile)
+@Serializable
+data class ProfileAccount(
+    val emailVerified: Boolean = false,
+    val mfaEnabled: Boolean = false,
+    val mfaRequired: Boolean = false,
+    val activeSessions: Int = 0,
+    val googleLinked: Boolean = false,
+    val lastLoginAt: String? = null,
+    val passwordChangedAt: String? = null,
+    val memberSince: String? = null,
+)
+
+@Serializable
+data class ProfileNextAppointment(val startAt: String? = null, val mode: String? = null, val status: String? = null)
+
+@Serializable
+data class StudentProfileSummary(
+    val upcomingAppointments: Int = 0,
+    val nextAppointment: ProfileNextAppointment? = null,
+    val trustedContacts: Int = 0,
+    val safetyCardSet: Boolean = false,
+    val safetyCardShared: Boolean = false,
+)
+
+@Serializable
+data class CounsellorProfileSummary(
+    val onDuty: Boolean = false,
+    val title: String = "Counsellor",
+    val bio: String = "",
+    val campus: String = "main",
+    val specializations: List<String> = emptyList(),
+    val languages: List<String> = emptyList(),
+    val supportedModes: List<String> = emptyList(),
+    val slotMinutes: Int = 50,
+    val maxDailySessions: Int = 10,
+    val workingDays: List<Int> = emptyList(),
+    val upcomingBlockedDates: List<String> = emptyList(),
+    val upcomingAppointments: Int = 0,
+    val pendingRequests: Int = 0,
+    val sessionsNext24h: Int = 0,
+    val medianResponseHours: Double? = null,
+    val decidedLast30Days: Int = 0,
+)
+
+@Serializable
+data class ProfileShift(val startAt: String? = null, val endAt: String? = null, val status: String? = null, val zone: String? = null, val campus: String? = null)
+
+@Serializable
+data class ProfileIncidentRef(val id: String, val alertNumber: String? = null, val status: String = "", val createdAt: String? = null)
+
+@Serializable
+data class OfficerProfileSummary(
+    val dutyStatus: String = "off_duty",
+    val statusChangedAt: String? = null,
+    val campus: String = "main",
+    val zone: String? = null,
+    val responsibilities: List<String> = emptyList(),
+    val skills: List<String> = emptyList(),
+    val locationConsent: Boolean = false,
+    val lastHeartbeatAt: String? = null,
+    val shift: ProfileShift? = null,
+    val activeIncidents: List<ProfileIncidentRef> = emptyList(),
+)
+
+@Serializable
+data class ProfileActivity(val action: String, val at: String? = null, val targetType: String? = null, val outcome: String? = null)
+
+@Serializable
+data class AdminProfileSummary(
+    /** campus | system */
+    val scope: String = "campus",
+    val managedCampuses: List<String> = emptyList(),
+    val campusZone: String? = null,
+    val permissions: List<String> = emptyList(),
+    val extraPermissions: List<String> = emptyList(),
+    val recentActivity: List<ProfileActivity> = emptyList(),
+    val securityActivity: List<ProfileActivity> = emptyList(),
+)
+
+@Serializable
+data class ProfileOverview(
+    val account: ProfileAccount = ProfileAccount(),
+    val student: StudentProfileSummary? = null,
+    val counsellor: CounsellorProfileSummary? = null,
+    val officer: OfficerProfileSummary? = null,
+    val admin: AdminProfileSummary? = null,
+)
 
 @Serializable
 data class LoginResponse(
@@ -104,7 +210,14 @@ data class TurnstileConfig(val enabled: Boolean = false, val siteKey: String? = 
 data class MediaPolicy(val images: Boolean = false, val videos: Boolean = false)
 
 @Serializable
-data class SosPublic(val enabled: Boolean = true, val countdownSeconds: Int = 10, val allowCancelAfterSend: Boolean = true)
+data class SosPublic(
+    val enabled: Boolean = true,
+    val countdownSeconds: Int = 10,
+    val allowCancelAfterSend: Boolean = true,
+    /** Quick Settings tile / home-screen shortcut start the countdown straight away (otherwise they only open SOS). */
+    val quickTriggerEnabled: Boolean = true,
+    val quickTriggerMessage: String = "An SOS will be sent to Campus Security when the countdown ends. Tap Cancel if this was a mistake.",
+)
 
 @Serializable
 data class MapSettings(val centerLatitude: Double = 16.4636, val centerLongitude: Double = 80.5074, val zoom: Double = 16.0, val heatmapMinCount: Int = 5, val heatmapDays: Int = 90)
@@ -506,6 +619,10 @@ data class Availability(
     val acceptingRequests: Boolean = false,
     val title: String? = "Counsellor",
     val bio: String? = "",
+    /** Most sessions bookable per day (server default 10). */
+    val maxDailySessions: Int = 10,
+    val specializations: List<String> = emptyList(),
+    val languages: List<String> = emptyList(),
 )
 
 @Serializable

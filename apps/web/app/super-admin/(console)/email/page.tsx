@@ -11,6 +11,7 @@ import { useSensitiveAction } from '@/components/providers';
 import { Alert, Badge, Button, Card, CardHeader, EmptyState, Field, Input, PageHeader, Select, Skeleton, SwitchRow } from '@/components/ui/primitives';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { EmailTabs } from '@/components/super-admin/email-tabs';
+import { EmailDiagnostics } from '@/components/super-admin/email-diagnostics';
 import { SectionCard, useSectionDraft } from '@/components/super-admin/settings';
 
 interface Provider { id: string; type: 'console' | 'nodemailer'; service: MailService; fromName: string; fromEmail: string; user: string | null; appPassword: string | null; active: boolean; updatedAt: string }
@@ -68,7 +69,7 @@ export default function EmailProviderPage() {
     setTesting(true);
     try {
       const r = await api.post<{ message: string }>('/super-admin/email/test');
-      toast.success(r.message);
+      toast.success(r.message, { duration: 12000 });
     } catch (err) {
       toast.error(errorMessage(err));
     } finally {
@@ -85,6 +86,7 @@ export default function EmailProviderPage() {
       <PageHeader title="Email" description="Verification, password reset, invitations, case updates and SOS emails are sent with Nodemailer through your university mailbox." actions={<Button variant="outline" loading={testing} onClick={test}><Send className="h-4 w-4" /> Test sign-in & send</Button>} />
       <EmailTabs />
       <div className="space-y-6">
+        <EmailDiagnostics />
         <Card>
           <CardHeader title="Sending mailbox" description="Nodemailer signs in to this mailbox with an app password. Only one mailbox is active at a time." action={<Button size="sm" onClick={() => open('new')}><Plus className="h-4 w-4" /> Add mailbox</Button>} />
           {!data ? <div className="p-5"><Skeleton className="h-24" /></div> : (

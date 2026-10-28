@@ -141,6 +141,7 @@ fun SplashScreen() {
             else -> try {
                 val me = app.api.auth.me()
                 app.session.updateUser(me.user)
+                app.session.recordAppOpen()
                 when {
                     me.user.role == "super_admin" -> Routes.CounsellorHome
                     me.mfaRequired && !me.session.mfaVerified && me.user.mfaEnabled -> Routes.Mfa
@@ -148,7 +149,14 @@ fun SplashScreen() {
                     else -> Routes.homeFor(me.user.role)
                 }
             } catch (e: ApiException) {
-                app.session.user.value?.role?.let { Routes.homeFor(it) } ?: Routes.Login
+                if (e.isNetwork || e.status >= 500) {
+                    // Server offline: preserve remembered session & cached profile without claiming online validation
+                    app.session.user.value?.role?.let { Routes.homeFor(it) } ?: Routes.Login
+                } else {
+                    // Explicit server rejection (401 session expired/revoked, 403 suspended/deactivated)
+                    app.session.clear(edu.srmap.campuscare.data.SessionEvent.Expired)
+                    Routes.Login
+                }
             }
         }
         progress.animateTo(1f, tween(200))

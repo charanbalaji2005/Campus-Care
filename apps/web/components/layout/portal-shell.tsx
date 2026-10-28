@@ -17,6 +17,7 @@ import {
   ShieldAlert,
   Siren,
   Smartphone,
+  UserRound,
   WifiOff,
   X,
   type LucideIcon,
@@ -38,7 +39,7 @@ export interface NavItem {
   exact?: boolean;
   /** Sidebar section heading; consecutive items with the same group are listed together. */
   group?: string;
-  badgeKey?: 'sos' | 'verifications' | 'incidents' | 'support' | 'activity';
+  badgeKey?: 'sos' | 'verifications' | 'incidents' | 'support' | 'activity' | 'chats';
 }
 
 interface ShellProps {
@@ -161,6 +162,11 @@ function UserMenu({ me }: { me: Me }) {
             <p className="text-xs font-bold text-ink-strong truncate">{me.user.fullName}</p>
             <p className="text-[11px] font-mono text-ink-soft truncate">{me.user.email}</p>
           </div>
+          {me.user.role === 'super_admin' && (
+            <DropdownMenu.Item asChild className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs outline-none data-[highlighted]:bg-brand-50">
+              <Link href="/super-admin/profile"><UserRound className="h-4 w-4 text-ink-soft" /> My profile</Link>
+            </DropdownMenu.Item>
+          )}
           <DropdownMenu.Item asChild className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs outline-none data-[highlighted]:bg-brand-50">
             <Link href="/account/security"><KeyRound className="h-4 w-4 text-ink-soft" /> Account security</Link>
           </DropdownMenu.Item>
@@ -338,6 +344,9 @@ export function PortalShell({ portal, nav, roles, permission, children, mobileNa
     refreshInterval: 20000,
   });
   const { data: supportStats } = useApi<any>('/support/admin/tickets?status=open&limit=1', { refreshInterval: 20000 });
+  const { data: chatsOverview } = useApi<{ conversations: { unreadConversations: number }; reports: { new: number } | null; announcements: { unread: number } }>(
+    nav.some((n) => n.badgeKey === 'chats') ? '/chats/overview' : null, { refreshInterval: 30000 },
+  );
 
   // Map badge counts
   const badges = React.useMemo(() => {
@@ -353,11 +362,12 @@ export function PortalShell({ portal, nav, roles, permission, children, mobileNa
       incidents: { count: incidentCount, tone: 'neutral' as const },
       support: { count: supportCount, tone: 'brand' as const },
       activity: { count: totalActivity, tone: 'rose' as const },
+      chats: { count: (chatsOverview?.conversations.unreadConversations ?? 0) + (chatsOverview?.reports?.new ?? 0), tone: 'brand' as const },
     };
-  }, [opsOverview, verifQueue, supportStats]);
+  }, [opsOverview, verifQueue, supportStats, chatsOverview]);
 
   React.useEffect(() => {
-    if (error?.status === 401) router.replace(`/super-admin/login?next=${encodeURIComponent(pathname)}`);
+    if (error?.status === 401) router.replace(`/super-admin/login?reason=expired&next=${encodeURIComponent(pathname)}`);
   }, [error, pathname, router]);
 
   const allowed =

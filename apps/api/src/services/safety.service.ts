@@ -58,6 +58,7 @@ export function serializeAlert(a: EmergencyAlertDoc | Record<string, unknown>, f
     escalationLevel: al.escalationLevel ?? 0,
     resolutionOutcome: al.resolutionOutcome ?? null,
     countdownMode: al.countdownMode ?? 'client',
+    triggerSource: al.triggerSource ?? null,
     dispatchAt: al.dispatchAt ?? null,
     dispatchedAt: al.dispatchedAt ?? null,
     locationAgeSeconds: al.locationAgeSeconds ?? null,
@@ -93,6 +94,7 @@ export interface RaiseSosInput {
   note?: string;
   notifyTrustedContacts?: boolean;
   countdownMode?: 'client' | 'server';
+  triggerSource?: string;
   locationAgeSeconds?: number;
   batteryLevel?: number | null;
   deviceInfo?: { appVersion?: string; osVersion?: string; model?: string };
@@ -121,6 +123,8 @@ export async function raiseSos(userId: string, input: RaiseSosInput) {
     idempotencyKey: input.idempotencyKey,
     status: serverCountdown ? 'pending' : 'queued',
     countdownMode: serverCountdown ? 'server' : 'client',
+    triggerSource: input.triggerSource ?? null,
+    notifyTrustedContacts: input.notifyTrustedContacts !== false,
     dispatchAt: serverCountdown ? new Date(now.getTime() + settings.sos.countdownSeconds * 1000) : now,
     dispatchedAt: serverCountdown ? null : now,
     latitude: input.latitude ?? null,
@@ -137,7 +141,7 @@ export async function raiseSos(userId: string, input: RaiseSosInput) {
       ...(serverCountdown ? [] : [{ type: 'dispatched', at: now, actorLabel: 'CampusCare', note: null, studentVisible: true }]),
     ],
   });
-  await audit({ action: 'sos.raised', actorId: userId, actorRole: 'student', targetType: 'sos', targetId: String(alert._id), meta: { location: alert.latitude != null, countdown: alert.countdownMode } });
+  await audit({ action: 'sos.raised', actorId: userId, actorRole: 'student', targetType: 'sos', targetId: String(alert._id), meta: { location: alert.latitude != null, countdown: alert.countdownMode, trigger: alert.triggerSource } });
   if (serverCountdown) {
     // Durable path: a job due at dispatchAt (plus the pending sweep). An in-process timer only reduces latency.
     await enqueueJob('sos.dispatch', { alertId: String(alert._id) }, { runAt: alert.dispatchAt!, dedupeKey: `sos-dispatch:${alert._id}`, maxAttempts: 10 });
@@ -162,7 +166,7 @@ export async function dispatchSos(alertId: string, opts: { force?: boolean } = {
   const alert = await claimDispatch(alertId, opts);
   if (!alert) return null; // cancelled, already dispatched, or not due yet
   await audit({ action: 'sos.dispatched', targetType: 'sos', targetId: alertId, meta: { early: Boolean(opts.force) } });
-  await afterDispatch(alert);
+  await afterDispatch(alert, alert.notifyTrustedContacts !== false);
   return alert;
 }
 

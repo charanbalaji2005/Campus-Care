@@ -133,9 +133,13 @@ function InternalNotes({ caseId }: { caseId: string }) {
   );
 }
 
-/** Staff case workspace: shared by committee members, security officers and triage administrators. */
-export function CaseWorkspace({ caseId, backHref }: { caseId: string; backHref: string }) {
-  const { data, error, isLoading, mutate } = useApi<Detail>(`/incidents/${caseId}`);
+/**
+ * Staff case workspace: shared by committee members, security officers and triage administrators.
+ * `embedded` renders it inside the Chats › Reports detail panel (no back link, stacked columns).
+ */
+export function CaseWorkspace({ caseId, backHref, embedded, onChanged }: { caseId: string; backHref?: string; embedded?: boolean; onChanged?: () => void }) {
+  const { data, error, isLoading, mutate: reload } = useApi<Detail>(`/incidents/${caseId}`);
+  const mutate = () => { onChanged?.(); return reload(); };
   const [statusOpen, setStatusOpen] = React.useState(false);
   const [assignOpen, setAssignOpen] = React.useState(false);
 
@@ -149,11 +153,11 @@ export function CaseWorkspace({ caseId, backHref }: { caseId: string; backHref: 
 
   return (
     <div className="space-y-6">
-      <Link href={backHref} className="inline-flex items-center gap-1 text-sm font-semibold text-brand-700"><ArrowLeft className="h-4 w-4" /> Back to cases</Link>
+      {backHref && !embedded && <Link href={backHref} className="inline-flex items-center gap-1 text-sm font-semibold text-brand-700"><ArrowLeft className="h-4 w-4" /> Back to cases</Link>}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="tabular text-sm font-semibold text-ink-soft">{i.caseNumber}</p>
-          <h1 className="page-title">{i.title}</h1>
+          {embedded ? <h2 className="text-xl font-bold tracking-tight text-ink-strong">{i.title}</h2> : <h1 className="page-title">{i.title}</h1>}
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <StatusBadge status={i.status} /><PriorityBadge priority={i.priority} urgent={i.urgent} /><Badge>{categoryLabel(i.category)}</Badge>
             {i.anonymous && <Badge tone="dark">Anonymous reporter</Badge>}
@@ -172,7 +176,7 @@ export function CaseWorkspace({ caseId, backHref }: { caseId: string; backHref: 
         </Alert>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+      <div className={embedded ? 'grid gap-6 2xl:grid-cols-[1fr_340px]' : 'grid gap-6 lg:grid-cols-[1fr_360px]'}>
         <div className="space-y-6">
           {!triage && (
             <Card>

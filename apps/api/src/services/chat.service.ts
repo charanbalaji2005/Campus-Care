@@ -2,11 +2,12 @@ import { Types } from 'mongoose';
 import { hasPermission, type MediaScope, type Role } from '@campuscare/shared';
 import { AppError, notFound } from '../lib/http';
 import { ChatBlock, ChatChannel, ChatMembership, ChatMessage, type ChatChannelDoc } from '../models/chat';
+import { ChatPreference } from '../models/chat-center';
 import { Evidence } from '../models/incident';
 import { User, type UserDoc } from '../models/user';
 import { attachmentView, bindUploads } from './files.service';
 import { notifyMany } from './notification.service';
-import { emitToRoom, registerRoomAuthoriser } from '../realtime/socket';
+import { emitToRoom, emitToUser, registerRoomAuthoriser } from '../realtime/socket';
 import { getSettings } from './settings.service';
 
 export type ChatAccess = 'participant' | 'moderator' | 'none';
@@ -49,7 +50,9 @@ export async function channelAccess(user: UserDoc, channel: ChatChannelDoc): Pro
       if (service.committeeId && !(user.committeeMemberships ?? []).some((m) => String(m.committeeId) === String(service.committeeId))) return 'none';
       return 'participant';
     }
-    case 'counselling_thread': {
+    case 'counselling_thread':
+    case 'direct': {
+      // Explicit two-person membership only. Admin roles never get implicit access.
       const member = await ChatMembership.findOne({ channelId: channel._id, userId: user._id }).lean();
       return member ? 'participant' : 'none';
     }
@@ -93,11 +96,18 @@ export async function openSupportThread(student: UserDoc, serviceId: string) {
   return thread;
 }
 
+/** Deep link for a direct conversation: the Super Admin web Chats center, otherwise the app's chat screen. */
+export function directChatLink(role: string, channelId: string) {
+  if (role === 'super_admin') return `/super-admin/chats?c=${channelId}`;
+  return role === 'student' ? `/student/support/${channelId}` : `/support/threads/${channelId}`;
+}
+
 export async function senderLabelFor(user: UserDoc, channel: ChatChannelDoc) {
   if (user.role === 'student') {
     if (channel.kind === 'community' && user.privacy?.showNameInCommunity === false) return 'Student';
     return user.fullName;
   }
+  if (channel.kind === 'direct') return `${user.fullName} · ${user.role === 'super_admin' ? 'Super Admin' : user.role === 'admin' ? 'Campus Admin' : 'Counsellor'}`;
   const roleLabel: Record<string, string> = { counsellor: 'Counsellor', security_officer: 'Campus Security', committee_member: 'Committee', admin: 'Moderator', super_admin: 'Moderator' };
   return `${user.fullName.split(' ')[0]} · ${roleLabel[user.role] ?? 'Staff'}`;
 }
@@ -147,7 +157,18 @@ export async function postChatMessage(user: UserDoc, channel: ChatChannelDoc, ac
     const others = channel.kind === 'support_thread'
       ? (user.role === 'student' ? (channel.assignedStaffId ? [String(channel.assignedStaffId)] : []) : [String(channel.studentId)])
       : (await ChatMembership.find({ channelId: channel._id, userId: { $ne: user._id } }, { userId: 1 }).lean()).map((m) => String(m.userId));
-    await notifyMany(others, { kind: 'chat_message', category: 'chat_messages', title: 'New private message', body: `New message in ${channel.name}.`, link: user.role === 'student' ? `/support/threads/${channel._id}` : `/student/support/${channel._id}` });
+    // Ids only — list refresh hint for the Chats center; never message content.
+    others.forEach((id) => emitToUser(id, 'chats:changed', { channelId: String(channel._id) }));
+    if (channel.kind === 'direct') {
+      const muted = new Set((await ChatPreference.find({ itemType: 'channel', itemId: channel._id, muted: true }, { userId: 1 }).lean()).map((p) => String(p.userId)));
+      const recipients = await User.find({ _id: { $in: others.filter((id) => !muted.has(id)) } }, { role: 1 }).lean();
+      await Promise.all(recipients.map((r) => notifyMany([String(r._id)], {
+        kind: 'chat_message', category: 'chat_messages', title: 'New private message', body: `New message from ${user.fullName.split(' ')[0]}.`,
+        link: directChatLink(r.role, String(channel._id)),
+      })));
+    } else {
+      await notifyMany(others, { kind: 'chat_message', category: 'chat_messages', title: 'New private message', body: `New message in ${channel.name}.`, link: user.role === 'student' ? `/support/threads/${channel._id}` : `/student/support/${channel._id}` });
+    }
   }
   return { message, duplicate: false };
 }

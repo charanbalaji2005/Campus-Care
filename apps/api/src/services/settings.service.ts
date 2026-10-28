@@ -49,6 +49,7 @@ export function validateSettings(s: PlatformSettings) {
   };
   typeCheck(s, DEFAULT_SETTINGS, '');
   if (s.sos.countdownSeconds < 3 || s.sos.countdownSeconds > 30) errors.push('SOS countdown must be between 3 and 30 seconds');
+  if (!s.sos.quickTriggerMessage.trim() || s.sos.quickTriggerMessage.length > 160) errors.push('SOS countdown message must be 1–160 characters');
   if (s.security.passwordMinLength < 8 || s.security.passwordMinLength > 64) errors.push('Password minimum length must be 8–64');
   if (s.security.sessionIdleMinutes < 5 || s.security.sessionIdleMinutes > 24 * 60) errors.push('Idle timeout must be 5–1440 minutes');
   if (s.security.sessionAbsoluteHours < 1 || s.security.sessionAbsoluteHours > 24 * 14) errors.push('Absolute session lifetime must be 1–336 hours');
@@ -108,7 +109,10 @@ export async function publicSettings(): Promise<PublicSettings> {
     maxImageMb: s.chat.maxImageMb,
     maxVideoMb: s.chat.maxVideoMb,
     communityEnabled: s.chat.communityEnabled,
-    sos: { enabled: s.sos.enabled, countdownSeconds: s.sos.countdownSeconds, allowCancelAfterSend: s.sos.allowCancelAfterSend },
+    sos: {
+      enabled: s.sos.enabled, countdownSeconds: s.sos.countdownSeconds, allowCancelAfterSend: s.sos.allowCancelAfterSend,
+      quickTriggerEnabled: s.sos.quickTriggerEnabled, quickTriggerMessage: s.sos.quickTriggerMessage,
+    },
     safeWalkEnabled: s.safeWalk.enabled,
     locationSharingEnabled: s.locationSharing.enabled,
     maxLocationShareMinutes: s.locationSharing.maxDurationMinutes,

@@ -1,6 +1,7 @@
 package edu.srmap.campuscare.ui.navigation
 
 import android.net.Uri
+import edu.srmap.campuscare.services.SosTrigger
 
 /** Every screen in the app. Arguments are path segments; optional values are query parameters. */
 object Routes {
@@ -23,6 +24,7 @@ object Routes {
     const val Home = "s/home"
     const val Sos = "s/sos"
     const val SosStatus = "s/sos/{id}"
+    const val QuickSos = "s/quick-sos"
     const val Report = "s/report?category={category}"
     const val Reports = "s/reports"
     const val ReportDetail = "s/report/{id}?tab={tab}"
@@ -39,6 +41,10 @@ object Routes {
     const val CounsellorChats = "counselling/chats"
     const val Counselling = "s/counselling"
     const val BookSession = "s/counselling/book?counsellor={counsellor}"
+    const val FindCounsellor = "s/counsellors"
+    const val CounsellorProfile = "s/counsellors/{id}"
+    const val CounsellingFeedback = "s/counselling/feedback/{id}"
+    const val AppointmentReminders = "appointment/{id}/reminders?counsellor={counsellor}"
     const val SafeWalk = "s/safewalk"
     const val SafetyMap = "s/map"
     const val Hazard = "s/hazard"
@@ -71,6 +77,7 @@ object Routes {
     const val CounsellorAppointments = "c/appointments"
     const val Appointment = "c/appointment/{id}"
     const val Availability = "c/availability"
+    const val MySchedule = "c/schedule"
     const val CounsellorStudents = "c/students"
     const val Inbox = "inbox"
     const val ChannelDashboard = "c/channel"
@@ -98,6 +105,9 @@ object Routes {
     fun report(category: String? = null) = "s/report" + (category?.let { "?category=$it" } ?: "")
     fun reportDetail(id: String, tab: String? = null) = "s/report/$id" + (tab?.let { "?tab=$it" } ?: "")
     fun bookSession(counsellor: String? = null) = "s/counselling/book" + (counsellor?.let { "?counsellor=$it" } ?: "")
+    fun counsellorProfile(id: String) = "s/counsellors/$id"
+    fun feedback(appointmentId: String) = "s/counselling/feedback/$appointmentId"
+    fun appointmentReminders(id: String, counsellor: Boolean = false) = "appointment/$id/reminders?counsellor=$counsellor"
     fun module(id: String) = "s/module/$id"
     fun certificate(id: String) = "s/certificate/${Uri.encode(id)}"
     fun lostFoundItem(id: String) = "s/lostfound/item/$id"
@@ -146,7 +156,8 @@ object Routes {
             first == "accept-invite" -> uri.getQueryParameter("token")?.let { invite(it) }
             first == "student" && second == "my-reports" && third != null -> reportDetail(third, if (uri.fragment == "chat") "chat" else null)
             first == "student" && second == "my-reports" -> Reports
-            first == "student" && second == "emergency" -> uri.getQueryParameter("alert")?.let { sosStatus(it) } ?: Sos
+            first == "student" && second == "emergency" -> uri.getQueryParameter("alert")?.let { sosStatus(it) }
+                ?: Sos.also { SosTrigger.pendingSource = uri.getQueryParameter("source") }
             first == "student" && second == "counselling" -> Counselling
             first == "student" && second == "safe-walk" -> SafeWalk
             first == "student" && second == "trusted-contacts" -> Trusted

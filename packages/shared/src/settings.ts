@@ -71,6 +71,10 @@ export interface PlatformSettings {
     escalateAfterSeconds: number;
     /** Still no acknowledgement → notify administrators and the Super Admin. */
     secondEscalationAfterSeconds: number;
+    /** Quick triggers (Quick Settings tile, home-screen shortcut) start the countdown straight away. */
+    quickTriggerEnabled: boolean;
+    /** Body of the countdown notification. Never contains location or case details (it can show on the lock screen). */
+    quickTriggerMessage: string;
   };
   map: {
     centerLatitude: number;
@@ -240,6 +244,8 @@ export const DEFAULT_SETTINGS: PlatformSettings = {
     emailRecipients: true,
     escalateAfterSeconds: 120,
     secondEscalationAfterSeconds: 300,
+    quickTriggerEnabled: true,
+    quickTriggerMessage: 'An SOS will be sent to Campus Security when the countdown ends. Tap Cancel if this was a mistake.',
   },
   map: {
     // Approximate centre of the SRM University-AP campus (Neerukonda, Amaravati). Adjust in Super Admin → Safety map.
@@ -348,7 +354,7 @@ export interface PublicSettings {
   maxImageMb: number;
   maxVideoMb: number;
   communityEnabled: boolean;
-  sos: { enabled: boolean; countdownSeconds: number; allowCancelAfterSend: boolean };
+  sos: { enabled: boolean; countdownSeconds: number; allowCancelAfterSend: boolean; quickTriggerEnabled: boolean; quickTriggerMessage: string };
   safeWalkEnabled: boolean;
   map: PlatformSettings['map'];
   community: PlatformSettings['community'];

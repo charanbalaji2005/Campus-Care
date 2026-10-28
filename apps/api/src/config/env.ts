@@ -32,6 +32,12 @@ const schema = z.object({
 
   /** Public origin of the web app, e.g. https://campuscare.example.edu (used for CORS, CSRF origin checks and email links). */
   WEB_ORIGIN: urlField('http://localhost:3000'),
+  /**
+   * User-facing authentication website: origin of verification and password-reset links. It is also
+   * the Android App Links host (campuscare.webUrl in apps/android/gradle.properties, serving
+   * /.well-known/assetlinks.json), so the links open the app when it is installed. Empty = WEB_ORIGIN.
+   */
+  FRONTEND_AUTH_URL: z.string().optional().default(''),
   /** Extra allowed origins, comma separated. */
   EXTRA_ORIGINS: z.string().optional().default(''),
   /** Public base URL of this API (used for the Google OAuth redirect URI). */
@@ -62,6 +68,8 @@ const schema = z.object({
   /** Optional. Defaults to MAIL_USER. Gmail only accepts the account itself or a verified "Send mail as" alias. */
   EMAIL_FROM: z.string().optional(),
   MAIL_SERVICE: z.enum(MAIL_SERVICES).default('gmail'),
+  /** Gmail: read bounce notices from the sending mailbox (read-only). Set to false to turn off. */
+  EMAIL_BOUNCE_TRACKING: z.enum(['true', 'false']).default('true'),
   MAIL_USER: z.string().optional(),
   /** App password (Google: Account â†’ Security â†’ 2-Step Verification â†’ App passwords). Spaces are ignored. */
   MAIL_APP_PASSWORD: z
@@ -109,16 +117,41 @@ function load() {
     // Auto-fallback to test keys if not supplied in production
     if (!env.TURNSTILE_SECRET || !env.TURNSTILE_SITE_KEY) { env.TURNSTILE_SITE_KEY = env.TURNSTILE_SITE_KEY || '1x00000000000000000000AA'; env.TURNSTILE_SECRET = env.TURNSTILE_SECRET || '1x0000000000000000000000000000000AA'; }
     if (env.EMAIL_PROVIDER === 'nodemailer' && (!env.MAIL_USER || !env.MAIL_APP_PASSWORD)) throw new Error('MAIL_USER and MAIL_APP_PASSWORD are required when EMAIL_PROVIDER=nodemailer');
-    // Verification / reset links are built from WEB_ORIGIN and must be public HTTPS URLs.
-    if (!env.WEB_ORIGIN.startsWith('https://')) throw new Error('WEB_ORIGIN must be an https:// URL in production (email links are built from it)');
+    // Verification / reset links must be public HTTPS URLs: never localhost or a development address.
+    if (!env.WEB_ORIGIN.startsWith('https://')) throw new Error('WEB_ORIGIN must be an https:// URL in production');
+    const auth = authBaseOf(env);
+    if (!isPublicHttpsOrigin(auth)) throw new Error(`FRONTEND_AUTH_URL must be a public https:// URL in production (email links are built from it); got ${auth}`);
   }
   return env;
+}
+
+/** Base of account-email links: FRONTEND_AUTH_URL, else WEB_ORIGIN. Origin only (no path, no trailing slash). */
+function authBaseOf(e: { FRONTEND_AUTH_URL: string; WEB_ORIGIN: string }): string {
+  const raw = e.FRONTEND_AUTH_URL.trim() || e.WEB_ORIGIN;
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return raw;
+  }
+}
+
+/** https:// and not a loopback, emulator or private-network host. */
+export function isPublicHttpsOrigin(origin: string): boolean {
+  try {
+    const u = new URL(origin);
+    return u.protocol === 'https:' && !/^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?$)/i.test(u.hostname);
+  } catch {
+    return false;
+  }
 }
 
 export const env = load();
 export type Env = typeof env;
 
-export const allowedOrigins = [env.WEB_ORIGIN, ...env.EXTRA_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)];
+/** Origin of verification and password-reset links (the user-facing authentication website). */
+export const authLinkOrigin = authBaseOf(env);
+
+export const allowedOrigins = [...new Set([env.WEB_ORIGIN, authLinkOrigin, ...env.EXTRA_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)])];
 
 /**
  * Cloudflare's documented test keys are used only outside production when no keys are set.

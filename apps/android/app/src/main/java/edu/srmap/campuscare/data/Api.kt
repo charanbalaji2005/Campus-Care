@@ -37,7 +37,7 @@ class AuthApi(private val c: ApiClient) {
     suspend fun mfaChallenge(challengeToken: String, code: String): LoginResponse =
         c.post("/auth/mfa/challenge", mapOf("challengeToken" to challengeToken, "code" to code))
 
-    suspend fun google(idToken: String, nonce: String?): LoginResponse = c.post("/auth/google/mobile", mapOf("idToken" to idToken, "nonce" to nonce))
+    suspend fun google(idToken: String, nonce: String?, rememberMe: Boolean = true): LoginResponse = c.post("/auth/google/mobile", mapOf("idToken" to idToken, "nonce" to nonce, "rememberMe" to rememberMe))
 
     suspend fun register(body: Map<String, Any?>): RegisterResponse = c.post("/auth/register", body)
     suspend fun verifyEmail(token: String): VerifyResult = c.post("/auth/verify-email", mapOf("token" to token))
@@ -90,6 +90,10 @@ class MeApi(private val c: ApiClient) {
     suspend fun saveNotificationPrefs(prefs: Map<String, ChannelPrefs>): Map<String, ChannelPrefs> =
         c.put("/me/notification-prefs", prefs.mapValues { mapOf("inApp" to it.value.inApp, "email" to it.value.email, "push" to it.value.push) })
     suspend fun privacy(): PrivacyDashboard = c.get("/me/privacy")
+    suspend fun profile(): ProfileOverview = c.get("/me/profile")
+    suspend fun avatar(): ByteArray = c.download("/me/avatar")
+    suspend fun uploadAvatar(jpeg: ByteArray): MeUser = c.uploadPut("/me/avatar", jpeg, "avatar.jpg", "image/jpeg")
+    suspend fun removeAvatar(): MeUser = c.delete("/me/avatar")
     suspend fun export(): ByteArray = c.download("/me/export")
     suspend fun requestData(type: String, reason: String?): IdResponse = c.post("/me/data-requests", mapOf("type" to type, "reason" to reason))
 }
@@ -186,6 +190,7 @@ class CounsellingApi(private val c: ApiClient) {
             "weekly" to a.weekly.map { mapOf("weekday" to it.weekday, "start" to it.start, "end" to it.end) },
             "slotMinutes" to a.slotMinutes, "timezone" to a.timezone, "blockedDates" to a.blockedDates,
             "acceptingRequests" to a.acceptingRequests, "title" to a.title, "bio" to a.bio,
+            "maxDailySessions" to a.maxDailySessions, "specializations" to a.specializations, "languages" to a.languages,
         ),
     )
     suspend fun myStudents(): List<CounsellorStudent> = c.get("/counselling/my-students")
@@ -211,6 +216,7 @@ class SafetyApi(private val c: ApiClient) {
         deviceInfo: Map<String, String>? = null,
         isCachedFix: Boolean? = null,
         note: String? = null,
+        triggerSource: String? = null,
     ): SosAlert = c.post(
         "/safety/sos",
         mapOf(
@@ -226,6 +232,7 @@ class SafetyApi(private val c: ApiClient) {
             "deviceInfo" to deviceInfo,
             "isCachedFix" to isCachedFix,
             "note" to note,
+            "triggerSource" to triggerSource,
         ).filterValues { it != null },
     )
 
@@ -234,6 +241,11 @@ class SafetyApi(private val c: ApiClient) {
     suspend fun mySos(): List<SosAlert> = c.get("/safety/sos/mine")
     suspend fun sos(id: String): SosAlert = c.get("/safety/sos/$id")
     suspend fun cancelSos(id: String, reason: String?): SosAlert = c.post("/safety/sos/$id/cancel", mapOf("reason" to reason).filterValues { it != null })
+    /** The countdown's Cancel: 409 already_dispatched instead of turning into a false-alarm report. */
+    suspend fun cancelCountdown(id: String): SosAlert = c.post("/safety/sos/$id/cancel", mapOf("onlyIfPending" to true))
+    /** Records a countdown cancelled on the phone (and cancels its alert if that request did reach the server). */
+    suspend fun countdownCancelled(eventId: String, source: String, triggeredAt: String, cancelledAt: String): Ignored =
+        c.post("/safety/sos/countdown-cancelled", mapOf("eventId" to eventId, "triggerSource" to source, "triggeredAt" to triggeredAt, "cancelledAt" to cancelledAt))
     /** Skips the rest of a server-side countdown ("Send now"). */
     suspend fun dispatchNow(id: String): SosAlert = c.post("/safety/sos/$id/dispatch-now")
 

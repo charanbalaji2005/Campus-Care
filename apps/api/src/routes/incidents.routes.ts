@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import {
-  INCIDENT_STATUSES, caseMessageSchema, categorySuggestSchema, hasPermission, incidentReopenSchema, incidentWithdrawSchema, suggestIncidentCategory, incidentAssignSchema, incidentCreateSchema, incidentStatusSchema, internalNoteSchema,
+  INCIDENT_STATUSES, PRIORITIES, TERMINAL_STATUSES, caseMessageSchema, categorySuggestSchema, hasPermission, incidentReopenSchema, incidentWithdrawSchema, suggestIncidentCategory, incidentAssignSchema, incidentCreateSchema, incidentStatusSchema, internalNoteSchema,
   readReceiptSchema, type IncidentStatus, type Role,
 } from '@campuscare/shared';
 import { AppError, asyncHandler, escapeRegex, notFound, ok, pageParams, parse } from '../lib/http';
@@ -95,14 +95,38 @@ incidentsRouter.get(
     if (req.query.category) filter.category = String(req.query.category);
     if (req.query.priority) filter.priority = String(req.query.priority);
     if (req.query.overdue === 'true') filter.dueResolveAt = { $lt: new Date() };
+    if (req.query.urgent === 'true') filter.$and = [...((filter.$and as unknown[]) ?? []), { $or: [{ urgent: true }, { priority: 'urgent' }] }];
+    if (req.query.open === 'true') filter.status = { $nin: TERMINAL_STATUSES };
+    if (level !== 'reporter' && typeof req.query.assignedTo === 'string' && req.query.assignedTo) {
+      if (req.query.assignedTo === 'unassigned') filter.assignedTo = null;
+      else if (Types.ObjectId.isValid(req.query.assignedTo)) filter.assignedTo = new Types.ObjectId(req.query.assignedTo);
+    }
+    const created: Record<string, Date> = {};
+    if (req.query.from && !Number.isNaN(Date.parse(String(req.query.from)))) created.$gte = new Date(String(req.query.from));
+    if (req.query.to && !Number.isNaN(Date.parse(String(req.query.to)))) created.$lte = new Date(new Date(String(req.query.to)).getTime() + (String(req.query.to).length <= 10 ? 86399_999 : 0));
+    if (Object.keys(created).length) filter.createdAt = created;
     if (req.query.q) {
       const q = escapeRegex(String(req.query.q).slice(0, 60));
       // Triage admins can only search by case number; handlers can search titles too.
       const or = [{ caseNumber: { $regex: q, $options: 'i' } }, ...(level !== 'triage' ? [{ title: { $regex: q, $options: 'i' } }] : [])];
       filter.$and = [...((filter.$and as unknown[]) ?? []), { $or: or }];
     }
+    // Sorting for the Chats › Reports inbox. Rank sorts use the workflow order, not the alphabet.
+    const sortKey = String(req.query.sort ?? '');
+    const ranked = sortKey === 'priority' ? PRIORITIES : sortKey === 'status' ? INCIDENT_STATUSES : null;
+    const sort: Record<string, 1 | -1> =
+      sortKey === 'newest' ? { createdAt: -1 } : sortKey === 'oldest' ? { createdAt: 1 } : sortKey === 'updated' ? { updatedAt: -1 } : { urgent: -1, createdAt: -1 };
     const [items, total] = await Promise.all([
-      Incident.find(filter).sort({ urgent: -1, createdAt: -1 }).skip(skip).limit(limit).lean(),
+      ranked
+        ? Incident.aggregate([
+          { $match: filter },
+          { $addFields: { _rank: { $indexOfArray: [ranked as readonly string[], sortKey === 'priority' ? '$priority' : '$status'] } } },
+          { $sort: { _rank: sortKey === 'priority' ? -1 : 1, createdAt: -1 } },
+          { $skip: skip },
+          { $limit: limit },
+          { $project: { _rank: 0, reporterTag: 0, latitude: 0, longitude: 0 } },
+        ])
+        : Incident.find(filter).sort(sort).skip(skip).limit(limit).lean(),
       Incident.countDocuments(filter),
     ]);
     ok(res, { items: items.map((i) => listSummary(i as never, level)), total, page, limit });

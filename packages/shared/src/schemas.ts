@@ -4,7 +4,7 @@ import {
   INCIDENT_CATEGORIES, INCIDENT_STATUSES, PRIORITIES, ROLES, SEVERITIES, MAIL_SERVICES,
   HAZARD_CATEGORIES, HAZARD_STATUSES, PLACE_KINDS, LOST_FOUND_CATEGORIES, SUGGESTION_CATEGORIES, SUGGESTION_STATUSES,
   NOTIFICATION_CATEGORIES, DATA_REQUEST_TYPES, type NotificationCategory, DUTY_STATUSES, RESPONDER_SKILLS, RESPONDER_RESPONSIBILITIES,
-  CHAT_REVIEW_SCOPES, CHAT_REVIEW_BASES, STUDENT_VERIFICATION_STATUSES, SUPPORT_CATEGORIES, SUPPORT_STATUSES, SUPPORT_PRIORITIES, FAQ_STATUSES,
+  CHAT_REVIEW_SCOPES, CHAT_REVIEW_BASES, STUDENT_VERIFICATION_STATUSES, SUPPORT_CATEGORIES, SUPPORT_STATUSES, SUPPORT_PRIORITIES, FAQ_STATUSES, COUNSELLING_TYPES,
 } from './enums';
 
 const trimmed = (max: number) => z.string().trim().max(max);
@@ -63,12 +63,29 @@ export const mfaVerifySchema = z.object({ code: z.string().regex(/^\d{6}$/, 'Ent
 export const changePasswordSchema = z
   .object({ currentPassword: z.string().min(1), password: passwordSchema(), confirmPassword: z.string() })
   .refine((d) => d.password === d.confirmPassword, { path: ['confirmPassword'], message: 'Passwords do not match' });
+/** Languages a user can pick for CampusCare messages; the app itself is in English. */
+export const PROFILE_LANGUAGES = ['English', 'Telugu', 'Hindi', 'Tamil', 'Kannada', 'Malayalam', 'Bengali', 'Odia', 'Marathi'] as const;
+
+/**
+ * Self-service profile edits. Verified identifiers (email, student/staff ID, role, assigned campus
+ * for staff) are deliberately absent: they change only through verification or administrator workflows.
+ * The route also ignores fields that do not apply to the caller's role.
+ */
 export const profileUpdateSchema = z.object({
   fullName: trimmed(120).min(2).optional(),
   phone: trimmed(20).regex(/^\+?[0-9 ]{7,20}$/).optional().or(z.literal('')),
+  preferredLanguage: z.enum(PROFILE_LANGUAGES).optional(),
+  // students
   department: trimmed(120).optional(),
+  program: trimmed(120).optional().or(z.literal('')),
   academicYear: z.coerce.number().int().min(1).max(6).optional(),
+  section: trimmed(20).optional().or(z.literal('')),
   hostel: trimmed(80).optional().or(z.literal('')),
+  // staff
+  designation: trimmed(80).optional().or(z.literal('')),
+  // counsellors
+  qualifications: trimmed(300).optional().or(z.literal('')),
+  experienceYears: z.coerce.number().int().min(0).max(60).optional(),
 });
 
 // ---------------------------------------------------------------- incidents
@@ -133,6 +150,8 @@ export const appointmentRequestSchema = z.object({
   mode: z.enum(APPOINTMENT_MODES).default('in_person'),
   reason: trimmed(500).optional(),
   idempotencyKey: z.string().uuid(),
+  /** Consent to move the request to another counsellor if the chosen one declines or does not respond within an hour. */
+  allowReassignment: z.boolean().optional(),
 });
 export const appointmentReassignSchema = z.object({
   counsellorId: objectId,
@@ -158,6 +177,10 @@ export const availabilitySchema = z.object({
   timezone: z.string().max(64).default('Asia/Kolkata'),
   blockedDates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(366).default([]),
   acceptingRequests: z.boolean().default(true),
+  /** Most appointments bookable on one day (default 10). 0, sent by older app builds, is saved as 10. */
+  maxDailySessions: z.coerce.number().int().min(0).max(24).optional(),
+  specializations: z.array(z.enum(COUNSELLING_TYPES)).max(COUNSELLING_TYPES.length).optional(),
+  languages: z.array(trimmed(40).min(2)).max(12).optional(),
 });
 export const counsellingNoteSchema = z.object({
   body: trimmed(10000).min(1),
@@ -186,6 +209,7 @@ export const chatMessageSchema = z.object({
 export const chatReportSchema = z.object({ reason: trimmed(500).min(3) });
 
 // ---------------------------------------------------------------- safety
+export const SOS_TRIGGER_SOURCES = ['in_app', 'quick_tile', 'shortcut', 'notification', 'recovery'] as const;
 export const sosCreateSchema = z.object({
   idempotencyKey: z.string().uuid(),
   latitude: z.number().min(-90).max(90).optional(),
@@ -203,8 +227,24 @@ export const sosCreateSchema = z.object({
   countdownMode: z.enum(['client', 'server']).default('client'),
   /** How old the device's location fix was when the alert was raised. Informational only. */
   locationAgeSeconds: z.number().min(0).max(86400).optional(),
+  /** What started it. Recorded for review only: an SOS is never refused because of its trigger. */
+  triggerSource: z.enum(SOS_TRIGGER_SOURCES).optional(),
 });
-export const sosCancelSchema = z.object({ reason: trimmed(300).optional() });
+export const sosCancelSchema = z.object({
+  reason: trimmed(300).optional(),
+  /**
+   * Cancel only a countdown that has not been dispatched yet (the app's countdown "Cancel" button).
+   * Telling responders you are safe after dispatch is a separate, confirmed false-alarm action.
+   */
+  onlyIfPending: z.boolean().optional(),
+});
+/** A countdown cancelled on the phone before any alert reached the server (e.g. while offline). */
+export const sosCountdownCancelledSchema = z.object({
+  eventId: z.string().uuid(),
+  triggerSource: z.enum(SOS_TRIGGER_SOURCES).optional(),
+  triggeredAt: z.coerce.date().optional(),
+  cancelledAt: z.coerce.date().optional(),
+});
 export const trustedContactSchema = z.object({
   name: trimmed(80).min(2),
   email,
@@ -426,7 +466,7 @@ export type LoginInput = z.infer<typeof loginSchema>;
 export type IncidentCreateInput = z.infer<typeof incidentCreateSchema>;
 
 // ------------------------------------------------------------------ mobile app
-export const googleIdTokenSchema = z.object({ idToken: z.string().min(100).max(5000), nonce: z.string().max(200).optional() });
+export const googleIdTokenSchema = z.object({ idToken: z.string().min(100).max(5000), nonce: z.string().max(200).optional(), rememberMe: z.boolean().nullish() });
 export const deviceRegistrationSchema = z.object({
   platform: z.enum(['android']),
   pushToken: z.string().min(20).max(4096).optional().nullable(),

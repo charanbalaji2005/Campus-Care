@@ -315,7 +315,7 @@ export default function SuperAdminDashboardPage() {
           </Link>
 
           <Link
-            href="/super-admin/incidents"
+            href="/super-admin/chats?cat=reports"
             className="group rounded-xl border border-line bg-white p-3 shadow-2xs hover:border-blue-300 hover:shadow-sm transition"
           >
             <div className="flex items-center justify-between mb-2">
@@ -405,7 +405,7 @@ export default function SuperAdminDashboardPage() {
           icon={<FolderOpen className="h-4 w-4" />}
           tone={d.incidents.overdueAcknowledgement + d.incidents.overdueResolution > 0 ? 'amber' : 'neutral'}
           hint={`${d.incidents.overdueAcknowledgement} overdue triage · ${d.incidents.overdueResolution} overdue resolution`}
-          href="/super-admin/incidents"
+          href="/super-admin/chats?cat=reports"
         />
         <Kpi
           label="Delivery Health (24h)"
@@ -488,7 +488,7 @@ export default function SuperAdminDashboardPage() {
                 </div>
               </div>
               <Button variant="outline" size="sm" asChild className="h-7 text-xs">
-                <Link href="/super-admin/incidents">Triage Cases</Link>
+                <Link href="/super-admin/chats?cat=reports">Triage Cases</Link>
               </Button>
             </div>
           )}

@@ -2,15 +2,24 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { MailCheck } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { MailCheck, Smartphone } from 'lucide-react';
 import { forgotPasswordSchema } from '@campuscare/shared';
 import { AuthShell } from '@/components/layout/auth-shell';
 import { Alert, Button, Field, Input } from '@/components/ui/primitives';
 import { Turnstile, type TurnstileHandle } from '@/components/turnstile';
 import { api, ApiError } from '@/lib/api';
 import { useForm } from '@/lib/form';
+import { forgotPasswordBackTarget } from '@/lib/auth-flow';
+import { appIntentHref } from '@/components/app-handoff';
 
+/**
+ * Request a password-reset link. User-facing: the reset email opens the CampusCare app (or the
+ * user-facing /reset-password page). Only when opened from the Super Admin sign-in (?from=admin)
+ * does it link back there.
+ */
 export default function ForgotPasswordPage() {
+  const back = forgotPasswordBackTarget(useSearchParams().get('from'));
   const turnstile = React.useRef<TurnstileHandle>(null);
   const [result, setResult] = React.useState<{ message: string; expiresInMinutes?: number } | null>(null);
   const [problem, setProblem] = React.useState<string | null>(null);
@@ -35,7 +44,9 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <AuthShell title="Reset your password" subtitle="Enter your registered email and we’ll send you a secure reset link." footer={<Link href="/login" className="font-semibold text-brand-700 hover:underline">Back to sign in</Link>}>
+    <AuthShell title="Reset your password" subtitle="Enter your registered email and we’ll send you a secure reset link." footer={back === 'admin'
+      ? <Link href="/login" className="font-semibold text-brand-700 hover:underline">Back to sign in</Link>
+      : <a href={appIntentHref()} className="inline-flex items-center gap-1.5 font-semibold text-brand-700 hover:underline"><Smartphone className="h-4 w-4" aria-hidden /> Back to the CampusCare app</a>}>
       {result ? (
         <div className="card flex flex-col items-center p-8 text-center" role="status">
           <MailCheck className="h-12 w-12 text-brand-600" aria-hidden />

@@ -63,7 +63,9 @@ import edu.srmap.campuscare.ui.components.CcCard
 import edu.srmap.campuscare.ui.components.CcScreen
 import edu.srmap.campuscare.ui.components.CcSelect
 import edu.srmap.campuscare.ui.components.CcTextField
+import edu.srmap.campuscare.ui.components.Catalog
 import edu.srmap.campuscare.ui.components.ChoiceChips
+import edu.srmap.campuscare.ui.components.MultiChoiceChips
 import edu.srmap.campuscare.ui.components.Divider
 import edu.srmap.campuscare.ui.components.EmptyState
 import edu.srmap.campuscare.ui.components.IconBadge
@@ -132,7 +134,9 @@ fun CounsellorHomeScreen() {
             }
         }
         CcCard(padding = 8.dp) {
-            ListRow("Availability", subtitle = "Weekly hours, slot length, time off", icon = Icons.Rounded.Schedule, tone = Tone.Teal, onClick = { nav.navigate(Routes.Availability) })
+            ListRow("My Availability & duty", subtitle = "On/off duty, daily capacity, breaks, custom dates", icon = Icons.Rounded.Schedule, tone = Tone.Brand, onClick = { nav.navigate(Routes.MySchedule) })
+            Divider()
+            ListRow("Profile & weekly hours", subtitle = "Bio, specialisations, languages, slot length", icon = Icons.Rounded.Schedule, tone = Tone.Teal, onClick = { nav.navigate(Routes.Availability) })
             Divider()
             ListRow("My students", subtitle = "Students you've seen and follow-ups", icon = Icons.Rounded.Groups, tone = Tone.Violet, onClick = { nav.navigate(Routes.CounsellorStudents) })
             Divider()
@@ -252,6 +256,7 @@ fun AppointmentScreen(id: String) {
                     a.meetingLink?.takeIf { it.isNotBlank() }?.let { l -> CcButton("Join meeting", { context.openUrl(l) }, Modifier.fillMaxWidth(), kind = ButtonKind.Outline) }
                 }
                 a.threadId?.let { t -> CcButton("Message student", { nav.navigate(Routes.chat(t)) }, Modifier.fillMaxWidth(), kind = ButtonKind.Soft, leadingIcon = Icons.AutoMirrored.Rounded.Chat) }
+                CcButton("Reminders & follow-up tasks", { nav.navigate(Routes.appointmentReminders(a.id, counsellor = true)) }, Modifier.fillMaxWidth(), kind = ButtonKind.Outline)
 
                 SectionHeader("Private notes")
                 InfoBanner("Only you can read these notes. They are stored separately and are not visible to administrators or committees.", icon = Icons.Rounded.Lock, tone = Tone.Violet)
@@ -361,6 +366,9 @@ fun AvailabilityScreen() {
             val windows = remember(a) { mutableStateListOf<WeeklyWindow>().apply { addAll(a.weekly) } }
             val blocked = remember(a) { mutableStateListOf<String>().apply { addAll(a.blockedDates) } }
             var slot by remember(a) { mutableStateOf(a.slotMinutes.toString()) }
+            var maxDaily by remember(a) { mutableStateOf((a.maxDailySessions.takeIf { it > 0 } ?: 10).toString()) }
+            val specs = remember(a) { mutableStateListOf<String>().apply { addAll(a.specializations) } }
+            val langs = remember(a) { mutableStateListOf<String>().apply { addAll(a.languages) } }
             var accepting by remember(a) { mutableStateOf(a.acceptingRequests) }
             var title by remember(a) { mutableStateOf(a.title.orEmpty()) }
             var bio by remember(a) { mutableStateOf(a.bio.orEmpty()) }
@@ -399,6 +407,9 @@ fun AvailabilityScreen() {
                 }
                 Text("Session length", style = MaterialTheme.typography.titleSmall, color = CcColors.Ink)
                 ChoiceChips(listOf("30" to "30 min", "45" to "45 min", "50" to "50 min", "60" to "60 min", "90" to "90 min"), slot, { slot = it })
+                Text("Daily session limit", style = MaterialTheme.typography.titleSmall, color = CcColors.Ink)
+                ChoiceChips((listOf("2", "3", "4", "5", "6", "8", "10", "12") + maxDaily).distinct().sortedBy { it.toIntOrNull() ?: 0 }.map { it to it }, maxDaily, { maxDaily = it })
+                Text("Students can't book more than this many sessions with you on one day.", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
                 SectionHeader("Time off")
                 CcCard {
                     blocked.sorted().forEach { d ->
@@ -412,6 +423,10 @@ fun AvailabilityScreen() {
                         if (Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(v) && v !in blocked) { blocked.add(v); blockedInput = "" } else snack.show("Use the format 2026-12-24.")
                     })
                 }
+                SectionHeader("Specialisations")
+                MultiChoiceChips(Catalog.counsellingTypes, specs.toSet(), { k -> if (k in specs) specs.remove(k) else specs.add(k) })
+                SectionHeader("Languages")
+                MultiChoiceChips(Catalog.languages.map { it to it }, langs.toSet(), { l -> if (l in langs) langs.remove(l) else langs.add(l) })
                 SectionHeader("Profile shown to students")
                 CcTextField(title, { title = it }, label = "Title", leadingIcon = Icons.Rounded.Person, maxLength = 80)
                 CcTextField(bio, { bio = it }, label = "Short bio", singleLine = false, minLines = 3, maxLength = 600)
@@ -419,7 +434,14 @@ fun AvailabilityScreen() {
                     scope.launch {
                         busy = true
                         try {
-                            val updated = Availability(windows.toList(), slot.toIntOrNull() ?: 50, a.timezone, blocked.toList(), accepting, title.trim(), bio.trim())
+                            if (specs.isEmpty() || langs.isEmpty()) {
+                                snack.show("Choose at least one specialisation and one language.")
+                                return@launch
+                            }
+                            val updated = a.copy(
+                                weekly = windows.toList(), slotMinutes = slot.toIntOrNull() ?: 50, blockedDates = blocked.toList(), acceptingRequests = accepting,
+                                title = title.trim(), bio = bio.trim(), maxDailySessions = maxDaily.toIntOrNull() ?: 10, specializations = specs.toList(), languages = langs.toList(),
+                            )
                             app.api.counselling.saveAvailability(updated)
                             avail.set(updated)
                             snack.show("Availability saved.")

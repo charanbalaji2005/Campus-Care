@@ -15,6 +15,8 @@ import '../models/mobile';
 // RecoveryCode's unique hash index and TotpConfiguration's unique user index protect MFA.
 import '../models/duty';
 import '../models/mfa';
+import '../models/wellness';
+import '../models/chat-center';
 
 (async () => {
   await connectDatabase();

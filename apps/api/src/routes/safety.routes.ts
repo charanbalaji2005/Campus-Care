@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import {
-  SOS_ACTIVE_STATUSES, alertDeclineSchema, checkInSchema, hasPermission, locationShareSchema, locationUpdateSchema, safeWalkStartSchema, sosCancelSchema, sosCreateSchema, sosLocationUpdateSchema, sosNoteSchema,
+  SOS_ACTIVE_STATUSES, alertDeclineSchema, checkInSchema, hasPermission, locationShareSchema, locationUpdateSchema, safeWalkStartSchema, sosCancelSchema, sosCountdownCancelledSchema, sosCreateSchema, sosLocationUpdateSchema, sosNoteSchema,
   sosResolveSchema, trustedContactSchema, type Role,
 } from '@campuscare/shared';
 import { z } from 'zod';
@@ -149,7 +149,7 @@ safetyRouter.post(
   '/sos/:id/cancel',
   asyncHandler(async (req, res) => {
     if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
-    const { reason } = parse(sosCancelSchema, req.body ?? {});
+    const { reason, onlyIfPending } = parse(sosCancelSchema, req.body ?? {});
     const now = new Date();
     const beforeDispatch = await EmergencyAlert.findOneAndUpdate(
       { _id: req.params.id, userId: req.user!._id, status: 'pending', dispatchedAt: null },
@@ -166,6 +166,8 @@ safetyRouter.post(
     const a = await EmergencyAlert.findOne({ _id: req.params.id, userId: req.user!._id });
     if (!a) throw notFound();
     if (['resolved', 'cancelled'].includes(a.status)) return ok(res, serializeAlert(a, false));
+    // The countdown's Cancel never turns into a false-alarm report: that needs its own confirmation.
+    if (onlyIfPending) throw new AppError(409, 'already_dispatched', 'This SOS was already sent to Campus Security. Open CampusCare to tell them you are safe.');
     if (!settings.sos.allowCancelAfterSend) throw new AppError(409, 'cannot_cancel', 'This alert can no longer be cancelled. Call campus security to tell them you are safe.');
     const cancelled = await EmergencyAlert.findOneAndUpdate(
       { _id: a._id, status: { $nin: ['resolved', 'cancelled', 'pending'] } },
@@ -185,6 +187,30 @@ safetyRouter.post(
     emitToRoom(`sos:${cancelled._id}`, 'sos:updated', { id: String(cancelled._id), status: 'cancelled' });
     await audit({ action: 'sos.cancelled', req, targetType: 'sos', targetId: String(cancelled._id), meta: { afterDispatch: true, respondersNotified: toNotify.size } });
     ok(res, serializeAlert(cancelled, false));
+  }),
+);
+
+/**
+ * A countdown the student cancelled on the phone before any alert reached the server (for example
+ * while offline). Nothing is dispatched; it is only recorded in the audit log for review.
+ */
+safetyRouter.post(
+  '/sos/countdown-cancelled',
+  sosLimiter,
+  requirePermission('sos:raise'),
+  asyncHandler(async (req, res) => {
+    const input = parse(sosCountdownCancelledSchema, req.body);
+    // The same event may already have reached the server as a pending alert: cancel that too.
+    const pending = await EmergencyAlert.findOneAndUpdate(
+      { idempotencyKey: input.eventId, userId: req.user!._id, status: 'pending', dispatchedAt: null },
+      { $set: { status: 'cancelled', cancelledAt: new Date() }, $push: { events: { type: 'cancelled_before_dispatch', at: new Date(), actorLabel: 'Student', note: null, studentVisible: true } } },
+      { new: true },
+    );
+    await audit({
+      action: 'sos.countdown_cancelled', req, targetType: 'sos', targetId: pending ? String(pending._id) : null,
+      meta: { eventId: input.eventId, trigger: input.triggerSource ?? null, triggeredAt: input.triggeredAt ?? null, cancelledAt: input.cancelledAt ?? null, alertCancelled: Boolean(pending) },
+    });
+    ok(res, { recorded: true, alertCancelled: Boolean(pending) });
   }),
 );
 

@@ -34,6 +34,18 @@ const userSchema = new Schema(
     academicYear: { type: Number, default: null },
     phone: { type: String, trim: true, default: null },
     hostel: { type: String, trim: true, default: null },
+    /** Student course/programme (e.g. B.Tech CSE) and class section. */
+    program: { type: String, trim: true, default: null },
+    section: { type: String, trim: true, default: null },
+    /** Language for CampusCare messages where available. */
+    preferredLanguage: { type: String, trim: true, default: null },
+    /** Staff job title shown on their profile (e.g. "Senior Counsellor", "Hostel Warden"). */
+    designation: { type: String, trim: true, default: null },
+    /** Counsellor professional details shown to colleagues; never contains student information. */
+    qualifications: { type: String, trim: true, default: null },
+    experienceYears: { type: Number, default: null },
+    /** Set when the user uploads a profile photo (stored in UserAvatar); drives cache-busting. */
+    avatarUpdatedAt: { type: Date, default: null },
     campusZone: { type: String, trim: true, default: null },
     counsellorApproved: { type: Boolean, default: false },
     counsellorApprovedAt: { type: Date, default: null },
@@ -124,6 +136,13 @@ export function publicUser(u: UserDoc | (UserAttrs & { _id: Types.ObjectId; crea
     academicYear: u.academicYear ?? null,
     phone: u.phone ?? null,
     hostel: u.hostel ?? null,
+    program: (u as { program?: string | null }).program ?? null,
+    section: (u as { section?: string | null }).section ?? null,
+    preferredLanguage: (u as { preferredLanguage?: string | null }).preferredLanguage ?? null,
+    designation: (u as { designation?: string | null }).designation ?? null,
+    qualifications: (u as { qualifications?: string | null }).qualifications ?? null,
+    experienceYears: (u as { experienceYears?: number | null }).experienceYears ?? null,
+    avatarUpdatedAt: (u as { avatarUpdatedAt?: Date | null }).avatarUpdatedAt ?? null,
     campusZone: u.campusZone ?? null,
     counsellorApproved: Boolean(u.counsellorApproved),
     counsellorApprovedAt: u.counsellorApprovedAt ?? null,
@@ -149,6 +168,22 @@ export function publicUser(u: UserDoc | (UserAttrs & { _id: Types.ObjectId; crea
     counsellorCredentials: (u as { counsellorCredentials?: string }).counsellorCredentials ?? null,
   };
 }
+
+// ------------------------------------------------------------------ profile photos
+/**
+ * One small, re-encoded profile photo per user. Kept in the database rather than file storage so it
+ * survives redeploys; the client resizes before upload and the route caps the size.
+ */
+const userAvatarSchema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    mime: { type: String, required: true },
+    data: { type: Buffer, required: true },
+  },
+  { timestamps: true },
+);
+userAvatarSchema.index({ userId: 1 }, { unique: true });
+export const UserAvatar = model('UserAvatar', userAvatarSchema);
 
 // ------------------------------------------------------------------ external identities (Google)
 const externalIdentitySchema = new Schema(

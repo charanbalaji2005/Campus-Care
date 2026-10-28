@@ -54,9 +54,6 @@ data class ChannelTotals(
 
 @Serializable
 data class ChannelDashboard(val posts: List<FeedPost> = emptyList(), val totals: ChannelTotals = ChannelTotals(), val followers: Int = 0)
-
-// ------------------------------------------------------------------ private counsellor conversations
-
 @Serializable
 data class ConversationCounsellor(val id: String, val name: String, val title: String = "Counsellor", val active: Boolean = true)
 

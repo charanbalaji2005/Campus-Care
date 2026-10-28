@@ -116,7 +116,7 @@ fun LoginScreen() {
                 try {
                     val resp = app.api.auth.mfaChallenge(challenge, mfaCode)
                     app.rememberedEmail = if (rememberMe) email.trim().lowercase() else null
-                    completeSignIn(app, nav, resp)
+                    completeSignIn(app, nav, resp, rememberMe)
                 } catch (e: ApiException) {
                     if (e.code == "mfa_challenge_expired") {
                         needMfa = false
@@ -211,7 +211,7 @@ fun LoginScreen() {
                         googleBusy = true
                         when (val r = GoogleSignIn.signIn(context)) {
                             is GoogleResult.Token -> try {
-                                completeSignIn(app, nav, app.api.auth.google(r.idToken, r.nonce))
+                                completeSignIn(app, nav, app.api.auth.google(r.idToken, r.nonce, rememberMe), rememberMe)
                             } catch (e: ApiException) {
                                 error = e.message
                             }

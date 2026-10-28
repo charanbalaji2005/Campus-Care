@@ -62,6 +62,8 @@ const emailDeliverySchema = new Schema(
     },
     provider: { type: String, default: null },
     providerMessageId: { type: String, default: null },
+    /** First line of the provider's reply when it accepted the message (e.g. "250 2.0.0 OK"). */
+    providerResponse: { type: String, default: null },
     attempts: { type: Number, default: 0 },
     lastError: { type: String, default: null },
     bounceReason: { type: String, default: null },

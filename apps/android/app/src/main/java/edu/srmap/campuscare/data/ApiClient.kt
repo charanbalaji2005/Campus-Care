@@ -87,6 +87,14 @@ class ApiClient(val baseUrl: String, private val session: SessionStore, val json
         return execute(req, serializer<T>())
     }
 
+    /** Multipart PUT for endpoints that replace a single file (profile photo). */
+    suspend inline fun <reified T> uploadPut(path: String, bytes: ByteArray, fileName: String, mimeType: String): T {
+        val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("file", fileName, bytes.toRequestBody(mimeType.toMediaType()))
+            .build()
+        return execute(Request.Builder().url(url(path)).put(multipart).build(), serializer<T>())
+    }
+
     /** Raw bytes (exports, attachments). */
     suspend fun download(path: String): ByteArray = withContext(Dispatchers.IO) {
         val req = Request.Builder().url(url(path)).get().build()

@@ -143,5 +143,16 @@ object Catalog {
     )
 
     fun roleLabel(role: String) = roleLabels[role] ?: role
+
+    /** Counselling specialisations (matches COUNSELLING_TYPES on the server). */
+    val counsellingTypes = listOf(
+        "general" to "General support", "academic_stress" to "Academic stress", "anxiety_mental_health" to "Anxiety & mental health",
+        "career" to "Career", "relationships" to "Relationships", "grief_loss" to "Grief & loss",
+    )
+
+    fun counsellingType(key: String) = counsellingTypes.firstOrNull { it.first == key }?.second ?: key.replace('_', ' ').replaceFirstChar { it.uppercase() }
+
+    /** Languages offered for CampusCare messages (matches PROFILE_LANGUAGES on the server). */
+    val languages = listOf("English", "Telugu", "Hindi", "Tamil", "Kannada", "Malayalam", "Bengali", "Odia", "Marathi")
     val personIcon = Icons.Rounded.Person
 }

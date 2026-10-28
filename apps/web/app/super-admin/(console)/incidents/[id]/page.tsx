@@ -1,9 +1,7 @@
-'use client';
+import { redirect } from 'next/navigation';
 
-import { useParams } from 'next/navigation';
-import { CaseWorkspace } from '@/components/case/case-workspace';
-
-export default function AdminCasePage() {
-  const { id } = useParams<{ id: string }>();
-  return <CaseWorkspace caseId={id} backHref="/super-admin/incidents" />;
+/** Deep links to a single report open it inside Chats › Reports. */
+export default async function AdminCasePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  redirect(`/super-admin/chats?cat=reports&r=${encodeURIComponent(id)}`);
 }

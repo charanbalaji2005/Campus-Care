@@ -19,7 +19,7 @@ function SosSettings() {
   const disabling = !d.enabled;
   return (
     <>
-      <SectionCard title="SOS emergency alerts" description="The 10-second countdown gives students time to cancel accidental presses." dirty={s.dirty} saving={s.saving} onSave={() => (disabling ? setConfirmOff(true) : void s.save())} onDiscard={s.discard} onDefaults={s.resetToDefaults}>
+      <SectionCard title="SOS emergency alerts" description={`The ${d.countdownSeconds}-second countdown gives students time to cancel accidental presses. It is held on the server, so it completes even if the phone goes offline or the app is closed.`} dirty={s.dirty} saving={s.saving} onSave={() => (disabling ? setConfirmOff(true) : void s.save())} onDiscard={s.discard} onDefaults={s.resetToDefaults}>
         <SwitchRow id="sos-on" label="SOS enabled" description="Turning this off removes the SOS button for every student." checked={d.enabled} onCheckedChange={(v) => s.setDraft({ ...d, enabled: v })} />
         {disabling && <Alert tone="rose" icon={<AlertTriangle className="h-4 w-4" />} className="my-3">Students will not be able to raise an SOS. Make sure emergency phone numbers are prominent in the contacts directory.</Alert>}
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
@@ -30,6 +30,19 @@ function SosSettings() {
         {d.secondEscalationAfterSeconds <= d.escalateAfterSeconds && <Alert tone="amber" className="my-3">The second escalation should happen after the first.</Alert>}
         <SwitchRow id="sos-cancel" label="Allow cancel after sending" description="Students can mark an alert as a false alarm; responders are notified." checked={d.allowCancelAfterSend} onCheckedChange={(v) => s.setDraft({ ...d, allowCancelAfterSend: v })} />
         <SwitchRow id="sos-email" label="Email emergency recipients" description="In addition to realtime and in-app alerts to on-duty security officers." checked={d.emailRecipients} onCheckedChange={(v) => s.setDraft({ ...d, emailRecipients: v })} />
+        <div className="mt-5 border-t border-slate-100 pt-4">
+          <p className="text-sm font-semibold text-ink">Quick SOS trigger</p>
+          <p className="mt-1 text-xs text-ink-soft">
+            Students start SOS from the Quick Settings tile (works from the notification shade on the lock screen), the home-screen shortcut or the SOS button.
+            A countdown notification with Cancel and Send SOS appears straight away. Android does not let apps detect power-button presses, so a
+            power-button trigger is not offered; Android 12+ phones have their own Emergency SOS (press power 5 times) that calls 112.
+          </p>
+          <SwitchRow id="sos-quick" label="Quick triggers start the countdown immediately" description="Off: the tile and shortcut only open the SOS screen. The SOS button inside the app always works." checked={d.quickTriggerEnabled} onCheckedChange={(v) => s.setDraft({ ...d, quickTriggerEnabled: v })} />
+          <Field id="sos-msg" label="Countdown notification message" hint={`Shown on the lock screen, so no personal or location details. ${d.quickTriggerMessage.length}/160.`} className="mt-3">
+            <Input maxLength={160} value={d.quickTriggerMessage} onChange={(e) => s.setDraft({ ...d, quickTriggerMessage: e.target.value })} />
+          </Field>
+          {!d.quickTriggerMessage.trim() && <Alert tone="amber" className="mt-2">Enter a message: the notification needs to tell people what will happen.</Alert>}
+        </div>
       </SectionCard>
       <ConfirmDialog open={confirmOff} onOpenChange={(o) => { setConfirmOff(o); if (!o) setTyped(''); }} title="Turn off SOS for everyone?" description="Type DISABLE SOS to confirm. This is recorded in the audit log." destructive confirmLabel="Turn off SOS" loading={s.saving} onConfirm={async () => { if (typed !== 'DISABLE SOS') { toast.error('Type DISABLE SOS exactly.'); return; } if (await s.save({ confirm: typed })) { setConfirmOff(false); setTyped(''); } }}>
         <Input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="DISABLE SOS" aria-label="Confirmation text" />

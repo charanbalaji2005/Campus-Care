@@ -2,15 +2,15 @@
  * requireTurnstile: every protected request is verified server-side; no request field can skip it.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { requireTurnstile } from '../src/middleware/security';
 
-const verify = vi.fn();
+// vi.mock calls are hoisted above the imports.
+const verify = vi.hoisted(() => vi.fn());
 vi.mock('../src/services/turnstile.service', () => ({ verifyTurnstile: (...a: unknown[]) => verify(...a) }));
 vi.mock('../src/services/settings.service', () => ({
   getSettings: async () => ({ turnstile: { enabled: true, forms: { login: true } } }),
 }));
 vi.mock('../src/services/audit.service', () => ({ audit: async () => undefined }));
-
-const { requireTurnstile } = await import('../src/middleware/security');
 
 async function run(body: Record<string, unknown>) {
   let passed: unknown = 'not-called';

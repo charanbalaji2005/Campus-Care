@@ -1,10 +1,17 @@
 import { Router } from 'express';
-import { NOTIFICATION_CATEGORIES, dataRequestSchema, notificationPrefsSchema, safetyCardSchema } from '@campuscare/shared';
+import {
+  ACTIVE_APPOINTMENT_STATUSES, NOTIFICATION_CATEGORIES, SOS_ACTIVE_STATUSES, dataRequestSchema, notificationPrefsSchema, permissionsFor, safetyCardSchema, type Role,
+} from '@campuscare/shared';
 import { AppError, asyncHandler, ok, parse } from '../lib/http';
 import { anonymousReporterTag, decryptSecret, encryptSecret } from '../lib/crypto';
-import { ExternalIdentity, Session, User, publicUser } from '../models/user';
+import { ExternalIdentity, Session, User, UserAvatar, publicUser } from '../models/user';
 import { Incident } from '../models/incident';
-import { Appointment } from '../models/counselling';
+import { Appointment, Availability } from '../models/counselling';
+import { DutyShift, ResponderAvailability, ResponseZone } from '../models/duty';
+import { upload } from '../middleware/security';
+import { sniffMime } from '../lib/sniff';
+import { capacityOf } from '../lib/schedule';
+import { mfaRequiredFor } from '../services/auth.service';
 import { EmergencyAlert, LocationAccessAudit, LocationShare, SafeWalkSession, TrustedContact } from '../models/safety';
 import { AuditLog } from '../models/platform';
 import { DataRequest, HazardReport, LostFoundItem } from '../models/community';
@@ -46,6 +53,179 @@ meRouter.delete(
     await User.updateOne({ _id: req.user!._id }, { $set: { safetyCardEnc: null, safetyCardShare: false, safetyCardUpdatedAt: new Date() } });
     await audit({ action: 'safety_card.deleted', req, targetType: 'user', targetId: String(req.user!._id) });
     ok(res, { ok: true });
+  }),
+);
+
+// ------------------------------------------------------------------ profile photo
+const AVATAR_MAX_BYTES = 512 * 1024;
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+meRouter.get(
+  '/avatar',
+  asyncHandler(async (req, res) => {
+    // Not lean: a hydrated document gives the photo back as a Buffer rather than a BSON Binary.
+    const a = await UserAvatar.findOne({ userId: req.user!._id });
+    if (!a) throw new AppError(404, 'not_found', 'No profile photo.');
+    res.setHeader('Content-Type', a.mime);
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end(a.data);
+  }),
+);
+
+meRouter.put(
+  '/avatar',
+  upload.single('file'),
+  asyncHandler(async (req, res) => {
+    const file = req.file;
+    if (!file) throw new AppError(400, 'bad_request', 'Choose a photo to upload.');
+    const mime = sniffMime(file.buffer);
+    if (!mime || !AVATAR_TYPES.includes(mime)) throw new AppError(415, 'unsupported_type', 'Profile photos must be JPG, PNG or WEBP images.');
+    if (file.size > AVATAR_MAX_BYTES) throw new AppError(413, 'too_large', 'Profile photos must be 512 KB or smaller.');
+    await UserAvatar.findOneAndUpdate({ userId: req.user!._id }, { $set: { mime, data: file.buffer } }, { upsert: true });
+    req.user!.avatarUpdatedAt = new Date();
+    await req.user!.save();
+    await audit({ action: 'user.avatar_updated', req, targetType: 'user', targetId: String(req.user!._id) });
+    ok(res, { user: publicUser(req.user!) });
+  }),
+);
+
+meRouter.delete(
+  '/avatar',
+  asyncHandler(async (req, res) => {
+    await UserAvatar.deleteOne({ userId: req.user!._id });
+    req.user!.avatarUpdatedAt = null;
+    await req.user!.save();
+    await audit({ action: 'user.avatar_removed', req, targetType: 'user', targetId: String(req.user!._id) });
+    ok(res, { user: publicUser(req.user!) });
+  }),
+);
+
+// ------------------------------------------------------------------ profile overview (role-specific)
+const SECURITY_ACTIONS = /^(auth\.|session\.|user\.(sessions_revoked|mfa_reset|password|recovery))/;
+
+/**
+ * Everything the Profile page shows besides the user record itself, shaped by role. It holds
+ * counts and statuses only: no student names, counselling content or SOS details.
+ */
+meRouter.get(
+  '/profile',
+  asyncHandler(async (req, res) => {
+    const u = req.user!;
+    const uid = u._id;
+    const now = new Date();
+    const [sessions, google, mfaRequired] = await Promise.all([
+      Session.countDocuments({ userId: uid, revokedAt: null, expiresAt: { $gt: now } }),
+      ExternalIdentity.exists({ userId: uid, provider: 'google' }),
+      mfaRequiredFor(u),
+    ]);
+    const out: Record<string, unknown> = {
+      account: {
+        emailVerified: u.emailVerified,
+        mfaEnabled: u.mfaEnabled,
+        mfaRequired,
+        activeSessions: sessions,
+        googleLinked: Boolean(google),
+        lastLoginAt: u.lastLoginAt ?? null,
+        passwordChangedAt: u.passwordChangedAt ?? null,
+        memberSince: (u as { createdAt?: Date }).createdAt ?? null,
+      },
+    };
+
+    if (u.role === 'student') {
+      const [next, upcoming, contacts, card] = await Promise.all([
+        Appointment.findOne({ studentId: uid, status: { $in: ACTIVE_APPOINTMENT_STATUSES }, startAt: { $gte: now } }, { startAt: 1, mode: 1, status: 1 }).sort({ startAt: 1 }).lean(),
+        Appointment.countDocuments({ studentId: uid, status: { $in: ACTIVE_APPOINTMENT_STATUSES }, $or: [{ startAt: { $gte: now } }, { startAt: null }] }),
+        TrustedContact.countDocuments({ userId: uid, status: { $in: ['pending', 'verified'] } }),
+        User.findById(uid, { safetyCardEnc: 1, safetyCardShare: 1 }).select('+safetyCardEnc').lean(),
+      ]);
+      out.student = {
+        upcomingAppointments: upcoming,
+        nextAppointment: next ? { startAt: next.startAt, mode: next.mode, status: next.status } : null,
+        trustedContacts: contacts,
+        safetyCardSet: Boolean(card?.safetyCardEnc),
+        safetyCardShared: Boolean(card?.safetyCardShare),
+      };
+    }
+
+    if (u.role === 'counsellor') {
+      const dayAhead = new Date(now.getTime() + 24 * 3600_000);
+      const [a, upcoming, pending, next24h, decided] = await Promise.all([
+        Availability.findOne({ counsellorId: uid }).lean(),
+        Appointment.countDocuments({ counsellorId: uid, status: { $in: ['confirmed', 'rescheduled'] }, startAt: { $gte: now } }),
+        Appointment.countDocuments({ counsellorId: uid, status: 'requested' }),
+        Appointment.countDocuments({ counsellorId: uid, status: { $in: ['confirmed', 'rescheduled'] }, startAt: { $gte: now, $lt: dayAhead } }),
+        Appointment.find({ counsellorId: uid, status: { $ne: 'requested' }, createdAt: { $gte: new Date(now.getTime() - 30 * 86400_000) } }, { createdAt: 1, updatedAt: 1 }).limit(200).lean(),
+      ]);
+      const hours = decided
+        .map((r) => ((r.updatedAt as Date).getTime() - (r.createdAt as Date).getTime()) / 3600_000)
+        .filter((h) => h >= 0)
+        .sort((x, y) => x - y);
+      const today = now.toISOString().slice(0, 10);
+      out.counsellor = {
+        onDuty: Boolean(a?.acceptingRequests),
+        title: a?.title ?? 'Counsellor',
+        bio: a?.bio ?? '',
+        campus: a?.campus ?? 'main',
+        specializations: a?.specializations ?? [],
+        languages: a?.languages ?? [],
+        supportedModes: a?.supportedModes ?? [],
+        slotMinutes: a?.slotMinutes ?? 50,
+        maxDailySessions: a?.maxDailySessions || 10,
+        workingDays: [...new Set((a?.weekly ?? []).map((w) => w.weekday as number))].sort(),
+        upcomingBlockedDates: (a?.blockedDates ?? []).filter((d) => d >= today).sort().slice(0, 5),
+        upcomingAppointments: upcoming,
+        pendingRequests: pending,
+        sessionsNext24h: next24h,
+        // Median time from a request to the counsellor's decision over the last 30 days (aggregate only).
+        medianResponseHours: hours.length ? Math.round(hours[Math.floor(hours.length / 2)] * 10) / 10 : null,
+        decidedLast30Days: hours.length,
+      };
+    }
+
+    if (u.role === 'security_officer') {
+      const [avail, shift, active] = await Promise.all([
+        ResponderAvailability.findOne({ userId: uid }).lean(),
+        DutyShift.findOne({ responderId: uid, status: { $in: ['accepted', 'active'] }, endAt: { $gt: now } }, { startAt: 1, endAt: 1, status: 1, zoneId: 1, campus: 1 }).sort({ startAt: 1 }).lean(),
+        EmergencyAlert.find({ assignedTo: uid, status: { $in: SOS_ACTIVE_STATUSES } }, { alertNumber: 1, status: 1, createdAt: 1 }).sort({ createdAt: -1 }).limit(10).lean(),
+      ]);
+      const zoneIds = [avail?.zoneId, shift?.zoneId].filter(Boolean);
+      const zones = zoneIds.length ? await ResponseZone.find({ _id: { $in: zoneIds } }, { name: 1 }).lean() : [];
+      const zoneName = (id: unknown) => (id ? zones.find((z) => String(z._id) === String(id))?.name ?? null : null);
+      out.officer = {
+        dutyStatus: avail?.status ?? 'off_duty',
+        statusChangedAt: avail?.statusChangedAt ?? null,
+        campus: avail?.campus ?? 'main',
+        zone: zoneName(avail?.zoneId) ?? u.dutyZone ?? null,
+        responsibilities: avail?.responsibilities ?? [],
+        skills: avail?.skills ?? [],
+        locationConsent: Boolean(avail?.locationConsent),
+        lastHeartbeatAt: avail?.lastHeartbeatAt ?? null,
+        shift: shift ? { startAt: shift.startAt, endAt: shift.endAt, status: shift.status, zone: zoneName(shift.zoneId), campus: shift.campus } : null,
+        // Reference numbers and status only; student details stay on the response screen.
+        activeIncidents: active.map((a) => ({ id: String(a._id), alertNumber: a.alertNumber ?? null, status: a.status, createdAt: a.createdAt })),
+      };
+    }
+
+    if (u.role === 'admin' || u.role === 'super_admin') {
+      const permissions = [...permissionsFor({ role: u.role as Role, permissions: u.permissions })].sort();
+      const [recent, security] = await Promise.all([
+        AuditLog.find({ actorId: uid, action: { $not: SECURITY_ACTIONS } }, { action: 1, at: 1, targetType: 1, outcome: 1 }).sort({ at: -1 }).limit(8).lean(),
+        AuditLog.find({ $or: [{ actorId: uid }, { targetType: 'user', targetId: String(uid) }], action: SECURITY_ACTIONS }, { action: 1, at: 1, outcome: 1 }).sort({ at: -1 }).limit(10).lean(),
+      ]);
+      out.admin = {
+        scope: u.role === 'super_admin' ? 'system' : 'campus',
+        managedCampuses: u.managedCampuses ?? [],
+        campusZone: u.campusZone ?? null,
+        permissions,
+        // Grants beyond the role's defaults (set by a Super Admin in Roles & Permissions).
+        extraPermissions: (u.permissions ?? []).filter((p) => permissions.includes(p as never)),
+        recentActivity: recent.map((r) => ({ action: r.action, at: r.at, targetType: r.targetType ?? null, outcome: r.outcome })),
+        securityActivity: security.map((e) => ({ action: e.action, at: e.at, outcome: e.outcome })),
+      };
+    }
+
+    ok(res, out);
   }),
 );
 

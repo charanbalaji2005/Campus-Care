@@ -5,8 +5,9 @@ import { useApi } from '@/lib/hooks';
 import { formatDateTime, humanize } from '@/lib/utils';
 import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Select, Skeleton } from '@/components/ui/primitives';
 import { EmailTabs } from '@/components/super-admin/email-tabs';
+import { DELIVERY_STATUS } from '@/components/super-admin/email-diagnostics';
 
-interface Delivery { id: string; template: string; to: string; status: 'queued' | 'sent' | 'failed'; provider: string; attempts: number; lastError: string | null; sentAt: string | null; createdAt: string }
+interface Delivery { id: string; template: string; to: string; status: string; provider: string; attempts: number; lastError: string | null; bounceReason: string | null; providerResponse: string | null; sentAt: string | null; createdAt: string }
 
 export default function EmailLogsPage() {
   const [status, setStatus] = React.useState('');
@@ -15,9 +16,9 @@ export default function EmailLogsPage() {
   const pages = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
   return (
     <div className="mx-auto max-w-6xl">
-      <PageHeader title="Email" actions={<Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className="w-40" aria-label="Status"><option value="">All</option><option value="queued">Queued</option><option value="sent">Sent</option><option value="failed">Failed</option></Select>} />
+      <PageHeader title="Email" actions={<Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className="w-40" aria-label="Status"><option value="">All</option><option value="queued">Queued</option><option value="accepted_by_provider">Accepted by provider</option><option value="bounced">Bounced</option><option value="rejected">Rejected</option><option value="failed">Failed</option></Select>} />
       <EmailTabs />
-      <p className="mb-3 text-sm text-ink-soft">Recipient addresses are masked. Message bodies are not stored.</p>
+      <p className="mb-3 text-sm text-ink-soft">Recipient addresses are masked. Message bodies are not stored. “Accepted by provider” means the mail service took the message; a missing mailbox is reported later as Bounced.</p>
       {error && <ErrorState message={error.message} onRetry={() => mutate()} />}
       <Card className="overflow-hidden">
         {!data && !error && <div className="p-5"><Skeleton className="h-40" /></div>}
@@ -32,9 +33,9 @@ export default function EmailLogsPage() {
                     <td className="whitespace-nowrap px-4 py-2.5 text-ink-soft">{formatDateTime(d.createdAt)}</td>
                     <td className="px-4 py-2.5">{humanize(d.template)}</td>
                     <td className="px-4 py-2.5 font-mono text-xs">{d.to}</td>
-                    <td className="px-4 py-2.5"><Badge tone={d.status === 'sent' ? 'brand' : d.status === 'failed' ? 'rose' : 'amber'}>{d.status}</Badge> <span className="text-xs text-ink-soft">{d.provider}</span></td>
+                    <td className="px-4 py-2.5"><Badge tone={(DELIVERY_STATUS[d.status] ?? { tone: 'neutral' as const }).tone}>{DELIVERY_STATUS[d.status]?.label ?? d.status}</Badge> <span className="text-xs text-ink-soft">{d.provider}</span></td>
                     <td className="px-4 py-2.5">{d.attempts}</td>
-                    <td className="max-w-xs truncate px-4 py-2.5 text-xs text-rose-700" title={d.lastError ?? ''}>{d.lastError ?? '—'}</td>
+                    <td className={`max-w-xs truncate px-4 py-2.5 text-xs ${d.bounceReason || d.lastError ? 'text-rose-700' : 'text-ink-soft'}`} title={d.bounceReason ?? d.lastError ?? d.providerResponse ?? ''}>{d.bounceReason ?? d.lastError ?? d.providerResponse ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

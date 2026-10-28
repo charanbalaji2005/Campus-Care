@@ -1,7 +1,9 @@
 'use client';
 
+import * as React from 'react';
 import Link from 'next/link';
-import { KeyRound, ShieldCheck } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { AlertCircle, KeyRound, ShieldCheck } from 'lucide-react';
 import { AuthShell } from '@/components/layout/auth-shell';
 import { Alert, Button } from '@/components/ui/primitives';
 
@@ -18,9 +20,19 @@ function GoogleIcon() {
 
 /** Entry point for the Super Admin console. Authentication uses the same hardened sign-in flow (Turnstile, lockout, MFA). */
 export default function SuperAdminLogin() {
+  const params = useSearchParams();
+  const isExpired = params.get('reason') === 'expired' || params.get('error') === 'session_expired';
+  const nextParam = params.get('next') || '/super-admin/dashboard';
+
   return (
     <AuthShell title="Super Admin console" subtitle="Platform configuration for authorised university IT administrators.">
       <div className="space-y-4">
+        {isExpired && (
+          <Alert tone="amber" icon={<AlertCircle className="h-4 w-4" />}>
+            <span role="alert">Your session expired. Please sign in again.</span>
+          </Alert>
+        )}
+
         <Alert tone="neutral" icon={<ShieldCheck className="h-4 w-4" />}>
           Super Admin accounts are never created by public sign-up. The first account is created with the one-time bootstrap command on the server; further Super Admins are invited from inside this console. Two-step verification is required.
         </Alert>
@@ -39,7 +51,7 @@ export default function SuperAdminLogin() {
         </div>
 
         <Button className="w-full" size="lg" asChild>
-          <Link href="/login?next=%2Fsuper-admin%2Fdashboard">
+          <Link href={`/login?${isExpired ? 'reason=expired&' : ''}next=${encodeURIComponent(nextParam)}`}>
             <KeyRound className="h-4 w-4" /> Sign in with Email &amp; Password
           </Link>
         </Button>

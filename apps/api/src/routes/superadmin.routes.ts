@@ -22,7 +22,8 @@ import { ExternalIdentity, Session, User, publicUser } from '../models/user';
 import { getSettings, updateSettings } from '../services/settings.service';
 import { audit } from '../services/audit.service';
 import { DEFAULT_TEMPLATES, TEMPLATE_KEYS, renderTemplate, type TemplateKey } from '../services/email/templates';
-import { sendEmail, verifyEmailProvider } from '../services/email/email.service';
+import { bounceCheck, checkBounces, emailReadiness, maskEmail, providerSummary, sendEmail, sendTestEmail, verifyEmailProvider } from '../services/email/email.service';
+import { workerStatus } from '../services/jobs.service';
 import { revokeAllSessions } from '../services/auth.service';
 import { removeTotp } from '../services/mfa.service';
 import { googleRedirectUri } from '../services/google.service';
@@ -258,15 +259,76 @@ superAdminRouter.patch('/email/providers/:id', requirePermission('email:manage')
   ok(res, { ok: true });
 }));
 
+/**
+ * Sends a test email right now (not via the queue) to the signed-in administrator's own address and
+ * returns the provider's actual reply. Accepted by the provider is not the same as delivered.
+ */
 superAdminRouter.post('/email/test', requirePermission('email:manage'), asyncHandler(async (req, res) => {
   const check = await verifyEmailProvider();
   if (!check.ok) {
-    await audit({ action: 'email.test_failed', req, outcome: 'failure', meta: { type: check.type, service: check.service } });
+    await audit({ action: 'email.test_failed', req, outcome: 'failure', meta: { type: check.type, service: check.service, stage: 'login' } });
     throw new AppError(422, 'email_login_failed', `Could not sign in to the mail service: ${check.error ?? 'unknown error'}. Check the address and app password.`);
   }
-  await sendEmail('security_alert', req.user!.email, { name: req.user!.fullName, message: 'This is a test email from the CampusCare Super Admin console.' });
-  await audit({ action: 'email.test_sent', req, meta: { type: check.type, service: check.service } });
-  ok(res, { ok: true, message: check.type === 'nodemailer' ? `Signed in to ${check.service} successfully. Test email queued to ${req.user!.email}.` : `Development mode: the test email was written to the dev mail folder.` });
+  if (check.type !== 'nodemailer') {
+    await sendEmail('security_alert', req.user!.email, { name: req.user!.fullName, message: 'This is a test email from the CampusCare Super Admin console.' });
+    return ok(res, { ok: true, message: 'Development mode: the test email was written to the dev mail folder.' });
+  }
+  const r = await sendTestEmail(req.user!.email, req.user!.fullName);
+  await audit({ action: r.ok ? 'email.test_sent' : 'email.test_failed', req, outcome: r.ok ? 'success' : 'failure', meta: { type: check.type, service: check.service, stage: r.stage } });
+  if (!r.ok) throw new AppError(422, 'email_test_failed', `The mail service did not accept the test email (${r.stage}): ${r.error ?? 'unknown error'}`);
+  ok(res, {
+    ok: true,
+    providerResponse: 'response' in r ? r.response : null,
+    message: `${check.service} accepted the test email for ${req.user!.email} (reply: ${'response' in r ? r.response ?? 'none' : 'none'}). Accepted is not delivered: check the inbox and spam folder. If the mailbox does not exist, a bounce appears in the delivery log within about 10 minutes.`,
+  });
+}));
+
+/** Everything needed to see why an account email did not arrive. No secrets, no tokens, masked addresses. */
+superAdminRouter.get('/email/diagnostics', requirePermission('email:manage'), asyncHandler(async (req, res) => {
+  if (req.query.checkBounces === '1') await checkBounces();
+  const day = new Date(Date.now() - 86400_000);
+  const week = new Date(Date.now() - 7 * 86400_000);
+  const [provider, login, readiness, pendingEmailJobs, oldestPending, failedJobs24h, byStatus, recent, lastAccepted] = await Promise.all([
+    providerSummary(),
+    verifyEmailProvider(),
+    emailReadiness(),
+    Job.countDocuments({ type: 'email.send', status: { $in: ['pending', 'running'] } }),
+    Job.findOne({ type: 'email.send', status: 'pending' }).sort({ createdAt: 1 }).select('createdAt runAt attempts lastError').lean(),
+    Job.countDocuments({ type: 'email.send', status: 'failed', updatedAt: { $gte: day } }),
+    EmailDelivery.aggregate([{ $match: { createdAt: { $gte: week } } }, { $group: { _id: { t: '$template', s: '$status' }, n: { $sum: 1 } } }]),
+    EmailDelivery.find({ template: { $in: ['verify_email', 'password_reset'] } }).sort({ createdAt: -1 }).limit(20).lean(),
+    EmailDelivery.findOne({ status: { $in: ['accepted_by_provider', 'sent'] } }).sort({ sentAt: -1 }).select('sentAt').lean(),
+  ]);
+  ok(res, {
+    provider: { ...provider, login: { ok: login.ok, error: login.error ?? null } },
+    readiness,
+    worker: workerStatus(),
+    queue: {
+      pendingEmailJobs,
+      oldestPendingSeconds: oldestPending ? Math.round((Date.now() - new Date(oldestPending.createdAt as Date).getTime()) / 1000) : null,
+      oldestPendingLastError: oldestPending?.lastError ?? null,
+      failedEmailJobs24h: failedJobs24h,
+    },
+    lastAcceptedAt: lastAccepted?.sentAt ?? null,
+    counts7d: byStatus.map((b) => ({ template: b._id.t, status: b._id.s, count: b.n })),
+    recentAccountEmails: recent.map((d) => ({
+      id: String(d._id), template: d.template, to: d.toMasked, status: d.status, attempts: d.attempts,
+      providerResponse: d.providerResponse ?? null, lastError: d.lastError, bounceReason: d.bounceReason ?? null, createdAt: d.createdAt, sentAt: d.sentAt,
+    })),
+    bounces: { ...bounceCheck, enabled: env.EMAIL_BOUNCE_TRACKING !== 'false' },
+    // Names and non-secret values only; secrets are reported as set / not set.
+    deployment: {
+      NODE_ENV: env.NODE_ENV,
+      EMAIL_PROVIDER: env.EMAIL_PROVIDER,
+      MAIL_SERVICE: env.MAIL_SERVICE,
+      MAIL_USER: env.MAIL_USER ? maskEmail(env.MAIL_USER) : null,
+      MAIL_APP_PASSWORD: env.MAIL_APP_PASSWORD ? 'set' : 'not set',
+      WEB_ORIGIN: env.WEB_ORIGIN,
+      API_PUBLIC_URL: env.API_PUBLIC_URL,
+      RUN_WORKER: env.RUN_WORKER,
+      EMAIL_BOUNCE_TRACKING: env.EMAIL_BOUNCE_TRACKING,
+    },
+  });
 }));
 
 superAdminRouter.get('/email/templates', requirePermission('email:manage'), asyncHandler(async (_req, res) => {
@@ -305,7 +367,7 @@ superAdminRouter.get('/email/logs', requirePermission('email:manage'), asyncHand
   if (req.query.status) filter.status = String(req.query.status);
   if (req.query.template) filter.template = String(req.query.template);
   const [items, total] = await Promise.all([EmailDelivery.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(), EmailDelivery.countDocuments(filter)]);
-  ok(res, { items: items.map((d) => ({ id: String(d._id), template: d.template, to: d.toMasked, status: d.status, provider: d.provider, attempts: d.attempts, lastError: d.lastError, sentAt: d.sentAt, createdAt: d.createdAt })), total, page, limit });
+  ok(res, { items: items.map((d) => ({ id: String(d._id), template: d.template, to: d.toMasked, status: d.status, provider: d.provider, attempts: d.attempts, lastError: d.lastError, bounceReason: d.bounceReason ?? null, providerResponse: d.providerResponse ?? null, sentAt: d.sentAt, createdAt: d.createdAt })), total, page, limit });
 }));
 
 superAdminRouter.get('/email/inbound', requirePermission('email:manage'), asyncHandler(async (req, res) => {

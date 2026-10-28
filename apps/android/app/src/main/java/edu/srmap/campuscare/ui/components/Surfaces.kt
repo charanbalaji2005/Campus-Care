@@ -6,6 +6,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -241,6 +243,36 @@ fun StatTile(label: String, value: String, modifier: Modifier = Modifier, tone: 
                 Text(label, style = MaterialTheme.typography.labelMedium, color = CcColors.InkSoft, maxLines = 2)
             }
         }
+    }
+}
+
+/** Wrapping multi-select chips (e.g. specialisations). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun MultiChoiceChips(options: List<Pair<String, String>>, selected: Set<String>, onToggle: (String) -> Unit, modifier: Modifier = Modifier) {
+    FlowRow(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { (value, label) ->
+            val active = value in selected
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(if (active) CcColors.Forest else Color.White)
+                    .border(1.dp, if (active) CcColors.Forest else CcColors.Line, RoundedCornerShape(50))
+                    .clickable(role = Role.Checkbox) { onToggle(value) }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            ) {
+                Text(label, color = if (active) Color.White else CcColors.Ink, style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    }
+}
+
+/** Read-only wrapping tags (languages, permissions, zones). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun TagCloud(tags: List<String>, modifier: Modifier = Modifier, tone: Tone = Tone.Neutral) {
+    FlowRow(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        tags.forEach { StatusChip(it, tone) }
     }
 }
 

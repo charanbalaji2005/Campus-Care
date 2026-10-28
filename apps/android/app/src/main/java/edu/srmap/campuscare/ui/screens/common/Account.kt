@@ -18,30 +18,18 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.HelpOutline
-import androidx.compose.material.icons.automirrored.rounded.Logout
-import androidx.compose.material.icons.rounded.AccessibilityNew
-import androidx.compose.material.icons.rounded.Apartment
-import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.Campaign
-import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DevicesOther
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.HealthAndSafety
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsActive
-import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.PhonelinkLock
-import androidx.compose.material.icons.rounded.PrivacyTip
-import androidx.compose.material.icons.rounded.School
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Smartphone
@@ -70,20 +58,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import edu.srmap.campuscare.BuildConfig
 import edu.srmap.campuscare.data.ApiException
 import edu.srmap.campuscare.data.AppNotification
 import edu.srmap.campuscare.data.ChannelPrefs
 import edu.srmap.campuscare.data.MfaSetup
 import edu.srmap.campuscare.services.LocationShareService
-import edu.srmap.campuscare.services.ResponderDutyService
-import edu.srmap.campuscare.ui.components.Avatar
 import edu.srmap.campuscare.ui.components.ButtonKind
 import edu.srmap.campuscare.ui.components.Catalog
 import edu.srmap.campuscare.ui.components.CcButton
 import edu.srmap.campuscare.ui.components.CcCard
 import edu.srmap.campuscare.ui.components.CcScreen
-import edu.srmap.campuscare.ui.components.CcSelect
 import edu.srmap.campuscare.ui.components.CcTextField
 import edu.srmap.campuscare.ui.components.ChoiceChips
 import edu.srmap.campuscare.ui.components.ConfirmDialog
@@ -192,163 +176,6 @@ private fun NotificationRow(n: AppNotification, modifier: Modifier, onClick: () 
                 }
             }
         }
-    }
-}
-
-// ------------------------------------------------------------------ profile & settings
-
-@Composable
-fun ProfileScreen() {
-    val app = LocalApp.current
-    val nav = LocalNav.current
-    val context = LocalContext.current
-    val user by app.session.user.collectAsState()
-    val a11y by app.a11y.collectAsState()
-    val signOut = rememberSignOut()
-    var confirmSignOut by remember { mutableStateOf(false) }
-    var onDuty by remember { mutableStateOf(ResponderDutyService.isOnDuty(context)) }
-    val u = user ?: return
-
-    CcScreen(title = "Profile & Settings", subtitle = "Manage your account") {
-        CcCard(Modifier.enterStagger(0)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Avatar(u.fullName, size = 64.dp)
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(u.fullName, style = MaterialTheme.typography.titleLarge, color = CcColors.Ink)
-                    Text(u.email, style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
-                        StatusChip(Catalog.roleLabel(u.role), Tone.Brand)
-                        if (u.mfaEnabled) StatusChip("2-step on", Tone.Teal, dot = true)
-                    }
-                }
-            }
-            if (u.isStudent) {
-                Divider(Modifier.padding(vertical = 10.dp))
-                Row {
-                    KeyValue("Student ID", u.studentId ?: "—", Modifier.weight(1f))
-                    KeyValue("Year", u.academicYear?.let { "Year $it" } ?: "—", Modifier.weight(1f))
-                }
-                KeyValue("Department", u.department)
-            }
-        }
-
-        if (u.role == "security_officer") {
-            CcCard(color = if (onDuty) CcColors.Mint50 else Color.White) {
-                SwitchRow(
-                    "On duty", onDuty,
-                    { on ->
-                        onDuty = on
-                        if (on) ResponderDutyService.start(context) else ResponderDutyService.stop(context)
-                    },
-                    description = "Keeps SOS alerts arriving instantly with a persistent notification while you're on shift.",
-                )
-            }
-        }
-
-        SectionHeader("Account")
-        CcCard(padding = 8.dp) {
-            ListRow("Edit profile", icon = Icons.Rounded.Edit, onClick = { nav.navigate(Routes.EditProfile) })
-            Divider()
-            ListRow("Security", subtitle = "Password, 2-step verification, devices", icon = Icons.Rounded.Security, tone = Tone.Teal, onClick = { nav.navigate(Routes.Security) })
-            Divider()
-            ListRow("Notifications", subtitle = "Choose what reaches you and how", icon = Icons.Rounded.Notifications, tone = Tone.Amber, onClick = { nav.navigate(Routes.NotificationPrefs) })
-            Divider()
-            ListRow("Privacy & data", subtitle = "Who can see what, downloads, deletion", icon = Icons.Rounded.PrivacyTip, tone = Tone.Violet, onClick = { nav.navigate(Routes.Privacy) })
-        }
-        if (u.isStudent) {
-            SectionHeader("Safety")
-            CcCard(padding = 8.dp) {
-                ListRow("Trusted contacts", icon = Icons.Rounded.Contacts, tone = Tone.Rose, onClick = { nav.navigate(Routes.Trusted) })
-                Divider()
-                ListRow("Digital safety card", subtitle = "Medical info shared only during your SOS", icon = Icons.Rounded.HealthAndSafety, tone = Tone.Danger, onClick = { nav.navigate(Routes.SafetyCard) })
-                Divider()
-                ListRow("Emergency contacts", icon = Icons.Rounded.Phone, tone = Tone.Sky, onClick = { nav.navigate(Routes.Contacts) })
-            }
-        }
-        SectionHeader("Accessibility")
-        CcCard {
-            SwitchRow("Reduce motion", a11y.reduceMotion, { app.setA11y(a11y.copy(reduceMotion = it)) }, description = "Turns off decorative animations and pulsing.")
-            Divider()
-            SwitchRow("Larger text", a11y.largeText, { app.setA11y(a11y.copy(largeText = it)) }, description = "Increases text size across the app.")
-            Divider()
-            SwitchRow("Vibration feedback", a11y.haptics, { app.setA11y(a11y.copy(haptics = it)) }, description = "Vibrates during the SOS countdown.")
-        }
-        CcCard(padding = 8.dp) {
-            ListRow("Help & FAQ", icon = Icons.AutoMirrored.Rounded.HelpOutline, tone = Tone.Sky, onClick = { nav.navigate(Routes.Help) })
-            Divider()
-            ListRow("Sign out", icon = Icons.AutoMirrored.Rounded.Logout, tone = Tone.Danger, chevron = false, onClick = { confirmSignOut = true })
-        }
-        Text(
-            "CampusCare ${BuildConfig.VERSION_NAME} · ${app.config.settings.universityName}",
-            style = MaterialTheme.typography.labelSmall, color = CcColors.InkFaint, modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-        )
-    }
-    if (confirmSignOut) {
-        ConfirmDialog("Sign out?", "You'll need your university email and password to sign in again. Emergency calling works without signing in.", confirmLabel = "Sign out",
-            onDismiss = { confirmSignOut = false },
-            onConfirm = {
-                confirmSignOut = false
-                ResponderDutyService.stop(context)
-                LocationShareService.stop(context)
-                signOut()
-            },
-        )
-    }
-}
-
-@Composable
-fun EditProfileScreen() {
-    val app = LocalApp.current
-    val nav = LocalNav.current
-    val snack = LocalSnack.current
-    val scope = rememberCoroutineScope()
-    val u = app.session.user.value ?: return
-    var name by rememberSaveable { mutableStateOf(u.fullName) }
-    var phone by rememberSaveable { mutableStateOf(u.phone.orEmpty()) }
-    var department by rememberSaveable { mutableStateOf(u.department) }
-    var year by rememberSaveable { mutableStateOf(u.academicYear?.toString()) }
-    var hostel by rememberSaveable { mutableStateOf(u.hostel.orEmpty()) }
-    var errors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var busy by remember { mutableStateOf(false) }
-    CcScreen(title = "Edit profile", onBack = { nav.popBackStack() }) {
-        InfoBanner("Your university email (${u.email}) can't be changed here.", icon = Icons.Rounded.Lock, tone = Tone.Neutral)
-        CcTextField(name, { name = it }, label = "Full name", leadingIcon = Icons.Rounded.Person, error = errors["fullName"], maxLength = 120)
-        CcTextField(phone, { phone = it }, label = "Phone", leadingIcon = Icons.Rounded.Phone, keyboardType = KeyboardType.Phone, error = errors["phone"], hint = "Shared with responders only during your SOS.")
-        if (u.isStudent) {
-            CcSelect("Department", Catalog.departments.map { it to it }, department, { department = it }, leadingIcon = Icons.Rounded.School)
-            CcSelect("Academic year", (1..6).map { "$it" to "Year $it" }, year, { year = it }, leadingIcon = Icons.Rounded.Badge)
-            CcTextField(hostel, { hostel = it }, label = "Hostel (optional)", leadingIcon = Icons.Rounded.Apartment, maxLength = 80, hint = "Used to send hostel-specific safety alerts.")
-        }
-        CcButton("Save changes", {
-            errors = buildMap {
-                if (name.trim().length < 2) put("fullName", "Enter your full name")
-                if (phone.isNotBlank() && !Regex("^\\+?[0-9 ]{7,20}$").matches(phone.trim())) put("phone", "Enter a valid phone number")
-            }
-            if (errors.isNotEmpty()) return@CcButton
-            scope.launch {
-                busy = true
-                try {
-                    val body = buildMap<String, Any?> {
-                        put("fullName", name.trim()); put("phone", phone.trim())
-                        if (u.isStudent) {
-                            department?.let { put("department", it) }
-                            year?.toIntOrNull()?.let { put("academicYear", it) }
-                            put("hostel", hostel.trim())
-                        }
-                    }
-                    val updated = app.api.auth.updateProfile(body)
-                    app.session.updateUser(updated.user)
-                    snack.show("Profile updated.")
-                    nav.popBackStack()
-                } catch (e: ApiException) {
-                    if (e.fields.isNotEmpty()) errors = e.fields
-                    snack.error(e)
-                } finally {
-                    busy = false
-                }
-            }
-        }, Modifier.fillMaxWidth(), loading = busy)
     }
 }
 

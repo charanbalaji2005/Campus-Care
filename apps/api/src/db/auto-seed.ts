@@ -2,7 +2,7 @@ import { env } from '../config/env';
 import { randomUUID } from 'node:crypto';
 import { CATEGORY_INFO, COMMITTEE_TYPE_LABELS, INCIDENT_CATEGORIES, type CommitteeType } from '@campuscare/shared';
 import { encryptSecret, hashPassword, randomToken } from '../lib/crypto';
-import { Committee, RoutingRule } from '../models/incident';
+import { Committee, Incident, RoutingRule } from '../models/incident';
 import { Contact, Announcement, TrainingModule } from '../models/content';
 import { ChatChannel } from '../models/chat';
 import { EmailDomain, EmailProviderConfig, IdentityProviderConfig, SystemSetting } from '../models/platform';
@@ -244,6 +244,8 @@ export async function autoSeedDatabase() {
           $setOnInsert: { passwordHash: charanHash },
           $set: {
             ...rest,
+            // The cc-demo-* mailboxes do not exist: notification emails to them only bounce (550 5.1.1).
+            'privacy.allowEmailNotifications': false,
             emailVerified: true,
             emailVerifiedAt: new Date(),
             accountStatus: 'active',
@@ -271,9 +273,9 @@ export async function autoSeedDatabase() {
       }
     }
 
-    // Sample incident for testing
+    // Sample incident for testing: created once, not on every start (each one emailed a mailbox that does not exist).
     const studentUser = await User.findOne({ email: 'cc-demo-student@srmap.edu.in' });
-    if (studentUser) {
+    if (studentUser && !(await Incident.exists({ reporterId: studentUser._id }))) {
       await createIncident(studentUser, {
         category: 'ragging',
         title: 'Seniors forcing juniors to perform (Sample Case)',

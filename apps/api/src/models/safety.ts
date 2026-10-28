@@ -36,6 +36,10 @@ const emergencyAlertSchema = new Schema(
     /** Set exactly once, atomically, when the alert leaves "pending". Cancellations after this never delete the alert. */
     dispatchedAt: { type: Date, default: null },
     countdownMode: { type: String, enum: ['client', 'server'], default: 'client' },
+    /** in_app, quick_tile, shortcut, notification or recovery (what started the countdown). */
+    triggerSource: { type: String, default: null },
+    /** The student's choice, applied when a server-side countdown dispatches the alert. */
+    notifyTrustedContacts: { type: Boolean, default: true },
     locationAgeSeconds: { type: Number, default: null },
     /** When the current coordinates were captured (server clock: receive time − device-reported age). */
     locationAt: { type: Date, default: null },

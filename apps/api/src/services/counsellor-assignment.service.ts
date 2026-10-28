@@ -6,7 +6,8 @@ import { audit } from './audit.service';
 import { notify, notifyMany } from './notification.service';
 import { logger } from '../lib/logger';
 import { AppError } from '../lib/http';
-import { generateSlots } from '../lib/time';
+import { evictFromRoom } from '../realtime/socket';
+import { pickSlot, startResponseClock } from './counselling-schedule.service';
 
 export const ALGORITHM_VERSION = 'v1.0.0-workload-aware';
 export const DEFAULT_MAX_ACTIVE_CASELOAD = 12;
@@ -44,6 +45,8 @@ export class CounsellorAssignmentService {
       campus?: string;
       preferredMode?: string;
       maxCaseload?: number;
+      /** Counsellors who already declined or let this request time out. */
+      excludeCounsellorIds?: string[];
     } = {},
   ): Promise<CounsellorCandidateScore | null> {
     const maxCaseload = options.maxCaseload ?? DEFAULT_MAX_ACTIVE_CASELOAD;
@@ -67,7 +70,7 @@ export class CounsellorAssignmentService {
     const counsellorIds = eligibleCounsellors.map((c) => c._id);
     const availabilities = await Availability.find({
       counsellorId: { $in: counsellorIds },
-      acceptingRequests: true,
+      acceptingRequests: true, // On Duty: off-duty counsellors never receive new requests
     }).lean();
 
     const acceptingCounsellorIds = new Set(availabilities.map((a) => String(a.counsellorId)));
@@ -110,8 +113,8 @@ export class CounsellorAssignmentService {
     for (const counsellor of eligibleCounsellors) {
       const cId = String(counsellor._id);
 
-      // Must be accepting requests
-      if (!acceptingCounsellorIds.has(cId)) {
+      // Must be accepting requests (and on duty), and must not have declined / timed out on this request
+      if (!acceptingCounsellorIds.has(cId) || options.excludeCounsellorIds?.includes(cId)) {
         continue;
       }
 
@@ -193,13 +196,18 @@ export class CounsellorAssignmentService {
     studentId: string,
     actorId?: string,
   ): Promise<AssignmentResult> {
-    const candidate = await this.findBestEligibleCounsellor(studentId);
+    const prior = await Appointment.findById(appointmentId, { declinedBy: 1, timedOutBy: 1 }).lean();
+    const excludeCounsellorIds = [...(prior?.declinedBy ?? []), ...(prior?.timedOutBy ?? [])].map(String);
+    const candidate = await this.findBestEligibleCounsellor(studentId, { excludeCounsellorIds });
 
     if (!candidate) {
       // Step F: No eligible counsellor available
       await Appointment.findByIdAndUpdate(appointmentId, {
         $set: {
           counsellorId: null,
+          slotLock: null,
+          assignedAt: null,
+          responseDueAt: null,
           status: 'requested',
           statusReason: 'Queued for automatic assignment. Awaiting available counsellor opening.',
         },
@@ -240,43 +248,26 @@ export class CounsellorAssignmentService {
     appt.status = 'requested';
     appt.statusReason = `Auto-assigned via ${ALGORITHM_VERSION} (score: ${candidate.totalScore})`;
 
-    // If startAt wasn't assigned, find the earliest available slot from counsellor's schedule
-    if (!appt.startAt) {
-      const avail = await Availability.findOne({ counsellorId: assignedCounsellorId }).lean();
-      if (avail && avail.weekly && avail.weekly.length > 0) {
-        const generated = generateSlots({
-          weekly: avail.weekly as never,
-          slotMinutes: avail.slotMinutes ?? 50,
-          timezone: avail.timezone ?? 'Asia/Kolkata',
-          blockedDates: avail.blockedDates ?? [],
-        });
-        const active = await Appointment.find(
-          { counsellorId: assignedCounsellorId, status: { $in: ['requested', 'confirmed', 'rescheduled'] } },
-          { startAt: 1 },
-        ).lean();
-        const booked = new Set(active.map((a) => (a.startAt ? a.startAt.toISOString() : '')));
-        const openSlot = generated.find((s) => !booked.has(s.toISOString()));
-        if (openSlot) {
-          appt.startAt = openSlot;
-          appt.endAt = new Date(openSlot.getTime() + (avail.slotMinutes ?? 50) * 60_000);
-        }
-      }
+    // Keep the student's chosen time when this counsellor is free then; otherwise use their earliest open slot.
+    const slot = await pickSlot(assignedCounsellorId, appt.startAt, appt._id);
+    if (slot) {
+      appt.startAt = slot.startAt;
+      appt.endAt = slot.endAt;
     }
-
-    if (appt.startAt) {
-      appt.slotLock = `${candidate.counsellorId}:${appt.startAt.toISOString()}`;
-    }
+    appt.slotLock = appt.startAt ? `${candidate.counsellorId}:${appt.startAt.toISOString()}` : null;
 
     await appt.save();
 
-    // Ensure chat channel membership
+    // The private chat opens only when the assigned counsellor accepts. Before that, no staff member is in it.
     if (appt.threadId) {
-      await ChatMembership.findOneAndUpdate(
-        { channelId: appt.threadId, role: 'staff' },
-        { $set: { userId: assignedCounsellorId } },
-        { upsert: true },
-      );
+      if (appt.chatActivatedAt) {
+        await ChatMembership.findOneAndUpdate({ channelId: appt.threadId, role: 'staff' }, { $set: { userId: assignedCounsellorId } }, { upsert: true });
+      } else {
+        await ChatMembership.deleteMany({ channelId: appt.threadId, role: 'staff' });
+      }
     }
+    // One-hour acceptance deadline for this counsellor (durable job).
+    await startResponseClock(appt);
 
     // Step E: Audit and discreet notifications
     await audit({
@@ -352,19 +343,29 @@ export class CounsellorAssignmentService {
 
     appt.counsellorId = new Types.ObjectId(newCounsellorId);
     appt.statusReason = `Reassigned: ${reason}`;
+    appt.reassignCount = (appt.reassignCount ?? 0) + 1;
     if (appt.startAt) {
       appt.slotLock = `${newCounsellorId}:${appt.startAt.toISOString()}`;
     }
     await appt.save();
 
-    // Update staff participant in thread
+    // Update staff participant in thread (only an accepted request has an open chat)
     if (appt.threadId) {
-      await ChatMembership.findOneAndUpdate(
-        { channelId: appt.threadId, role: 'staff' },
-        { $set: { userId: new Types.ObjectId(newCounsellorId) } },
-        { upsert: true },
-      );
+      if (appt.chatActivatedAt) {
+        await ChatMembership.findOneAndUpdate(
+          { channelId: appt.threadId, role: 'staff' },
+          { $set: { userId: new Types.ObjectId(newCounsellorId) } },
+          { upsert: true },
+        );
+      } else {
+        await ChatMembership.deleteMany({ channelId: appt.threadId, role: 'staff' });
+      }
+      // The previous counsellor lost membership; drop any live socket subscription too.
+      if (previousCounsellorId && previousCounsellorId !== newCounsellorId) await evictFromRoom(previousCounsellorId, `chat:${appt.threadId}`);
     }
+
+    // A request still awaiting acceptance gets a fresh one-hour window with the new counsellor.
+    await startResponseClock(appt);
 
     await audit({
       action: 'counsellor.reassigned',

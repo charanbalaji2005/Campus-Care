@@ -12,7 +12,7 @@ export function AppOnlyPage() {
   const path = usePathname();
   return (
     <AuthShell title="This opens in the app" subtitle="CampusCare for students and staff is now an Android app. The website is used only by the Super Admin.">
-      <AppHandoff path={path} />
+      <AppHandoff path={path} showAdminLink />
     </AuthShell>
   );
 }

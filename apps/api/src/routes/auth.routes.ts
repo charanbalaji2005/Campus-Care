@@ -28,8 +28,6 @@ import type { UserDoc } from '../models/user';
 import { env } from '../config/env';
 
 export const authRouter = Router();
-// Generic answers: identical whether or not the account exists. They say a link is on its way (delivery is
-// queued and retried), not that it was delivered. Provider-wide failures return 503 email_unavailable instead.
 const GENERIC_RESET = 'If an account exists for that email, a password reset link is on its way. It can take a few minutes to arrive; check your spam folder too.';
 const GENERIC_RESEND = 'If that account still needs verification, a new verification link is on its way. It can take a few minutes to arrive; check your spam folder too.';
 
@@ -399,19 +397,39 @@ authRouter.patch(
   asyncHandler(async (req, res) => {
     const input = parse(profileUpdateSchema, req.body);
     const u = req.user!;
+    const isStudent = u.role === 'student';
+    const before: Record<string, unknown> = {
+      fullName: u.fullName, phone: u.phone, preferredLanguage: u.preferredLanguage, department: u.department, program: u.program,
+      academicYear: u.academicYear, section: u.section, hostel: u.hostel, designation: u.designation,
+      qualifications: u.qualifications, experienceYears: u.experienceYears, studentId: u.studentId,
+    };
     if (input.fullName) u.fullName = input.fullName;
     if (input.phone !== undefined) u.phone = input.phone || null;
-    if (input.department) u.department = input.department;
-    if (input.academicYear) u.academicYear = input.academicYear;
-    if (input.hostel !== undefined) u.hostel = input.hostel || null;
+    if (input.preferredLanguage) u.preferredLanguage = input.preferredLanguage;
+    // Fields that don't belong to the caller's role are ignored rather than stored.
+    if (isStudent) {
+      if (input.department) u.department = input.department;
+      if (input.program !== undefined) u.program = input.program || null;
+      if (input.academicYear) u.academicYear = input.academicYear;
+      if (input.section !== undefined) u.section = input.section ? input.section.toUpperCase() : null;
+      if (input.hostel !== undefined) u.hostel = input.hostel || null;
+    } else {
+      if (input.designation !== undefined) u.designation = input.designation || null;
+    }
+    if (u.role === 'counsellor') {
+      if (input.qualifications !== undefined) u.qualifications = input.qualifications || null;
+      if (input.experienceYears !== undefined) u.experienceYears = input.experienceYears;
+    }
     // Students who signed up with Google add their student ID once; it cannot be changed afterwards.
     const sid = parse(z.object({ studentId: z.string().trim().max(40).regex(/^[A-Za-z0-9\-/]+$/).optional() }), { studentId: req.body?.studentId || undefined }).studentId;
     if (sid && u.role === 'student' && !u.studentId) {
       if (await User.exists({ studentId: sid.toUpperCase() })) throw new AppError(409, 'account_exists', 'That student ID is already registered.', { fields: { studentId: 'Already registered' } });
       u.studentId = sid.toUpperCase();
     }
+    const changedFields = Object.keys(before).filter((k) => String(before[k] ?? '') !== String((u as unknown as Record<string, unknown>)[k] ?? ''));
     await u.save();
-    await audit({ action: 'user.profile_updated', req, targetType: 'user', targetId: String(u._id) });
+    // Field names only: contact details stay out of the audit trail.
+    if (changedFields.length) await audit({ action: 'user.profile_updated', req, targetType: 'user', targetId: String(u._id), changedFields, meta: { changedFields } });
     ok(res, { user: publicUser(u) });
   }),
 );
@@ -679,7 +697,7 @@ authRouter.get(
       await createSession(req, res, user, { method: 'google', mfaVerified: false });
       return res.redirect(new URL('/mfa?next=' + encodeURIComponent(homePathFor(user.role as Role)), env.WEB_ORIGIN).toString());
     }
-    const session = await createSession(req, res, user, { method: 'google', mfaVerified: false });
+    const session = await createSession(req, res, user, { method: 'google', remember: Boolean((state as any)?.remember ?? true), mfaVerified: false });
     await audit({ action: 'auth.login', actorId: String(user._id), actorRole: user.role, req, meta: { method: 'google' } });
     if ((state as any).client === 'android') {
       return res.redirect(`campuscare://auth?token=${encodeURIComponent(session.plainToken || '')}`);

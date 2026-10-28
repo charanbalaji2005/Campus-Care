@@ -320,9 +320,10 @@ export type AppointmentMode = (typeof APPOINTMENT_MODES)[number];
  * - support_service: a configured service students can open a private thread with
  * - support_thread: private thread between one student and the staff pool of a service
  * - counselling_thread: private thread for one appointment (student + counsellor)
+ * - direct: private one-to-one conversation between two authorised roles (see DIRECT_CHAT_PURPOSES)
  * Complaint chat uses the separate CaseMessage collection.
  */
-export const CHAT_KINDS = ['community', 'support_service', 'support_thread', 'counselling_thread'] as const;
+export const CHAT_KINDS = ['community', 'support_service', 'support_thread', 'counselling_thread', 'direct'] as const;
 export type ChatKind = (typeof CHAT_KINDS)[number];
 
 /** Media policy groups configurable by the Super Admin. */
@@ -634,3 +635,37 @@ export const ROUTE_TRAVEL_MODES = [
   'emergency',
 ] as const;
 export type RouteTravelMode = (typeof ROUTE_TRAVEL_MODES)[number];
+
+// ------------------------------------------------------------------ official announcements
+export const ANNOUNCEMENT_CATEGORIES = [
+  'general',
+  'emergency',
+  'academic',
+  'counselling',
+  'safety',
+  'events',
+  'campus_updates',
+] as const;
+export type AnnouncementCategory = (typeof ANNOUNCEMENT_CATEGORIES)[number];
+
+export const ANNOUNCEMENT_PRIORITIES = ['standard', 'important', 'urgent'] as const;
+export type AnnouncementPriority = (typeof ANNOUNCEMENT_PRIORITIES)[number];
+
+export const ANNOUNCEMENT_STATUSES = [
+  'draft',
+  'scheduled',
+  'published',
+  'archived',
+  'expired',
+] as const;
+export type AnnouncementStatus = (typeof ANNOUNCEMENT_STATUSES)[number];
+
+export const COUNSELLING_TYPES = [
+  'academic_stress',
+  'anxiety_mental_health',
+  'career',
+  'relationships',
+  'grief_loss',
+  'general',
+] as const;
+export type CounsellingType = (typeof COUNSELLING_TYPES)[number];

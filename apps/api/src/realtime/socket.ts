@@ -89,6 +89,11 @@ export function emitBroadcast(event: string, payload: unknown = {}) {
   io?.emit(event, payload);
 }
 
+/** Whether the user has a live socket on this instance (presence indicator only; never an access check). */
+export function isUserOnline(userId: string) {
+  return (io?.sockets.adapter.rooms.get(`user:${userId}`)?.size ?? 0) > 0;
+}
+
 /** Immediately disconnect a user's sockets (suspension, logout everywhere, permission change). */
 export async function disconnectUser(userId: string) {
   if (!io) return;

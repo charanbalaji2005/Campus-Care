@@ -82,8 +82,10 @@ import androidx.compose.ui.unit.sp
 import edu.srmap.campuscare.BuildConfig
 import edu.srmap.campuscare.data.ApiException
 import edu.srmap.campuscare.data.SosAlert
-import edu.srmap.campuscare.data.newIdempotencyKey
 import edu.srmap.campuscare.services.LocationShareService
+import edu.srmap.campuscare.services.SosCountdownService
+import edu.srmap.campuscare.services.SosCountdownStore
+import edu.srmap.campuscare.services.SosTrigger
 import edu.srmap.campuscare.ui.components.AccuracyCircle
 import edu.srmap.campuscare.ui.components.ButtonKind
 import edu.srmap.campuscare.ui.components.Catalog
@@ -122,6 +124,8 @@ import edu.srmap.campuscare.util.LocationQualityRules
 import edu.srmap.campuscare.util.LocationTracking
 import edu.srmap.campuscare.util.PermissionLevel
 import edu.srmap.campuscare.util.RawFix
+import edu.srmap.campuscare.util.SosCountdownRules
+import edu.srmap.campuscare.util.SosCountdownState
 import edu.srmap.campuscare.util.ageLabel
 import edu.srmap.campuscare.util.ageSeconds
 import edu.srmap.campuscare.util.composeSms
@@ -134,24 +138,12 @@ import kotlin.math.max
 
 private val ACTIVE_SOS = setOf("queued", "sending", "sent", "acknowledged", "en_route", "failed")
 
-private enum class SosPhase { Countdown, Sending, Cancelled, Failed }
-
-private const val COUNTDOWN_TOTAL_SECONDS = 10
-
-private fun getBatteryPercentage(context: Context): Int? = runCatching {
-    val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
-    bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)?.takeIf { it in 0..100 }
-}.getOrNull()
-
-private fun getDeviceInfo(): Map<String, String> = mapOf(
-    "model" to "${Build.MANUFACTURER} ${Build.MODEL}",
-    "osVersion" to "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
-    "appVersion" to BuildConfig.VERSION_NAME,
-)
+private enum class SosPhase { Idle, Countdown, Sending, Cancelled, Failed }
 
 /**
  * Full-screen Emergency SOS Interface:
- * 1. Immediately displays a 10-second countdown (10, 9, 8 ... 1) using a monotonic clock.
+ * 1. Starts the countdown configured by the Super Admin. It runs in [SosCountdownService] (with a
+ *    Cancel / Send SOS notification), so leaving this screen or locking the phone does not stop it.
  * 2. Parallel location acquisition starts immediately with the countdown.
  * 3. Shows "Emergency alert will be sent automatically unless you cancel."
  * 4. Large, easy-to-tap Cancel Alert button and Send Now button.
@@ -172,13 +164,6 @@ fun SosScreen() {
         (it.category == "security" || it.category == "emergency") && !it.phone.isNullOrBlank()
     }
 
-    var phase by rememberSaveable { mutableStateOf(SosPhase.Countdown) }
-    var targetDeadlineMs by rememberSaveable {
-        mutableLongStateOf(SystemClock.elapsedRealtime() + COUNTDOWN_TOTAL_SECONDS * 1000L)
-    }
-    var secondsLeft by remember { mutableIntStateOf(COUNTDOWN_TOTAL_SECONDS) }
-    var isSubmitting by rememberSaveable { mutableStateOf(false) }
-
     var notifyTrusted by rememberSaveable { mutableStateOf(true) }
     var permission by remember { mutableStateOf(LocationPermissions.level(context)) }
     val locationAllowed = permission != PermissionLevel.None
@@ -189,8 +174,6 @@ fun SosScreen() {
     val live by rememberLiveFix(enabled = locationAllowed)
     var oneShot by remember { mutableStateOf<RawFix?>(null) }
     val fix: RawFix? = live?.raw ?: oneShot
-    var failure by remember { mutableStateOf<String?>(null) }
-    var attemptKey by rememberSaveable { mutableStateOf(newIdempotencyKey()) }
 
     val requestLocation = rememberLocationRequest { _ ->
         permission = LocationPermissions.level(context)
@@ -224,93 +207,65 @@ fun SosScreen() {
 
     // Check if an SOS is already active
     val mine = rememberLoad { runCatching { app.api.safety.mySos() }.getOrDefault(emptyList()) }
-    val active = mine.data?.firstOrNull { it.status in ACTIVE_SOS && it.status != "failed" }
+    val active = mine.data?.firstOrNull { it.status in ACTIVE_SOS && it.status != "failed" && it.status != "pending" }
 
-    fun send() {
-        if (isSubmitting) return
-        isSubmitting = true
-        phase = SosPhase.Sending
-        scope.launch {
-            val f = fix?.takeIf { it.ageSeconds() <= LocationQualityRules.SOS_STALE_SECONDS }
-                ?: LocationHelper.current(context, timeoutMs = 3_000)?.let { c ->
-                    RawFix(
-                        c.latitude,
-                        c.longitude,
-                        c.accuracy,
-                        c.elapsedRealtimeNanos?.div(1_000_000) ?: SystemClock.elapsedRealtime(),
-                        provider = "fused",
-                    )
-                }
-            val isCached = f != null && (f.ageSeconds() > 15)
-            val battery = getBatteryPercentage(context)
-            val devInfo = getDeviceInfo()
-            try {
-                val alert = app.api.safety.raiseSos(
-                    key = attemptKey,
-                    lat = f?.latitude,
-                    lng = f?.longitude,
-                    accuracy = f?.accuracyMeters,
-                    unavailableReason = when {
-                        f != null -> null
-                        !locationAllowed -> "permission_denied"
-                        !locationOn -> "location_off"
-                        else -> "no_fix"
-                    },
-                    notifyTrusted = notifyTrusted,
-                    locationAgeSeconds = f?.ageSeconds(),
-                    batteryLevel = battery,
-                    deviceInfo = devInfo,
-                    isCachedFix = isCached,
-                )
-                LocationShareService.startSos(context, alert.id)
-                if (a11y.haptics) view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                nav.navigate(Routes.sosStatus(alert.id)) { popUpTo(Routes.Sos) { inclusive = true } }
-            } catch (e: ApiException) {
-                failure = if (e.isNetwork) {
-                    "Network unreachable. Your alert is pending and will be retried automatically."
-                } else {
-                    e.message ?: "The alert could not be sent."
-                }
-                phase = SosPhase.Failed
-                isSubmitting = false
-            } catch (e: Exception) {
-                failure = e.message ?: "Unexpected error occurred."
-                phase = SosPhase.Failed
-                isSubmitting = false
-            }
+    // The countdown lives in SosCountdownService; this screen only shows it and passes on the person's choices.
+    val saved by SosCountdownStore.event.collectAsState()
+    LaunchedEffect(Unit) { SosCountdownStore.load(context) }
+    val source = rememberSaveable { SosTrigger.consume() ?: "in_app" }
+    var trackedId by rememberSaveable { mutableStateOf<String?>(null) }
+    var startError by remember { mutableStateOf<String?>(null) }
+    if (saved?.active == true && trackedId != saved?.eventId) trackedId = saved?.eventId
+    val countdown = saved?.takeIf { it.eventId == trackedId }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    fun startCountdown() {
+        startError = null
+        if (!SosCountdownService.start(context, source, notifyTrusted)) startError = "The SOS countdown could not start."
+    }
+
+    // The SOS button always starts the countdown; the tile and shortcut only when the Super Admin allows quick triggers.
+    var autoStarted by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!autoStarted && settings.sos.enabled && (source == "in_app" || settings.sos.quickTriggerEnabled)) {
+            autoStarted = true
+            startCountdown()
         }
     }
 
-    // Monotonic clock countdown ticker
-    LaunchedEffect(phase, targetDeadlineMs) {
-        if (phase == SosPhase.Countdown) {
-            while (true) {
-                val now = SystemClock.elapsedRealtime()
-                val remMs = targetDeadlineMs - now
-                val remSec = max(0, ((remMs + 999) / 1000).toInt())
-                secondsLeft = remSec
-                if (remSec > 0 && a11y.haptics) {
-                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                }
-                if (remMs <= 0) {
-                    send()
-                    break
-                }
-                delay(200)
-            }
+    val phase = when {
+        startError != null -> SosPhase.Failed
+        countdown == null -> SosPhase.Idle
+        countdown.state == SosCountdownState.Counting -> if (countdown.due(now)) SosPhase.Sending else SosPhase.Countdown
+        countdown.state == SosCountdownState.Cancelled -> SosPhase.Cancelled
+        countdown.state == SosCountdownState.Undelivered -> SosPhase.Failed
+        else -> SosPhase.Sending // Sent: moving on to the status screen
+    }
+    val failure = startError ?: countdown?.lastError
+    val secondsLeft = countdown?.secondsLeft(now) ?: 0
+
+    // Display ticker on the wall clock, matching the server-held deadline and the notification.
+    LaunchedEffect(countdown?.eventId, countdown?.state) {
+        while (countdown?.state == SosCountdownState.Counting) {
+            now = System.currentTimeMillis()
+            if (countdown.secondsLeft(now) > 0 && a11y.haptics) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            delay(250)
+        }
+        now = System.currentTimeMillis()
+    }
+    LaunchedEffect(countdown?.state, countdown?.alertId) {
+        val id = countdown?.alertId
+        if (countdown?.state == SosCountdownState.Sent && id != null) {
+            if (a11y.haptics) view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            nav.navigate(Routes.sosStatus(id)) { popUpTo(Routes.Sos) { inclusive = true } }
         }
     }
 
     CcScreen(
         title = "Emergency SOS",
         subtitle = "Automatic emergency dispatch",
-        onBack = {
-            if (phase == SosPhase.Countdown) {
-                phase = SosPhase.Cancelled
-            } else {
-                nav.popBackStack()
-            }
-        },
+        // Leaving does not cancel: the countdown carries on in its notification until Cancel is tapped.
+        onBack = { nav.popBackStack() },
     ) {
         if (!settings.sos.enabled) {
             InfoBanner(
@@ -352,7 +307,7 @@ fun SosScreen() {
                             modifier = Modifier.padding(horizontal = 16.dp),
                         )
                         Spacer(Modifier.height(18.dp))
-                        CountdownRing(secondsLeft = secondsLeft, total = COUNTDOWN_TOTAL_SECONDS)
+                        CountdownRing(secondsLeft = secondsLeft, total = countdown?.countdownSeconds ?: SosCountdownRules.DEFAULT_SECONDS)
                         Spacer(Modifier.height(24.dp))
 
                         // Large accessible touch targets
@@ -363,7 +318,7 @@ fun SosScreen() {
                             CcButton(
                                 text = "Cancel Alert",
                                 onClick = {
-                                    phase = SosPhase.Cancelled
+                                    SosCountdownService.cancel(context)
                                     if (a11y.haptics) view.performHapticFeedback(HapticFeedbackConstants.REJECT)
                                 },
                                 modifier = Modifier.weight(1.1f).height(52.dp),
@@ -372,7 +327,7 @@ fun SosScreen() {
                             )
                             CcButton(
                                 text = "Send Now",
-                                onClick = { send() },
+                                onClick = { SosCountdownService.sendNow(context) },
                                 modifier = Modifier.weight(0.9f).height(52.dp),
                                 kind = ButtonKind.Danger,
                                 leadingIcon = Icons.AutoMirrored.Rounded.Send,
@@ -380,24 +335,20 @@ fun SosScreen() {
                         }
                     }
 
-                    SosPhase.Cancelled -> {
+                    SosPhase.Idle, SosPhase.Cancelled -> {
                         Spacer(Modifier.height(16.dp))
-                        InfoBanner(
-                            "Emergency alert was cancelled. No responders were notified and no incident was dispatched.",
-                            tone = Tone.Neutral,
-                            icon = Icons.Rounded.CheckCircle,
-                            title = "Alert Cancelled",
-                        )
-                        Spacer(Modifier.height(16.dp))
+                        if (p == SosPhase.Cancelled) {
+                            InfoBanner(
+                                "Emergency alert was cancelled. No responders were notified and no incident was dispatched.",
+                                tone = Tone.Neutral,
+                                icon = Icons.Rounded.CheckCircle,
+                                title = "Alert Cancelled",
+                            )
+                            Spacer(Modifier.height(16.dp))
+                        }
                         CcButton(
                             text = "Start SOS Countdown",
-                            onClick = {
-                                attemptKey = newIdempotencyKey()
-                                targetDeadlineMs = SystemClock.elapsedRealtime() + COUNTDOWN_TOTAL_SECONDS * 1000L
-                                secondsLeft = COUNTDOWN_TOTAL_SECONDS
-                                isSubmitting = false
-                                phase = SosPhase.Countdown
-                            },
+                            onClick = { startCountdown() },
                             modifier = Modifier.fillMaxWidth(),
                             kind = ButtonKind.Danger,
                             leadingIcon = Icons.Rounded.RestartAlt,
@@ -472,7 +423,7 @@ fun SosScreen() {
                         ) {
                             CcButton(
                                 text = "Retry sending",
-                                onClick = { send() },
+                                onClick = { if (startError != null) startCountdown() else SosCountdownService.sendNow(context) },
                                 modifier = Modifier.weight(1f),
                                 kind = ButtonKind.Outline,
                             )
@@ -524,7 +475,7 @@ fun SosScreen() {
                 "Notify verified trusted contacts",
                 notifyTrusted,
                 { notifyTrusted = it },
-                description = "Sends emergency alert and live location link to your verified emergency contacts.",
+                description = "Sends emergency alert and live location link to your verified emergency contacts. Applies to the next SOS you start.",
             )
         }
 
@@ -534,6 +485,10 @@ fun SosScreen() {
                 onContinue = { rationale = false; requestLocation() },
                 onDismiss = { rationale = false },
             )
+        }
+
+        TextButton(onClick = { nav.navigate(Routes.QuickSos) }, modifier = Modifier.fillMaxWidth()) {
+            Text("Set up Quick SOS (tile and shortcut)", color = CcColors.Sos, fontWeight = FontWeight.SemiBold)
         }
 
         SectionHeader("Direct emergency contacts")

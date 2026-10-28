@@ -7,3 +7,5 @@ export * from './casenumber';
 export * from './classifier';
 export * from './community';
 export * from './location';
+export * from './chats';
+export * from './wellness';

@@ -137,10 +137,10 @@ fun passwordError(p: String, min: Int): String? = when {
  * Finishes a sign-in: stores the session (Keystore-encrypted), refreshes the profile and routes
  * to the right place (MFA, profile completion or the role's home).
  */
-suspend fun completeSignIn(app: AppContainer, nav: NavHostController, resp: LoginResponse) {
+suspend fun completeSignIn(app: AppContainer, nav: NavHostController, resp: LoginResponse, rememberMe: Boolean = true) {
     val token = resp.sessionToken ?: throw ApiException(500, "no_token", "Sign-in did not return a session. Please update the app.")
     val user = resp.user ?: throw ApiException(500, "no_user", "Sign-in failed. Please try again.")
-    app.session.signIn(token, user)
+    app.session.signIn(token, user, rememberMe)
     val me = runCatching { app.api.auth.me() }.getOrNull()
     me?.let { app.session.updateUser(it.user) }
     val role = (me?.user ?: user).role

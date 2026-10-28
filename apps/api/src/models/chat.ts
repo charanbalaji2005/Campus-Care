@@ -1,5 +1,5 @@
 import { Schema, model, type InferSchemaType, type HydratedDocument } from 'mongoose';
-import { CHAT_KINDS, CHAT_REVIEW_BASES, CHAT_REVIEW_SCOPES, CHAT_REVIEW_STATUSES } from '@campuscare/shared';
+import { CHAT_KINDS, CHAT_REVIEW_BASES, CHAT_REVIEW_SCOPES, CHAT_REVIEW_STATUSES, DIRECT_CHAT_PURPOSES } from '@campuscare/shared';
 
 const chatChannelSchema = new Schema(
   {
@@ -19,6 +19,10 @@ const chatChannelSchema = new Schema(
     appointmentId: { type: Schema.Types.ObjectId, ref: 'Appointment', default: null },
     assignedStaffId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     moderatorIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    /** direct: why the two members talk (student_admin, admin_super_admin, counsellor_admin). */
+    purpose: { type: String, enum: [...DIRECT_CHAT_PURPOSES, null], default: null },
+    /** direct: "<lowerUserId>:<higherUserId>", so the same pair always reuses one conversation. */
+    directKey: { type: String, default: null },
     closed: { type: Boolean, default: false },
     lastMessageAt: { type: Date, default: null },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
@@ -28,6 +32,8 @@ const chatChannelSchema = new Schema(
 chatChannelSchema.index({ slug: 1 }, { unique: true, partialFilterExpression: { slug: { $type: 'string' } } });
 chatChannelSchema.index({ kind: 1, published: 1, order: 1 });
 chatChannelSchema.index({ kind: 1, studentId: 1, serviceId: 1 });
+chatChannelSchema.index({ directKey: 1 }, { unique: true, partialFilterExpression: { directKey: { $type: 'string' } } });
+chatChannelSchema.index({ kind: 1, lastMessageAt: -1 });
 chatChannelSchema.index({ appointmentId: 1 }, { unique: true, partialFilterExpression: { appointmentId: { $type: 'objectId' } } });
 export const ChatChannel = model('ChatChannel', chatChannelSchema);
 export type ChatChannelDoc = HydratedDocument<InferSchemaType<typeof chatChannelSchema>>;

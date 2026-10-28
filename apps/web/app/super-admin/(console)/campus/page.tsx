@@ -20,7 +20,7 @@ export default function AdminDashboard() {
   const i = data.incidents;
   return (
     <div className="space-y-6">
-      <PageHeader title="Campus overview" description="Aggregate figures only. Case details stay with the assigned committee." actions={<Button asChild><Link href="/super-admin/incidents">Open triage queue</Link></Button>} />
+      <PageHeader title="Campus overview" description="Aggregate figures only. Case details stay with the assigned committee." actions={<Button asChild><Link href="/super-admin/chats?cat=reports">Open triage queue</Link></Button>} />
       {(i.overdue > 0 || i.unacknowledged > 0 || data.alerts.activeSos > 0) && (
         <Alert tone="rose" icon={<AlertTriangle className="h-4 w-4" />} title="Needs attention">
           {data.alerts.activeSos > 0 && <span className="block">{data.alerts.activeSos} SOS alert(s) are still open with campus security.</span>}
