@@ -80,6 +80,8 @@ export const heartbeatLimiter = rateLimit({ ...limiterBase, windowMs: 60_000, li
 /** Live location updates (SOS, shares). Generous enough for a queued backlog after an outage. */
 export const locationLimiter = rateLimit({ ...limiterBase, windowMs: 60_000, limit: 90, handler: limited('Location updates are arriving too fast.') });
 export const sosLimiter = rateLimit({ ...limiterBase, windowMs: 60_000, limit: 10, handler: limited('Too many SOS requests. If you need help, call 112 now.') });
+/** Reports of public counselling comments (per IP): enough for genuine reports, not for mass-withdrawing comments. */
+export const feedbackReportLimiter = rateLimit({ ...limiterBase, windowMs: 60 * 60_000, limit: 20, handler: limited('Too many reports. Please try again later.') });
 export const webhookLimiter = rateLimit({ ...limiterBase, windowMs: 60_000, limit: 120, handler: limited('Rate limited') });
 
 /** In-memory uploads with a hard ceiling; real type is sniffed from magic bytes before storage. */

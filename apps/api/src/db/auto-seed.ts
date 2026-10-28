@@ -3,8 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { CATEGORY_INFO, COMMITTEE_TYPE_LABELS, INCIDENT_CATEGORIES, type CommitteeType } from '@campuscare/shared';
 import { encryptSecret, hashPassword, randomToken } from '../lib/crypto';
 import { Committee, Incident, RoutingRule } from '../models/incident';
+import { DutyShift, ResponderAvailability } from '../models/duty';
 import { Contact, Announcement, TrainingModule } from '../models/content';
-import { ChatChannel } from '../models/chat';
+import { ChatChannel, ChatMembership, ChatMessage } from '../models/chat';
 import { EmailDomain, EmailProviderConfig, IdentityProviderConfig, SystemSetting } from '../models/platform';
 import { User } from '../models/user';
 import { Availability } from '../models/counselling';
@@ -21,6 +22,7 @@ export async function autoSeedDatabase() {
         $set: {
           'value.turnstile.enabled': Boolean(env.TURNSTILE_SECRET && env.TURNSTILE_SECRET !== '1x0000000000000000000000000000000AA'),
           'value.security.requireMfaForSuperAdmin': false,
+          'value.duty.allowDutyWithoutShift': true,
           'value.turnstile.forms.login': true,
           'value.turnstile.forms.register': true,
           'value.turnstile.forms.forgotPassword': true,
@@ -255,6 +257,37 @@ export async function autoSeedDatabase() {
         },
         { upsert: true, new: true },
       );
+      if (d.role === 'security_officer') {
+        const now = new Date();
+        await ResponderAvailability.findOneAndUpdate(
+          { userId: u!._id },
+          {
+            $setOnInsert: {
+              userId: u!._id,
+              status: 'off_duty',
+              campus: 'main',
+              responsibilities: ['sos_response', 'patrol'],
+              skills: ['first_aid', 'fire_safety', 'de_escalation'],
+              locationConsent: true,
+              statusChangedAt: now,
+            },
+          },
+          { upsert: true },
+        );
+
+        const shiftStart = new Date(now.getTime() - 2 * 3600_000);
+        const shiftEnd = new Date(now.getTime() + 10 * 3600_000);
+        if (!(await DutyShift.exists({ responderId: u!._id, status: { $in: ['accepted', 'active'] }, endAt: { $gt: now } }))) {
+          await DutyShift.create({
+            responderId: u!._id,
+            startAt: shiftStart,
+            endAt: shiftEnd,
+            campus: 'main',
+            status: 'accepted',
+            notes: 'Standard campus security rotation shift',
+          });
+        }
+      }
       if (d.role === 'counsellor') {
         await Availability.findOneAndUpdate(
           { counsellorId: u!._id },
@@ -288,6 +321,49 @@ export async function autoSeedDatabase() {
         preferredContact: 'in_app',
         idempotencyKey: randomUUID(),
       }).catch(() => undefined);
+    }
+
+    // Sample official announcement
+    if (charanUser && !(await Announcement.exists({ title: 'Campus Wellness & Student Support Services Open' }))) {
+      await Announcement.create({
+        title: 'Campus Wellness & Student Support Services Open',
+        body: 'The Student Wellbeing & Counselling Centre is available across campus and online. Reach out anytime through CampusCare Chats.',
+        category: 'general',
+        priority: 'standard',
+        campus: 'all',
+        targetRoles: ['all'],
+        pinned: true,
+        status: 'published',
+        publishedAt: new Date(),
+        authorId: charanUser._id,
+      });
+    }
+
+    // Sample student conversation for counselling inbox
+    const meeraUser = await User.findOne({ email: 'cc-demo-counsellor@srmap.edu.in' });
+    if (studentUser && (charanUser || meeraUser) && !(await ChatChannel.exists({ kind: 'counselling_thread', studentId: studentUser._id }))) {
+      const assignedStaff = meeraUser || charanUser;
+      const thread = await ChatChannel.create({
+        kind: 'counselling_thread',
+        studentId: studentUser._id,
+        name: 'Wellbeing Consultation & Academic Balance',
+        assignedStaffId: assignedStaff!._id,
+        published: true,
+        createdBy: studentUser._id,
+        lastMessageAt: new Date(),
+      });
+      await ChatMembership.insertMany([
+        { channelId: thread._id, userId: studentUser._id, role: 'student', lastReadAt: new Date(Date.now() - 3600_000) },
+        { channelId: thread._id, userId: assignedStaff!._id, role: 'staff', lastReadAt: new Date(0) },
+      ]);
+      await ChatMessage.create({
+        channelId: thread._id,
+        senderId: studentUser._id,
+        senderLabel: studentUser.fullName,
+        body: 'Hello, I would like guidance on managing academic workload and semester stress.',
+        clientMessageId: randomUUID(),
+        createdAt: new Date(),
+      });
     }
 
     await seedFaqArticlesIfEmpty();

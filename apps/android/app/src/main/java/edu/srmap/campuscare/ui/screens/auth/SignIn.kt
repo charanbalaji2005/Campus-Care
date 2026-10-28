@@ -1,5 +1,6 @@
 package edu.srmap.campuscare.ui.screens.auth
 
+import edu.srmap.campuscare.AppAudience
 import edu.srmap.campuscare.BuildConfig
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -155,7 +156,8 @@ fun LoginScreen() {
         }
     }
 
-    AuthLayout("Welcome Back", "Sign in to a safer campus") {
+    val college = AppAudience.current == AppAudience.College
+    AuthLayout("Welcome Back", if (college) "CampusCare College · sign in with your staff account" else "CampusCare Student · sign in to a safer campus") {
         CcTextField(email, { email = it; emailError = null }, label = "University email", placeholder = "you@$domain", leadingIcon = Icons.Rounded.Email, keyboardType = KeyboardType.Email, error = emailError)
         CcTextField(password, { password = it }, label = "Password", placeholder = "Enter your password", leadingIcon = Icons.Rounded.Lock, password = true, imeAction = if (needMfa) ImeAction.Next else ImeAction.Done, onImeAction = { if (!needMfa) submit() })
         if (needMfa) {
@@ -216,7 +218,7 @@ fun LoginScreen() {
                                 error = e.message
                             }
                             is GoogleResult.Failed -> {
-                                val authUrl = "${BuildConfig.API_BASE_URL}/api/v1/auth/google?client=android"
+                                val authUrl = "${BuildConfig.API_BASE_URL}/api/v1/auth/google?client=android&app=${BuildConfig.APP_AUDIENCE}"
                                 val opened = runCatching {
                                     val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(authUrl))
                                     context.startActivity(intent)
@@ -241,10 +243,18 @@ fun LoginScreen() {
                 Text(if (googleBusy) "Connecting…" else "Continue with Google", color = CcColors.Ink, fontWeight = FontWeight.SemiBold)
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Text("Don't have an account?", style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft)
-            TextButton(onClick = { nav.navigate(Routes.Register) }, enabled = settings.registrationOpen) {
-                Text(if (settings.registrationOpen) "Create Account" else "Registration closed", color = CcColors.Emerald, fontWeight = FontWeight.Bold)
+        if (college) {
+            // No sign-up in the College app: staff accounts come from an administrator's invitation.
+            Text(
+                "Staff accounts are created by your campus administrator. Open the invitation email on this phone to set your password. Students use the ${AppAudience.Student.appName} app.",
+                style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                Text("Don't have an account?", style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft)
+                TextButton(onClick = { nav.navigate(Routes.Register) }, enabled = settings.registrationOpen) {
+                    Text(if (settings.registrationOpen) "Create Account" else "Registration closed", color = CcColors.Emerald, fontWeight = FontWeight.Bold)
+                }
             }
         }
         TextButton(onClick = { nav.navigate(Routes.OfflineEmergency) }, modifier = Modifier.fillMaxWidth()) {

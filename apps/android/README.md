@@ -1,8 +1,23 @@
-# CampusCare Android app (Kotlin + Jetpack Compose)
+# CampusCare Android apps (Kotlin + Jetpack Compose)
 
-The Android app is used by **students, counsellors, committee members, Campus Security responders,
-administrators and community moderators**. The **Super Admin** works on the website only; the app
-refuses Super Admin sign-in and directs them to the website.
+One codebase builds **two independently installable apps** (Gradle product flavors) that share the
+same API, database, Socket.IO channel and push setup:
+
+| Flavor    | App name           | Application ID                    | URL scheme              | Who can sign in |
+|-----------|--------------------|-----------------------------------|-------------------------|-----------------|
+| `student` | CampusCare Student | `in.edu.srmap.campuscare`         | `campuscare://`         | students only |
+| `college` | CampusCare College | `in.edu.srmap.campuscare.college` | `campuscare-college://` | counsellors, committee members, Campus Security, moderators, campus admins (and a Super Admin acting as counsellor) |
+
+The Student app keeps the original application ID, so existing installs update into it. A staff
+member whose old app updates is signed out with a message pointing to CampusCare College.
+
+**The API, not the APK, decides who may use which app.** Each app sends
+`X-CampusCare-App: student|college`. The API refuses sign-in from the wrong app (`wrong_app`, only after
+the password is correct), stores the app on the session, and ends any session that the other app
+presents or whose account now belongs to the other app. The College app has no sign-up: the API
+refuses `/auth/register` from it and never creates an account from a Google sign-in there. Older builds
+that send no app header keep working until you raise the minimum version in Super Admin → Mobile app.
+The **Super Admin** console stays on the website.
 
 The app and the website share one backend (`apps/api`). Everything the Super Admin changes on the
 website reaches installed APKs at runtime, with no rebuild:
@@ -19,12 +34,18 @@ website reaches installed APKs at runtime, with no rebuild:
 ## Project layout
 
 ```
-app/src/main/java/edu/srmap/campuscare/
+app/src/student/ CampusCare Student: ui/navigation/VariantGraph.kt (student screens), manifest (student email links)
+app/src/college/ CampusCare College: ui/navigation/VariantGraph.kt (staff screens), manifest (staff email links,
+                 no SOS tile or shortcut), navy launcher background, staff notification wording
+app/src/main/java/edu/srmap/campuscare/   shared by both apps
+  AppAudience.kt this build's app and which roles it accepts
   data/          Api.kt (all endpoints), ApiClient (OkHttp + bearer token), Models, Realtime (Socket.IO),
                  SecureStore (Android Keystore AES-GCM), SessionStore, ConfigRepository (remote config + cache)
   services/      FCM service, live-location foreground service, responder on-duty service, notifications
   ui/components/ design system: buttons, cards, inputs, chat thread, map (osmdroid), Turnstile, motion
-  ui/navigation/ routes, role-based bottom bar, deep links
+  ui/navigation/ routes (with StudentOnly / StaffOnly groups), role-based bottom bar, deep links. AppRoot
+                 registers the shared screens; each app registers its own, and the other app's routes show
+                 a "part of CampusCare …" page
   ui/screens/    auth/, student/, common/ (profile, privacy, chat, cases), staff/ (counsellor, committee,
                  responder, admin, moderator)
   util/          formatting, intents (dial/SMS), location, Google sign-in, file picking
@@ -36,16 +57,21 @@ Requirements: Android Studio Ladybug (2024.2) or newer, JDK 17, Android SDK 35.
 
 ```bash
 cd apps/android
-# Emulator talking to a local API on your computer (default):
-./gradlew assembleDebug
-# Real phone / production:
-./gradlew assembleDebug \
+# Both apps (production URLs come from gradle.properties):
+./gradlew assembleStudentDebug assembleCollegeDebug
+# Unit tests for each app:
+./gradlew testStudentDebugUnitTest testCollegeDebugUnitTest
+# Install both side by side on a connected phone:
+./gradlew installStudentDebug installCollegeDebug
+# One app against another deployment:
+./gradlew assembleCollegeDebug \
   -Pcampuscare.apiUrl=https://api.your-campus.edu \
   -Pcampuscare.webUrl=https://campuscare.your-campus.edu \
   -Pcampuscare.googleWebClientId=YOUR_WEB_CLIENT_ID.apps.googleusercontent.com
 ```
 
-The APK is written to `app/build/outputs/apk/debug/`. The same properties can go in
+APKs are written to `app/build/outputs/apk/<student|college>/<debug|release>/` and bundles to
+`app/build/outputs/bundle/<student|college>Release/`. The same properties can go in
 `~/.gradle/gradle.properties` so Android Studio picks them up.
 
 Release builds must use an `https://` API URL (cleartext traffic is only allowed for the emulator
@@ -55,7 +81,9 @@ host in debug builds).
 
 1. Create a key once: `keytool -genkeypair -v -keystore campuscare-release.jks -keyalg RSA -keysize 4096 -validity 10000 -alias campuscare`
 2. Copy `keystore.properties.example` to `keystore.properties` and fill it in (never commit either file).
-3. `./gradlew assembleRelease bundleRelease -Pcampuscare.apiUrl=https://…`
+3. `./gradlew assembleStudentRelease assembleCollegeRelease bundleStudentRelease bundleCollegeRelease`
+   Both apps are signed with the same key. Without `keystore.properties`, release builds fall back to the
+   debug key, which is fine for testing but not for distribution.
 
 ### GitHub Actions
 
@@ -67,16 +95,21 @@ top of the workflow. Artifacts are attached to the workflow run.
 
 1. **API URL** — set `campuscare.apiUrl` at build time (above).
 2. **App Links** — so verification / reset / invite emails open the app, set on the API server:
-   `ANDROID_PACKAGE_NAME=in.edu.srmap.campuscare` and `ANDROID_CERT_SHA256=<release certificate SHA-256>`.
-   The website serves `/.well-known/assetlinks.json` from these values.
+   `ANDROID_PACKAGE_NAME=in.edu.srmap.campuscare,in.edu.srmap.campuscare.college` and
+   `ANDROID_CERT_SHA256=<release certificate SHA-256>` on the **website** server, which serves
+   `/.well-known/assetlinks.json` with one entry per package. Student links (`/verify-email`, `/student`)
+   open the Student app, and staff links (`/committee`, `/security`, `/consultancy`, `/moderator`) open the
+   College app. Both apps claim `/reset-password`, `/accept-invite` and `/support`.
 3. **Cloudflare Turnstile** — the app runs the widget from a page served by the API
    (`/api/v1/mobile/turnstile`). Add the API's hostname to the widget's hostname list in Cloudflare
    and to `TURNSTILE_EXPECTED_HOSTNAMES` on the server.
-4. **Google sign-in (optional)** — in Google Cloud create an *Android* OAuth client for the package
-   name and your signing certificate's SHA-1, and pass the existing *Web* client ID as
+4. **Google sign-in (optional)** — in Google Cloud create an *Android* OAuth client for **each**
+   package name with your signing certificate's SHA-1, and pass the existing *Web* client ID as
    `campuscare.googleWebClientId`. Only `@srmap.edu.in` Google accounts are accepted, and accounts are
    never linked automatically by email.
-5. **Push notifications (optional)** — add `app/google-services.json` from Firebase and set
+5. **Push notifications (optional)** — register **both** package names in the Firebase project and add
+   the downloaded `app/google-services.json`, which then lists both apps (or put one file in each of
+   `app/src/student/` and `app/src/college/`). Then set
    `FCM_SERVICE_ACCOUNT_JSON` on the API. Without it, notifications still arrive in-app and over the
    realtime connection while the app is open; Campus Security responders should switch **On duty**
    so SOS alerts keep arriving with the app in the background.

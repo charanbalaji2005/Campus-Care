@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import { cn, formatTime, formatDate } from '@/lib/utils';
 
 export interface ConversationItem {
-  type: 'channel' | 'ticket' | 'appointment' | 'report';
+  type: 'channel' | 'ticket' | 'appointment' | 'report' | 'sos' | 'notification' | 'announcement';
   id: string;
   category: ChatCategory;
   kind: string;
@@ -37,7 +37,7 @@ export interface AnnouncementView {
 }
 
 /** Selection held in the URL so notification links and browser back/forward work. */
-export type Selection = { type: 'channel' | 'ticket' | 'appointment' | 'report' | 'announcement' | 'compose'; id: string } | null;
+export type Selection = { type: 'channel' | 'ticket' | 'appointment' | 'report' | 'announcement' | 'compose' | 'sos' | 'notification'; id: string } | null;
 
 /** WhatsApp-style relative stamp: time today, weekday this week, otherwise a date. */
 export function listStamp(d: string | null | undefined) {

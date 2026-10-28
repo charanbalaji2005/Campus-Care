@@ -13,22 +13,33 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AlarmAdd
 import androidx.compose.material.icons.rounded.EventAvailable
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.RateReview
+import androidx.compose.material.icons.rounded.School
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Verified
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,15 +50,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import edu.srmap.campuscare.data.ApiException
 import edu.srmap.campuscare.data.DirectoryCounsellor
 import edu.srmap.campuscare.data.FEEDBACK_CATEGORY_LABELS
+import edu.srmap.campuscare.data.FEEDBACK_REPORT_REASONS
+import edu.srmap.campuscare.data.RatingText
 import edu.srmap.campuscare.data.SPECIALIZATION_LABELS
 import edu.srmap.campuscare.data.newIdempotencyKey
 import edu.srmap.campuscare.data.wellness
@@ -70,12 +86,14 @@ import edu.srmap.campuscare.ui.components.SectionHeader
 import edu.srmap.campuscare.ui.components.SkeletonList
 import edu.srmap.campuscare.ui.components.StatusChip
 import edu.srmap.campuscare.ui.components.SwitchRow
+import edu.srmap.campuscare.ui.components.TagCloud
 import edu.srmap.campuscare.ui.components.Tone
 import edu.srmap.campuscare.ui.components.enterStagger
 import edu.srmap.campuscare.ui.components.rememberLoad
 import edu.srmap.campuscare.ui.navigation.Routes
 import edu.srmap.campuscare.ui.theme.CcColors
 import edu.srmap.campuscare.util.Fmt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
@@ -99,6 +117,46 @@ private fun AvailabilityChip(c: DirectoryCounsellor) = when (c.availability) {
     else -> StatusChip("By appointment", Tone.Teal)
 }
 
+/** The counsellor's approved photo (loaded with the session), or their initials. */
+@Composable
+fun CounsellorPhoto(c: DirectoryCounsellor, size: Dp) {
+    val app = LocalApp.current
+    val url = c.photoUrl
+    if (url == null) {
+        Avatar(c.name, tone = Tone.Violet, size = size)
+        return
+    }
+    AsyncImage(
+        model = app.client.url(url), imageLoader = app.imageLoader, contentDescription = "Photo of ${c.name}",
+        contentScale = ContentScale.Crop, modifier = Modifier.size(size).clip(CircleShape).background(Tone.Violet.bg),
+    )
+}
+
+@Composable
+private fun RatingStars(average: Double, size: Dp = 16.dp) {
+    val filled = RatingText.filledStars(average)
+    Row(Modifier.semantics(mergeDescendants = true) { contentDescription = "Rated ${"%.1f".format(Locale.ENGLISH, average)} out of 5" }) {
+        (1..5).forEach { n ->
+            Icon(if (n <= filled) Icons.Rounded.Star else Icons.Rounded.StarBorder, null, tint = if (n <= filled) CcColors.Amber else CcColors.InkFaint, modifier = Modifier.size(size))
+        }
+    }
+}
+
+/** One line for directory cards: stars when public, otherwise a neutral note (never a count below the threshold). */
+@Composable
+private fun RatingLine(c: DirectoryCounsellor) {
+    val r = c.rating
+    val avg = r?.takeIf { it.isAvailable }?.average
+    Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (avg != null) {
+            RatingStars(avg, 14.dp)
+            Text(" ${RatingText.short(r)}", style = MaterialTheme.typography.labelMedium, color = CcColors.Ink, modifier = Modifier.semantics { contentDescription = RatingText.summary(r) })
+        } else {
+            Text(RatingText.summary(r), style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft)
+        }
+    }
+}
+
 /** Find a Counsellor: only counsellors who are on duty and have an open slot are listed (enforced by the server). */
 @Composable
 fun FindCounsellorScreen() {
@@ -108,14 +166,24 @@ fun FindCounsellorScreen() {
     var lang by rememberSaveable { mutableStateOf("") }
     var mode by rememberSaveable { mutableStateOf("") }
     var date by rememberSaveable { mutableStateOf("") }
-    val list = rememberLoad(listOf(spec, lang, mode, date)) {
-        app.api.wellness.directory(spec.ifBlank { null }, lang.ifBlank { null }, mode.ifBlank { null }, date.ifBlank { null })
+    var typed by rememberSaveable { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf("") }
+    var sort by rememberSaveable { mutableStateOf("name") }
+    // Search once typing pauses, not on every keystroke.
+    LaunchedEffect(typed) {
+        delay(350)
+        query = typed.trim()
+    }
+    val list = rememberLoad(listOf(spec, lang, mode, date, query, sort)) {
+        app.api.wellness.directory(spec.ifBlank { null }, lang.ifBlank { null }, mode.ifBlank { null }, date.ifBlank { null }, query.ifBlank { null }, sort)
     }
     val campusZone = ZoneId.of("Asia/Kolkata")
     val week = (0..6).map { LocalDate.now(campusZone).plusDays(it.toLong()) }
 
     CcScreen(title = "Find a Counsellor", subtitle = "Confidential support from campus counsellors", onBack = { nav.popBackStack() }, refreshing = list.refreshing, onRefresh = { list.reload() }) {
         InfoBanner("Counselling is confidential. Your choice of counsellor is never shared with other students.", icon = Icons.Rounded.Lock, tone = Tone.Violet)
+        CcTextField(typed, { typed = it }, label = "Search counsellors", placeholder = "Name, focus, department or language", leadingIcon = Icons.Rounded.Search)
+        ChoiceChips(listOf("name" to "A–Z", "availability" to "Soonest free", "rating" to "Top rated"), sort, { sort = it })
         Text("Focus", style = MaterialTheme.typography.titleSmall, color = CcColors.Ink)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterPill("Any", spec.isBlank()) { spec = "" }
@@ -135,7 +203,7 @@ fun FindCounsellorScreen() {
             if (counsellors.isEmpty()) {
                 EmptyState(
                     "No counsellors match",
-                    message = if (spec.isBlank() && lang.isBlank() && mode.isBlank() && date.isBlank()) "No counsellor has open times right now. Please check back later, or use Support chat." else "Try removing a filter.",
+                    message = if (spec.isBlank() && lang.isBlank() && mode.isBlank() && date.isBlank() && query.isBlank()) "No counsellor has open times right now. Please check back later, or use Support chat." else "Try another search or remove a filter.",
                     icon = Icons.Rounded.Psychology, tone = Tone.Violet,
                 )
             }
@@ -143,14 +211,15 @@ fun FindCounsellorScreen() {
                 counsellors.forEachIndexed { i, c ->
                     CcCard(Modifier.enterStagger(i), onClick = { nav.navigate(Routes.counsellorProfile(c.id)) }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Avatar(c.name, tone = Tone.Violet, size = 52.dp)
+                            CounsellorPhoto(c, 52.dp)
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(c.name, style = MaterialTheme.typography.titleMedium, color = CcColors.Ink)
-                                Text(c.title, style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
+                                Text(listOfNotNull(c.title, c.department).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
                             }
                             AvailabilityChip(c)
                         }
+                        RatingLine(c)
                         if (c.specializations.isNotEmpty()) {
                             Text(c.specializations.joinToString(" · ") { SPECIALIZATION_LABELS[it] ?: it }, style = MaterialTheme.typography.bodySmall, color = CcColors.Forest, modifier = Modifier.padding(top = 10.dp), maxLines = 2)
                         }
@@ -163,7 +232,7 @@ fun FindCounsellorScreen() {
                         }
                         Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             CcButton("View profile", { nav.navigate(Routes.counsellorProfile(c.id)) }, Modifier.weight(1f), kind = ButtonKind.Outline)
-                            CcButton("Book", { nav.navigate(Routes.counsellorProfile(c.id)) }, Modifier.weight(1f), kind = ButtonKind.Soft, enabled = c.acceptingRequests)
+                            CcButton("Book appointment", { nav.navigate(Routes.counsellorProfile(c.id)) }, Modifier.weight(1f), kind = ButtonKind.Soft, enabled = c.acceptingRequests)
                         }
                     }
                 }
@@ -197,6 +266,7 @@ fun CounsellorProfileScreen(id: String) {
     var confirm by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var dueAt by rememberSaveable { mutableStateOf<String?>(null) }
+    var reporting by remember { mutableStateOf<String?>(null) }
     // Same key for retries of one booking attempt, so a resend never creates a second request.
     var attemptKey by rememberSaveable { mutableStateOf(newIdempotencyKey()) }
 
@@ -221,7 +291,7 @@ fun CounsellorProfileScreen(id: String) {
         refreshing = profile.refreshing, onRefresh = { profile.reload() },
         bottomBar = {
             BottomActionBar {
-                CcButton("Review & book", { confirm = true }, Modifier.weight(1f), enabled = slot != null && c?.acceptingRequests == true, loading = busy)
+                CcButton(if (slot == null) "Choose a time to book" else "Book appointment", { confirm = true }, Modifier.weight(1f), enabled = slot != null && c?.acceptingRequests == true, loading = busy)
             }
         },
     ) {
@@ -229,18 +299,41 @@ fun CounsellorProfileScreen(id: String) {
             val zone = zoneOf(p.timezone)
             CcCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(p.name, tone = Tone.Violet, size = 60.dp)
+                    CounsellorPhoto(p, 64.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(p.name, style = MaterialTheme.typography.titleMedium, color = CcColors.Ink)
-                        Text("${p.title} · ${p.campus.replaceFirstChar { it.uppercase() }} campus", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
+                        Text(p.title, style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
+                        Text(listOfNotNull(p.department, "${p.campus.replaceFirstChar { it.uppercase() }} campus").joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft)
                     }
                     AvailabilityChip(p)
                 }
+                RatingLine(p)
                 if (p.bio.isNotBlank()) Text(p.bio, style = MaterialTheme.typography.bodyMedium, color = CcColors.Ink, modifier = Modifier.padding(top = 10.dp))
                 if (p.specializations.isNotEmpty()) Text("Focus: " + p.specializations.joinToString(", ") { SPECIALIZATION_LABELS[it] ?: it }, style = MaterialTheme.typography.bodySmall, color = CcColors.Forest, modifier = Modifier.padding(top = 8.dp))
                 Text("Languages: ${p.languages.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, modifier = Modifier.padding(top = 4.dp))
+                Text(
+                    "${p.slotMinutes}-minute sessions · ${p.supportedModes.joinToString(", ") { MODE_LABELS[it] ?: it }}",
+                    style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, modifier = Modifier.padding(top = 4.dp),
+                )
             }
+            if (p.qualifications.isNotEmpty() || p.yearsExperience != null) {
+                SectionHeader("Qualifications")
+                CcCard {
+                    p.qualifications.forEach { q ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                            Icon(Icons.Rounded.School, null, tint = CcColors.Forest, modifier = Modifier.size(16.dp))
+                            Text("  $q", style = MaterialTheme.typography.bodyMedium, color = CcColors.Ink)
+                        }
+                    }
+                    p.yearsExperience?.let { Text("$it years of experience", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, modifier = Modifier.padding(top = 4.dp)) }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                        Icon(Icons.Rounded.Verified, null, tint = CcColors.Emerald, modifier = Modifier.size(14.dp))
+                        Text(" Verified by the university", style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft)
+                    }
+                }
+            }
+            PublicFeedbackSection(p) { reporting = it }
 
             SectionHeader("Choose a date")
             val days = p.days.filter { it.slots.isNotEmpty() }
@@ -288,6 +381,25 @@ fun CounsellorProfileScreen(id: String) {
         }
     }
 
+    reporting?.let { ref ->
+        ReportCommentDialog(
+            onDismiss = { reporting = null },
+            onReport = { reason ->
+                scope.launch {
+                    try {
+                        app.api.wellness.reportComment(id, ref, reason)
+                        snack.show("Thanks. The comment is hidden until someone reviews it.")
+                        profile.reload()
+                    } catch (e: ApiException) {
+                        snack.error(e)
+                    } finally {
+                        reporting = null
+                    }
+                }
+            },
+        )
+    }
+
     if (confirm && c != null && slot != null) {
         val zone = zoneOf(c.timezone)
         val modes = c.supportedModes.ifEmpty { listOf("in_person") }
@@ -317,6 +429,96 @@ fun CounsellorProfileScreen(id: String) {
     }
 }
 
+/** Ratings, themes and approved comments; below the privacy threshold only a neutral note. */
+@Composable
+private fun PublicFeedbackSection(p: DirectoryCounsellor, onReport: (String) -> Unit) {
+    val r = p.rating
+    SectionHeader("Student feedback")
+    CcCard {
+        if (r == null || !r.isAvailable) {
+            Text(RatingText.threshold(r?.minimum ?: p.feedbackMinimum), style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft)
+            return@CcCard
+        }
+        val avg = r.average
+        if (avg != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("%.1f".format(Locale.ENGLISH, avg), style = MaterialTheme.typography.headlineMedium, color = CcColors.Ink, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    RatingStars(avg, 18.dp)
+                    Text("${r.ratingCount} rating${if (r.ratingCount == 1) "" else "s"}", style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft)
+                }
+            }
+        } else {
+            Text(RatingText.summary(r), style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft)
+        }
+        r.distribution?.let { dist ->
+            val total = dist.values.sum().coerceAtLeast(1)
+            Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                (5 downTo 1).forEach { n ->
+                    val count = dist[n.toString()] ?: 0
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = "$n stars: $count" }) {
+                        Text("$n★", style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft, modifier = Modifier.width(28.dp))
+                        LinearProgressIndicator(
+                            progress = { count.toFloat() / total },
+                            modifier = Modifier.weight(1f).height(6.dp).clip(CircleShape), color = CcColors.Emerald, trackColor = CcColors.Mint,
+                        )
+                        Text(" $count", style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft, modifier = Modifier.width(28.dp))
+                    }
+                }
+            }
+        }
+        if (r.themes.isNotEmpty()) {
+            Text("What students mention", style = MaterialTheme.typography.labelMedium, color = CcColors.InkSoft, modifier = Modifier.padding(top = 10.dp, bottom = 6.dp))
+            TagCloud(r.themes.map { "${FEEDBACK_CATEGORY_LABELS[it.category] ?: it.category} · ${it.count}" }, tone = Tone.Teal)
+        }
+    }
+    if (p.comments.isNotEmpty()) {
+        p.comments.forEach { cm ->
+            CcCard {
+                Text("\u201C${cm.text}\u201D", style = MaterialTheme.typography.bodyMedium, color = CcColors.Ink)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Anonymous student", style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { onReport(cm.ref) }) {
+                        Icon(Icons.Rounded.Flag, null, modifier = Modifier.size(14.dp), tint = CcColors.InkSoft)
+                        Text(" Report", style = MaterialTheme.typography.labelMedium, color = CcColors.InkSoft)
+                    }
+                }
+            }
+        }
+    }
+    Text(
+        "Feedback is anonymous and comes only from students after a completed session. Comments are shared with the student's permission and checked by staff first.",
+        style = MaterialTheme.typography.labelSmall, color = CcColors.InkFaint,
+    )
+}
+
+@Composable
+private fun ReportCommentDialog(onDismiss: () -> Unit, onReport: (String) -> Unit) {
+    var reason by remember { mutableStateOf("identifying") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        title = { Text("Report this comment?", style = MaterialTheme.typography.headlineSmall) },
+        text = {
+            Column {
+                Text("It will be hidden from this profile until staff review it.", style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft)
+                FEEDBACK_REPORT_REASONS.forEach { (k, v) ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(role = Role.RadioButton) { reason = k }.padding(vertical = 2.dp),
+                    ) {
+                        RadioButton(selected = reason == k, onClick = null)
+                        Text(v, style = MaterialTheme.typography.bodyMedium, color = CcColors.Ink)
+                    }
+                }
+            }
+        },
+        confirmButton = { CcButton("Report", { onReport(reason) }) },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = CcColors.InkSoft) } },
+    )
+}
+
 /** Banner on the counselling home when a completed session can still get feedback. */
 @Composable
 fun PendingFeedbackBanner() {
@@ -343,6 +545,7 @@ fun CounsellingFeedbackScreen(appointmentId: String) {
     var cats by rememberSaveable { mutableStateOf(listOf<String>()) }
     var comment by rememberSaveable { mutableStateOf("") }
     var concern by rememberSaveable { mutableStateOf(false) }
+    var share by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var sent by remember { mutableStateOf(false) }
 
@@ -365,7 +568,7 @@ fun CounsellingFeedbackScreen(appointmentId: String) {
                     scope.launch {
                         busy = true
                         try {
-                            app.api.wellness.submitFeedback(appointmentId, anonymous, rating.takeIf { it > 0 }, cats, comment.trim().ifBlank { null }, concern)
+                            app.api.wellness.submitFeedback(appointmentId, anonymous, rating.takeIf { it > 0 }, cats, comment.trim().ifBlank { null }, concern, share && !concern && comment.isNotBlank())
                             sent = true
                         } catch (e: ApiException) {
                             snack.error(e)
@@ -400,6 +603,13 @@ fun CounsellingFeedbackScreen(appointmentId: String) {
             }
         }
         CcTextField(comment, { comment = it }, label = "Comments (optional)", singleLine = false, minLines = 3, maxLength = 2000)
+        if (comment.isNotBlank() && !concern) {
+            SwitchRow(
+                "Share an anonymised version on their profile",
+                share, { share = it },
+                description = "Off by default. Names, numbers, emails and links are removed and staff review it before other students can see it. Your rating and topics count anonymously either way, once enough students have given feedback.",
+            )
+        }
         SwitchRow(
             "I want to report a concern",
             concern, { concern = it },

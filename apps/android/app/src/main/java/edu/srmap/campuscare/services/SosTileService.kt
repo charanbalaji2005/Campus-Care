@@ -1,5 +1,6 @@
 package edu.srmap.campuscare.services
 
+import edu.srmap.campuscare.BuildConfig
 import android.app.PendingIntent
 import android.content.Intent
 import android.net.Uri
@@ -26,7 +27,7 @@ class SosTileService : TileService() {
     private fun open() {
         val intent = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
-            data = Uri.parse("campuscare://student/emergency?source=quick_tile")
+            data = Uri.parse("${BuildConfig.APP_SCHEME}://student/emergency?source=quick_tile")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {

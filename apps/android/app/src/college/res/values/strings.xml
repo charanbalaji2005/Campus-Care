@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CampusCare College overrides of src/main/res/values/strings.xml (app_name comes from build.gradle.kts). -->
+<resources>
+    <string name="channel_updates_desc">Updates on assigned cases, appointments and duty</string>
+    <string name="channel_service_desc">Shown while on-duty mode is running</string>
+</resources>

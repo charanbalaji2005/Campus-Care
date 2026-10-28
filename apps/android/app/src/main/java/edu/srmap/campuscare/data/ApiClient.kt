@@ -40,11 +40,13 @@ class ApiException(
  * Responses use the API's `{ data }` / `{ error }` envelope.
  */
 class ApiClient(val baseUrl: String, private val session: SessionStore, val json: Json) {
-    private val userAgent = "CampusCare-Android/${BuildConfig.VERSION_NAME} (${Build.MANUFACTURER} ${Build.MODEL}; Android ${Build.VERSION.RELEASE})"
+    private val userAgent = "CampusCare-Android/${BuildConfig.VERSION_NAME} (${BuildConfig.APP_AUDIENCE}; ${Build.MANUFACTURER} ${Build.MODEL}; Android ${Build.VERSION.RELEASE})"
 
     private val headers = Interceptor { chain ->
         val builder = chain.request().newBuilder()
             .header("X-CampusCare-Client", "android")
+            // CampusCare Student or CampusCare College: the API binds the session to this app.
+            .header("X-CampusCare-App", BuildConfig.APP_AUDIENCE)
             .header("X-App-Version-Code", BuildConfig.VERSION_CODE.toString())
             .header("X-Device-Name", "${Build.MANUFACTURER} ${Build.MODEL}".take(120))
             .header("User-Agent", userAgent)
@@ -135,6 +137,8 @@ class ApiClient(val baseUrl: String, private val session: SessionStore, val json
         }.getOrNull() ?: emptyMap()
         if (code == 401 && (errCode == "session_expired" || errCode == "unauthorized") && session.isSignedIn) {
             session.clear(SessionEvent.Expired)
+        } else if (code == 401 && errCode == "wrong_app" && session.isSignedIn) {
+            session.clear(SessionEvent.WrongApp)
         }
         return ApiException(code, errCode, message, fields)
     }

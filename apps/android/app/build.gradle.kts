@@ -7,8 +7,9 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// Push notifications are optional: apply Google Services only when google-services.json is present.
-if (file("google-services.json").exists()) {
+// Push notifications are optional: apply Google Services only when google-services.json is present
+// (one file listing both apps' package names, or one per app in src/student and src/college).
+if (listOf("google-services.json", "src/student/google-services.json", "src/college/google-services.json").any { file(it).exists() }) {
     apply(plugin = libs.plugins.google.services.get().pluginId)
 }
 
@@ -59,16 +60,38 @@ android {
         }
     }
 
+    // Two independently installable apps from one codebase, sharing the same API and database:
+    //   student → CampusCare Student (keeps the original application ID, so existing installs update into it)
+    //   college → CampusCare College (staff: counsellors, security, committee, moderators, campus admins)
+    // Shared code lives in src/main; each app's navigation, branding and manifest extras live in src/<flavor>.
+    flavorDimensions += "audience"
+    productFlavors {
+        create("student") {
+            dimension = "audience"
+            applicationId = "in.edu.srmap.campuscare"
+            buildConfigField("String", "APP_AUDIENCE", "\"student\"")
+            buildConfigField("String", "APP_SCHEME", "\"campuscare\"")
+            manifestPlaceholders["appScheme"] = "campuscare"
+            resValue("string", "app_name", "CampusCare Student")
+        }
+        create("college") {
+            dimension = "audience"
+            applicationId = "in.edu.srmap.campuscare.college"
+            buildConfigField("String", "APP_AUDIENCE", "\"college\"")
+            buildConfigField("String", "APP_SCHEME", "\"campuscare-college\"")
+            manifestPlaceholders["appScheme"] = "campuscare-college"
+            resValue("string", "app_name", "CampusCare College")
+        }
+    }
+
     buildTypes {
         debug {
             versionNameSuffix = "-debug"
-            resValue("string", "app_name", "Campus Care")
         }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            resValue("string", "app_name", "Campus Care")
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             if (!apiUrl.startsWith("https://")) {
                 logger.warn("CampusCare: release build uses a non-HTTPS API URL ($apiUrl). Set -Pcampuscare.apiUrl=https://…")

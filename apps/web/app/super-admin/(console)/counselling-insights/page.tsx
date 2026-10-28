@@ -29,6 +29,7 @@ interface Analytics {
 interface FeedbackItem {
   id: string; counsellor: string; rating: number | null; categories: string[]; comment: string | null; concern: boolean; anonymous: boolean;
   student: string | null; sessionMonth: string; status: FeedbackStatus; moderationNote: string | null; reviewedAt: string | null;
+  publicComment: 'none' | 'pending' | 'approved' | 'rejected'; publicText: string | null; reportCount: number; hiddenFromPublic: boolean; countsPublicly: boolean;
 }
 
 const pct = (v: number | null) => (v == null ? '—' : `${Math.round(v * 100)}%`);
@@ -108,7 +109,12 @@ export default function CounsellingInsightsPage() {
 function FeedbackModeration() {
   const [status, setStatus] = React.useState('');
   const [concernOnly, setConcernOnly] = React.useState(false);
-  const params = new URLSearchParams({ limit: '50', ...(status ? { status } : {}), ...(concernOnly ? { concern: 'true' } : {}) });
+  const [publicQueue, setPublicQueue] = React.useState(false);
+  const [reportedOnly, setReportedOnly] = React.useState(false);
+  const params = new URLSearchParams({
+    limit: '50', ...(status ? { status } : {}), ...(concernOnly ? { concern: 'true' } : {}),
+    ...(publicQueue ? { publicComment: 'pending' } : {}), ...(reportedOnly ? { reported: 'true' } : {}),
+  });
   const { data, error, isLoading, mutate } = useApi<{ items: FeedbackItem[]; total: number }>(`/counselling/feedback?${params}`);
   const [editing, setEditing] = React.useState<FeedbackItem | null>(null);
 
@@ -120,6 +126,8 @@ function FeedbackModeration() {
         action={
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="accent-brand-600" checked={concernOnly} onChange={(e) => setConcernOnly(e.target.checked)} /> Concerns only</label>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="accent-brand-600" checked={publicQueue} onChange={(e) => setPublicQueue(e.target.checked)} /> Public comments to review</label>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="accent-brand-600" checked={reportedOnly} onChange={(e) => setReportedOnly(e.target.checked)} /> Reported</label>
             <Select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status" className="w-36"><option value="">Any status</option>{FEEDBACK_STATUSES.map((s) => <option key={s} value={s}>{humanize(s)}</option>)}</Select>
           </div>
         }
@@ -140,6 +148,12 @@ function FeedbackModeration() {
               </div>
               {f.categories.length > 0 && <p className="text-xs text-ink-soft">{f.categories.map(humanize).join(' · ')}</p>}
               {f.comment && <p className="whitespace-pre-wrap text-sm text-ink">{f.comment}</p>}
+              {f.publicComment !== 'none' && (
+                <p className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-ink">
+                  <span className="font-semibold">Public version ({PUBLIC_LABELS[f.publicComment]}{f.reportCount ? ` · reported ${f.reportCount}×` : ''}):</span> {f.publicText}
+                </p>
+              )}
+              {(f.hiddenFromPublic || !f.countsPublicly) && !f.concern && <p className="text-xs text-ink-soft">{f.hiddenFromPublic ? 'Hidden from public ratings' : 'Not counted in public ratings (submitted before distinct-student counting)'}</p>}
               <p className="flex items-center gap-1 text-xs text-ink-soft">{f.anonymous ? <><Lock className="h-3 w-3" /> Anonymous</> : <>From {f.student}</>}{f.moderationNote ? ` · Note: ${f.moderationNote}` : ''}</p>
             </div>
             <Button variant="outline" size="sm" onClick={() => setEditing(f)}>Review</Button>
@@ -151,14 +165,25 @@ function FeedbackModeration() {
   );
 }
 
+const PUBLIC_LABELS = { none: 'not shared', pending: 'awaiting review', approved: 'shown publicly', rejected: 'not shown' } as const;
+
 function ModerateDialog({ item, onClose, onDone }: { item: FeedbackItem; onClose: () => void; onDone: () => void }) {
   const [status, setStatus] = React.useState<FeedbackStatus>(item.status === 'new' ? 'reviewed' : item.status);
   const [note, setNote] = React.useState(item.moderationNote ?? '');
+  const [decision, setDecision] = React.useState<'' | 'approved' | 'rejected'>('');
+  const [publicText, setPublicText] = React.useState(item.publicText ?? '');
+  const [hidden, setHidden] = React.useState(item.hiddenFromPublic);
   const [busy, setBusy] = React.useState(false);
+  const canPublish = item.publicComment !== 'none' && !item.concern;
   async function save() {
     setBusy(true);
     try {
-      await api.patch(`/counselling/feedback/${item.id}`, { status, note });
+      await api.patch(`/counselling/feedback/${item.id}`, {
+        status, note,
+        ...(canPublish && decision ? { publicComment: decision } : {}),
+        ...(canPublish && publicText.trim() && publicText.trim() !== (item.publicText ?? '') ? { publicText: publicText.trim() } : {}),
+        ...(hidden !== item.hiddenFromPublic ? { hiddenFromPublic: hidden } : {}),
+      });
       toast.success('Feedback updated');
       onDone();
     } catch (err) {
@@ -174,6 +199,24 @@ function ModerateDialog({ item, onClose, onDone }: { item: FeedbackItem; onClose
           {item.concern && <Alert tone="rose" icon={<AlertTriangle className="h-4 w-4" />}>Marked as a concern. Escalate if it needs follow-up under campus policy.</Alert>}
           <Select value={status} onChange={(e) => setStatus(e.target.value as FeedbackStatus)} aria-label="Status">{FEEDBACK_STATUSES.map((s) => <option key={s} value={s}>{humanize(s)}</option>)}</Select>
           <Textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} placeholder="Internal note (optional)" aria-label="Internal note" />
+          {canPublish && (
+            <div className="space-y-2 rounded-xl border border-line p-3">
+              <p className="text-sm font-semibold text-ink-strong">Public comment</p>
+              <p className="text-xs text-ink-soft">The student agreed to share an anonymised version. Remove anything that could identify them or anyone else; emails, links, numbers and ids are masked again on save.</p>
+              <Textarea value={publicText} onChange={(e) => setPublicText(e.target.value)} maxLength={400} aria-label="Public text" />
+              <Select value={decision} onChange={(e) => setDecision(e.target.value as typeof decision)} aria-label="Public comment decision">
+                <option value="">Keep as {PUBLIC_LABELS[item.publicComment]}</option>
+                <option value="approved">Show on the counsellor&apos;s profile</option>
+                <option value="rejected">Don&apos;t show publicly</option>
+              </Select>
+            </div>
+          )}
+          {!item.concern && (
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-1 accent-brand-600" checked={hidden} onChange={(e) => setHidden(e.target.checked)} />
+              <span>Leave this feedback out of public ratings and themes<span className="block text-xs text-ink-soft">For feedback that breaks the policy. It stays here for staff.</span></span>
+            </label>
+          )}
           <Button className="w-full" loading={busy} onClick={save}>Save</Button>
         </div>
       </DialogContent>

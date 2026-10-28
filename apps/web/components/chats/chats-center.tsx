@@ -4,7 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
-  Archive, BellOff, Building2, FolderKanban, HeartHandshake, Inbox, LifeBuoy, Lock, Mail, Megaphone, MessageSquarePlus, MessagesSquare, Pin, Search,
+  Archive, BellOff, Building2, CalendarDays, FolderKanban, HeartHandshake, Inbox, LifeBuoy, Lock, Mail, Megaphone, MessageSquarePlus, MessagesSquare, Pin, Search,
   ShieldAlert, Siren, Stethoscope, UserRound, Users, type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,8 +20,22 @@ import { EMPTY_FILTERS, ReportDetail, ReportsList, type ReportFilters } from './
 import { PresenceDot, UnreadBadge, listStamp, markRead, type AnnouncementView, type ConversationItem, type Selection } from './chats-ui';
 
 const ICONS: Record<ChatCategory, LucideIcon> = {
-  all: MessagesSquare, announcements: Megaphone, counselling: Stethoscope, student_counsellor: HeartHandshake, student_admin: UserRound,
-  admin_super_admin: ShieldAlert, counsellor_admin: Building2, support: LifeBuoy, security: Siren, community: Users, reports: FolderKanban, archived: Archive, unread: Mail,
+  all: MessagesSquare,
+  announcements: Megaphone,
+  bookings: CalendarDays,
+  reports: FolderKanban,
+  counselling: Stethoscope,
+  support: LifeBuoy,
+  community: Users,
+  security: Siren,
+  direct: MessageSquarePlus,
+  notifications: BellOff,
+  student_counsellor: HeartHandshake,
+  student_admin: UserRound,
+  admin_super_admin: ShieldAlert,
+  counsellor_admin: Building2,
+  archived: Archive,
+  unread: Mail,
 };
 
 interface Overview {
@@ -35,7 +49,7 @@ interface Overview {
   permissions: { publishAnnouncements: boolean; startDirect: boolean; triageReports: boolean };
 }
 
-const SELECTION_PARAM: Record<NonNullable<Selection>['type'], string> = { channel: 'c', ticket: 't', appointment: 'a', report: 'r', announcement: 'n', compose: 'new' };
+const SELECTION_PARAM: Record<NonNullable<Selection>['type'], string> = { channel: 'c', ticket: 't', appointment: 'a', report: 'r', announcement: 'n', compose: 'new', sos: 's', notification: 'notif' };
 
 function readSelection(sp: URLSearchParams): Selection {
   for (const [type, key] of Object.entries(SELECTION_PARAM)) {
@@ -50,6 +64,81 @@ function readSelection(sp: URLSearchParams): Selection {
  * The URL holds the category and selection (?cat=reports&r=<id>), so notification deep links,
  * refreshes and back/forward all land on the same authorised item.
  */
+
+function SosAlertDetail({ item, onBack }: { item: ConversationItem; onBack: () => void }) {
+  const router = useRouter();
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-[#FBFAF6]">
+      <div className="flex items-center justify-between border-b border-line bg-white px-6 py-4">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={onBack} className="sm:hidden">← Back</Button>
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 text-rose-700">
+            <Siren className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="font-bold text-ink-strong">{item.title}</h2>
+            <p className="text-xs text-ink-soft">{item.subtitle}</p>
+          </div>
+        </div>
+        <Badge tone={item.status === 'resolved' ? 'brand' : 'rose'}>{item.status?.toUpperCase()}</Badge>
+      </div>
+      <div className="flex-1 space-y-6 overflow-y-auto p-6">
+        <div className="rounded-2xl border border-line bg-white p-6 shadow-2xs space-y-4">
+          <h3 className="font-bold text-ink-strong">Emergency Incident Dispatch</h3>
+          <p className="text-sm text-ink-soft leading-relaxed">{item.preview}</p>
+          <div className="grid grid-cols-2 gap-4 text-xs">
+            <div className="rounded-xl bg-slate-50 p-3 border border-slate-100">
+              <span className="text-slate-400 block font-medium">Alert Status</span>
+              <span className="font-bold text-slate-800 text-sm mt-0.5 block">{item.status}</span>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 border border-slate-100">
+              <span className="text-slate-400 block font-medium">Reported At</span>
+              <span className="font-bold text-slate-800 text-sm mt-0.5 block">{item.lastActivityAt ? new Date(item.lastActivityAt).toLocaleTimeString() : 'Recent'}</span>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3 pt-2">
+            <Button onClick={() => router.push('/super-admin/emergency-alerts')}>
+              Open in SOS Command Center
+            </Button>
+            <Button variant="outline" onClick={() => router.push('/super-admin/live-map')}>
+              Track on Live Map
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NotificationDeliveryDetail({ item, onBack }: { item: ConversationItem; onBack: () => void }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-[#FBFAF6]">
+      <div className="flex items-center justify-between border-b border-line bg-white px-6 py-4">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={onBack} className="sm:hidden">← Back</Button>
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800">
+            <Mail className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="font-bold text-ink-strong">{item.title}</h2>
+            <p className="text-xs text-ink-soft">{item.subtitle}</p>
+          </div>
+        </div>
+        <Badge tone={item.status === 'delivered' || item.status === 'sent' ? 'brand' : 'rose'}>{item.status?.toUpperCase()}</Badge>
+      </div>
+      <div className="flex-1 space-y-6 overflow-y-auto p-6">
+        <div className="rounded-2xl border border-line bg-white p-6 shadow-2xs space-y-4">
+          <h3 className="font-bold text-ink-strong">Delivery Details & Diagnostics</h3>
+          <p className="text-sm font-mono bg-slate-50 p-4 rounded-xl border border-slate-200 text-slate-700">{item.preview}</p>
+          <p className="text-xs text-ink-soft">
+            All notifications are dispatched via university-authorized SMTP with RFC MIME compliance, DKIM validation, and bounce suppression.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ChatsCenter() {
   const router = useRouter();
   const pathname = usePathname();
@@ -117,6 +206,8 @@ export function ChatsCenter() {
   else if (selection.type === 'announcement') detail = selectedAnnouncement
     ? <AnnouncementDetail key={selectedAnnouncement.id} item={selectedAnnouncement} canPublish={Boolean(overview?.permissions.publishAnnouncements)} onBack={back} onChanged={() => { void announcements.mutate(); void refreshOverview(); }} />
     : <PaneLoading />;
+  else if (selectedItem?.kind === 'sos_alert') detail = <SosAlertDetail item={selectedItem} onBack={back} />;
+  else if (selectedItem?.kind === 'notification_delivery') detail = <NotificationDeliveryDetail item={selectedItem} onBack={back} />;
   else if (selection.type === 'ticket') detail = selectedItem ? <TicketPane key={selectedItem.id} item={selectedItem} onBack={back} onChanged={refreshAll} /> : <PaneLoading missing={Boolean(list)} />;
   else if (selection.type === 'appointment') detail = selectedItem ? <AppointmentPane item={selectedItem} onBack={back} onOpenThread={(id) => navigate('student_counsellor', { type: 'channel', id })} /> : <PaneLoading missing={Boolean(list)} />;
   else if (channelItem?.locked) detail = <LockedPane key={channelItem.id} item={channelItem} onBack={back} onChanged={refreshAll} />;

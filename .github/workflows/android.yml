@@ -97,17 +97,21 @@ jobs:
             apps/android/app/build/outputs/bundle/**/*.aab
           if-no-files-found: error
 
-      - name: Upload APK to GitHub Release
+      - name: Upload APKs to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          APK_FILE=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
-          if [ -n "$APK_FILE" ]; then
-            cp "$APK_FILE" "CampusCare-${GITHUB_REF_NAME}.apk"
-            gh release upload "${GITHUB_REF_NAME}" "CampusCare-${GITHUB_REF_NAME}.apk" --clobber
-            echo "Successfully uploaded CampusCare-${GITHUB_REF_NAME}.apk to GitHub Release ${GITHUB_REF_NAME}"
-          fi
+          # One APK per app: CampusCare Student and CampusCare College.
+          for FLAVOR in student college; do
+            APK_FILE=$(find "app/build/outputs/apk/$FLAVOR" -name "*.apk" | head -n 1)
+            if [ -n "$APK_FILE" ]; then
+              NAME="CampusCare-${FLAVOR^}-${GITHUB_REF_NAME}.apk"
+              cp "$APK_FILE" "$NAME"
+              gh release upload "${GITHUB_REF_NAME}" "$NAME" --clobber
+              echo "Uploaded $NAME to GitHub Release ${GITHUB_REF_NAME}"
+            fi
+          done
 
       - name: Clean up signing material
         if: always()

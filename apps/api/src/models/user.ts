@@ -216,6 +216,8 @@ const sessionSchema = new Schema(
     ipHash: { type: String, default: null },
     userAgent: { type: String, default: null, maxlength: 300 },
     client: { type: String, enum: ['web', 'android'], default: 'web' },
+    /** Which Android app created this session (null for the website and older app versions). */
+    app: { type: String, enum: ['student', 'college', null], default: null },
     deviceName: { type: String, default: null, maxlength: 120 },
     revokedAt: { type: Date, default: null },
   },

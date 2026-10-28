@@ -1,6 +1,7 @@
 package edu.srmap.campuscare.ui.navigation
 
 import android.net.Uri
+import edu.srmap.campuscare.AppAudience
 import edu.srmap.campuscare.services.SosTrigger
 
 /** Every screen in the app. Arguments are path segments; optional values are query parameters. */
@@ -78,6 +79,7 @@ object Routes {
     const val Appointment = "c/appointment/{id}"
     const val Availability = "c/availability"
     const val MySchedule = "c/schedule"
+    const val CounsellorPublicProfile = "c/public-profile"
     const val CounsellorStudents = "c/students"
     const val Inbox = "inbox"
     const val ChannelDashboard = "c/channel"
@@ -127,8 +129,31 @@ object Routes {
         "verify?token=${Uri.encode(token ?: "")}&email=${Uri.encode(email ?: "")}"
     fun invite(token: String) = "invite?token=${Uri.encode(token)}"
 
-    /** Home destination for each role (Super Admins use the website). */
-    fun homeFor(role: String): String = when (role) {
+    /**
+     * Screens only CampusCare Student registers. Everything not listed here or in [StaffOnly]
+     * (sign-in, profile, notifications, chats, community, campus map, contacts…) is in both apps.
+     */
+    val StudentOnly: List<String> = listOf(
+        Home, Sos, SosStatus, QuickSos, Report, Reports, ReportDetail, Support,
+        Counselling, BookSession, FindCounsellor, CounsellorProfile, CounsellingFeedback,
+        SafeWalk, Trusted, SafetyCard, Suggestions, Committees, Awareness, Module, Certificate,
+    )
+
+    /** Screens only CampusCare College registers (each still checks the role, and the API checks permissions). */
+    val StaffOnly: List<String> = listOf(
+        CounsellorHome, CounsellorAppointments, Appointment, Availability, MySchedule, CounsellorPublicProfile, CounsellorStudents,
+        Inbox, ChannelDashboard, ChannelCompose, Case,
+        CommitteeCases,
+        ResponderAlerts, ResponderAlert, ResponderLocations, ResponderCases,
+        AdminHome, AdminTriage, AdminAlerts, AdminAnnouncements, AdminStaff, Moderation, CommunityModeration,
+    )
+
+    /** Screens that belong to the other app; this one registers them as an "open the other app" page. */
+    fun otherAppRoutes(audience: AppAudience = AppAudience.current): List<String> =
+        if (audience == AppAudience.Student) StaffOnly else StudentOnly
+
+    /** Home destination for each role (Super Admins use the website), or sign-in if this app isn't for that role. */
+    fun homeFor(role: String): String = if (!AppAudience.current.allows(role)) Login else when (role) {
         "student" -> Home
         "counsellor" -> CounsellorHome
         "committee_member" -> CommitteeCases

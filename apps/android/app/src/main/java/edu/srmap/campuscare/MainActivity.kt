@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
     private fun linkFrom(intent: Intent?): String? {
         val data: Uri = intent?.data ?: return null
         return when (data.scheme) {
-            "campuscare" -> data.getQueryParameter("link") ?: data.toString()
+            BuildConfig.APP_SCHEME -> data.getQueryParameter("link") ?: data.toString()
             "https", "http" -> data.path?.let { path -> path + (data.query?.let { "?$it" } ?: "") }
             else -> null
         }

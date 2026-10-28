@@ -126,4 +126,5 @@ class SessionStore(private val store: KeyValueStore, private val json: Json) {
     }
 }
 
-enum class SessionEvent { Expired, SignedOut, MfaRequired, MfaEnrollmentRequired }
+/** [WrongApp]: the server refused the session because the account's role belongs to the other CampusCare app. */
+enum class SessionEvent { Expired, SignedOut, MfaRequired, MfaEnrollmentRequired, WrongApp }

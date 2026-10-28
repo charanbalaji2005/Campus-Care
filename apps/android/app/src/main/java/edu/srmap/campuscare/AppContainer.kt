@@ -8,6 +8,8 @@ import edu.srmap.campuscare.data.ConfigRepository
 import edu.srmap.campuscare.data.Realtime
 import edu.srmap.campuscare.data.SecureStore
 import edu.srmap.campuscare.data.SessionStore
+import edu.srmap.campuscare.services.DutyController
+import edu.srmap.campuscare.services.ServiceDutyDevice
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.Json
 
@@ -27,6 +29,8 @@ class AppContainer(context: Context) {
     val api = Api(client)
     val config = ConfigRepository(context, api, json)
     val realtime = Realtime(api, config)
+    /** Responder duty status as the server last confirmed it; shared by every screen and the duty service. */
+    val duty = DutyController(api.duty, ServiceDutyDevice(context.applicationContext))
     val prefs = context.getSharedPreferences("cc_prefs", Context.MODE_PRIVATE)
 
     /** Coil uses the API's OkHttp client so private images load with the bearer token. */

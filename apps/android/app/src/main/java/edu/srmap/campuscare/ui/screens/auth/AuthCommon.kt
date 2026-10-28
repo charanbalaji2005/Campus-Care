@@ -1,5 +1,6 @@
 package edu.srmap.campuscare.ui.screens.auth
 
+import edu.srmap.campuscare.AppAudience
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -144,6 +145,12 @@ suspend fun completeSignIn(app: AppContainer, nav: NavHostController, resp: Logi
     val me = runCatching { app.api.auth.me() }.getOrNull()
     me?.let { app.session.updateUser(it.user) }
     val role = (me?.user ?: user).role
+    // The API refuses this already (wrong_app); kept so an older API can't put a staff account in the
+    // Student app or a student in the College app.
+    if (!AppAudience.current.allows(role)) {
+        app.session.clear()
+        throw ApiException(403, "wrong_app", AppAudience.wrongAppMessage(role))
+    }
     val target = when {
         resp.mfaRequired -> Routes.Mfa
         resp.needsMfaSetup -> Routes.Security

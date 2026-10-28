@@ -28,10 +28,27 @@ const availabilitySchema = new Schema(
     breaks: [{ weekday: { type: Number, default: null }, start: String, end: String, _id: false }],
     /** Custom hours (or closed) for specific dates, replacing the weekly pattern on that day. */
     dateOverrides: [{ date: String, closed: { type: Boolean, default: false }, windows: [{ start: String, end: String, _id: false }], _id: false }],
+    // ---- public directory (Super Admin controls listing and photo; credentials need approval)
+    /** Shown in the student directory and bookable by students. Only a Super Admin changes it. */
+    listed: { type: Boolean, default: true },
+    listingReason: { type: String, default: null, maxlength: 500 },
+    photoVisible: { type: Boolean, default: true },
+    /** Approved credentials: the only ones students see. */
+    qualifications: { type: [String], default: [] },
+    yearsExperience: { type: Number, default: null, min: 0, max: 60 },
+    credentialsApprovedAt: { type: Date, default: null },
+    credentialsApprovedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    /** Credentials the counsellor submitted, waiting for a Super Admin. */
+    pendingCredentials: {
+      type: new Schema({ qualifications: { type: [String], default: [] }, yearsExperience: { type: Number, default: null }, submittedAt: { type: Date, default: null } }, { _id: false }),
+      default: null,
+    },
+    profileUpdatedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
 availabilitySchema.index({ counsellorId: 1 }, { unique: true });
+availabilitySchema.index({ 'pendingCredentials.submittedAt': 1 }, { partialFilterExpression: { 'pendingCredentials.submittedAt': { $type: 'date' } } });
 export const Availability = model('Availability', availabilitySchema);
 
 const appointmentSchema = new Schema(

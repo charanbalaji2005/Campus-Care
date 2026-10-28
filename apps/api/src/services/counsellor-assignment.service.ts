@@ -71,6 +71,7 @@ export class CounsellorAssignmentService {
     const availabilities = await Availability.find({
       counsellorId: { $in: counsellorIds },
       acceptingRequests: true, // On Duty: off-duty counsellors never receive new requests
+      listed: { $ne: false }, // a Super Admin has not withdrawn them from student bookings
     }).lean();
 
     const acceptingCounsellorIds = new Set(availabilities.map((a) => String(a.counsellorId)));

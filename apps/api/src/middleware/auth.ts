@@ -1,7 +1,9 @@
 import type { NextFunction, Request, Response } from 'express';
-import { hasPermission, type Permission, type Role } from '@campuscare/shared';
+import { hasPermission, parseAppAudience, type Permission, type Role } from '@campuscare/shared';
 import { AppError, forbidden, unauthorized } from '../lib/http';
-import { MOBILE_CLIENT_HEADER, SESSION_COOKIE, clearAuthCookies, mfaRequiredFor, resolveSession } from '../services/auth.service';
+import {
+  MOBILE_APP_HEADER, MOBILE_CLIENT_HEADER, SESSION_COOKIE, clearAuthCookies, mfaRequiredFor, resolveSession, revokeSession, wrongAppError, wrongAppFor,
+} from '../services/auth.service';
 import { getSettings } from '../services/settings.service';
 import { audit } from '../services/audit.service';
 
@@ -13,10 +15,21 @@ export async function loadSession(req: Request, res: Response, next: NextFunctio
     const bearer = typeof authz === 'string' && authz.startsWith('Bearer ') ? authz.slice(7).trim() : undefined;
     // The Android app identifies itself and never sends cookies; its sessions are bearer tokens.
     req.isMobileClient = req.headers[MOBILE_CLIENT_HEADER] === 'android' && !cookieToken;
+    // CampusCare Student / CampusCare College. Older app builds send no app header and keep working.
+    if (req.isMobileClient) req.clientApp = parseAppAudience(req.headers[MOBILE_APP_HEADER]) ?? undefined;
     const token = cookieToken ?? bearer;
     if (token) {
       const resolved = await resolveSession(token);
-      if (resolved) {
+      // A session belongs to the app that created it, and an account only to the app for its role:
+      // a student token can never be used by the College app (or a staff token by the Student app).
+      const wrongApp = resolved
+        ? wrongAppFor(resolved.user.role, resolved.session.app as 'student' | 'college' | null) ?? wrongAppFor(resolved.user.role, req.clientApp)
+        : null;
+      if (resolved && wrongApp) {
+        // Useless in this app from now on: end it (and its push registration) so the phone signs out.
+        req.wrongApp = wrongApp;
+        await revokeSession(resolved.session);
+      } else if (resolved) {
         req.user = resolved.user;
         req.authSession = resolved.session;
         req.bearerAuth = !cookieToken;
@@ -31,6 +44,7 @@ export async function loadSession(req: Request, res: Response, next: NextFunctio
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (req.wrongApp) return next(wrongAppError(req.wrongApp, 401));
   if (!req.user || !req.authSession) return next(new AppError(401, 'session_expired', 'Your session has expired. Please sign in again.'));
   if (req.user.accountStatus !== 'active') return next(new AppError(403, 'account_inactive', 'Your account is not active. Verify your email or contact support.'));
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');

@@ -83,32 +83,27 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Email links (verification, password reset, invitations, notifications) open the app when installed.
-                 Verified with /.well-known/assetlinks.json served by the CampusCare website. -->
+            <!-- Email links (password reset, invitations, support threads) open the app when installed. Each app adds
+                 its own paths in src/student and src/college. Verified with /.well-known/assetlinks.json. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" />
                 <data android:host="${webHost}" />
-                <data android:pathPrefix="/verify-email" />
                 <data android:pathPrefix="/reset-password" />
                 <data android:pathPrefix="/accept-invite" />
                 <!-- Links in notification emails (the website shows an "open the app" page for these). -->
-                <data android:pathPrefix="/student" />
                 <data android:pathPrefix="/support" />
-                <data android:pathPrefix="/committee" />
-                <data android:pathPrefix="/security" />
-                <data android:pathPrefix="/consultancy" />
-                <data android:pathPrefix="/moderator" />
             </intent-filter>
 
-            <!-- Internal deep links used by notifications. -->
+            <!-- Internal deep links (notifications, Google sign-in return). campuscare / campuscare-college, so each
+                 app's links and sign-in tokens only ever open that app. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="campuscare" />
+                <data android:scheme="${appScheme}" />
             </intent-filter>
             <meta-data
                 android:name="android.app.shortcuts"

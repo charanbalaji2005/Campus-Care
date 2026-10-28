@@ -54,7 +54,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import edu.srmap.campuscare.data.ApiException
 import edu.srmap.campuscare.data.SosAlert
-import edu.srmap.campuscare.services.ResponderDutyService
 import edu.srmap.campuscare.ui.components.ButtonKind
 import edu.srmap.campuscare.ui.components.Catalog
 import edu.srmap.campuscare.ui.components.CcButton
@@ -82,7 +81,6 @@ import edu.srmap.campuscare.ui.components.ScreenHeader
 import edu.srmap.campuscare.ui.components.SectionHeader
 import edu.srmap.campuscare.ui.components.SkeletonList
 import edu.srmap.campuscare.ui.components.StatusChip
-import edu.srmap.campuscare.ui.components.SwitchRow
 import edu.srmap.campuscare.ui.components.Tone
 import edu.srmap.campuscare.ui.components.enterStagger
 import edu.srmap.campuscare.ui.components.rememberLoad
@@ -113,11 +111,10 @@ fun ResponderAlertsScreen() {
     var showAll by rememberSaveable { mutableStateOf(false) }
     val alerts = rememberLoad(showAll) { app.api.safety.responderAlerts(all = showAll) }
     val walks = rememberLoad { runCatching { app.api.safety.overdueWalks() }.getOrDefault(emptyList()) }
-    var onDuty by remember { mutableStateOf(ResponderDutyService.isOnDuty(context)) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     DisposableEffect(Unit) {
         app.realtime.subscribe("responders:all")
-        onDispose { if (!ResponderDutyService.isOnDuty(context)) app.realtime.unsubscribe("responders:all") }
+        onDispose { if (!app.duty.state.value.onDuty) app.realtime.unsubscribe("responders:all") }
     }
     LaunchedEffect(Unit) { app.realtime.events.collect { e -> if (e.name == "sos:new" || e.name == "sos:updated") { alerts.reload(); walks.reload() } } }
     LaunchedEffect(Unit) { while (true) { delay(1_000); now = System.currentTimeMillis() } }
@@ -128,13 +125,7 @@ fun ResponderAlertsScreen() {
         refreshing = alerts.refreshing, onRefresh = { alerts.reload(); walks.reload() },
         actions = { LiveDot(live, Modifier.padding(end = 12.dp)) },
     ) {
-        CcCard(color = if (onDuty) CcColors.Mint50 else CcColors.AmberSoft) {
-            SwitchRow(
-                if (onDuty) "On duty — receiving alerts" else "Off duty", onDuty,
-                { on -> onDuty = on; if (on) ResponderDutyService.start(context) else ResponderDutyService.stop(context) },
-                description = "While on duty, new SOS alerts ring through even when the app is closed.",
-            )
-        }
+        ResponderDutyCard()
         ChoiceChips(listOf("open" to "Active", "all" to "Recent (24h)"), if (showAll) "all" else "open", { showAll = it == "all" })
         LoadContent(alerts, skeleton = { SkeletonList(3) }) { list ->
             val shown = if (showAll) list else list.filter { it.status in OPEN_SOS }

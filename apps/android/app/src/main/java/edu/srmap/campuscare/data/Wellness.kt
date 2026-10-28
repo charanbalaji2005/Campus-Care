@@ -27,7 +27,69 @@ data class DirectoryCounsellor(
     val slotMinutes: Int = 50,
     val timezone: String = "Asia/Kolkata",
     val days: List<SlotDay> = emptyList(),
+    val department: String? = null,
+    /** API path of the approved profile photo (needs the session), or null. */
+    val photoUrl: String? = null,
+    /** Approved credentials only; empty until a Super Admin approves them. */
+    val qualifications: List<String> = emptyList(),
+    val yearsExperience: Int? = null,
+    /** Server-computed and privacy-thresholded; null from older servers. */
+    val rating: PublicRating? = null,
+    /** Moderator-approved anonymised comments (profile only). */
+    val comments: List<PublicComment> = emptyList(),
+    val feedbackMinimum: Int = 3,
 )
+
+/**
+ * Public feedback for a counsellor. `insufficient` means fewer than [minimum] different students have
+ * given feedback, so nothing else is sent. When available, [average] is still null unless enough
+ * different students left a star rating.
+ */
+@Serializable
+data class PublicRating(
+    /** insufficient · available */
+    val status: String = "insufficient",
+    val minimum: Int = 3,
+    val average: Double? = null,
+    val ratingCount: Int = 0,
+    val distribution: Map<String, Int>? = null,
+    val themes: List<FeedbackTheme> = emptyList(),
+) {
+    val isAvailable: Boolean get() = status == "available"
+}
+
+@Serializable
+data class FeedbackTheme(val category: String, val count: Int)
+
+/** [ref] is an opaque handle used only to report the comment. */
+@Serializable
+data class PublicComment(val ref: String, val text: String)
+
+@Serializable
+data class PendingCredentials(val qualifications: List<String> = emptyList(), val yearsExperience: Int? = null, val submittedAt: String? = null)
+
+/** What the counsellor can edit; listing and photo visibility are read-only (set by a Super Admin). */
+@Serializable
+data class CounsellorPublicProfile(
+    val title: String = "Counsellor",
+    val bio: String = "",
+    val specializations: List<String> = emptyList(),
+    val languages: List<String> = emptyList(),
+    val supportedModes: List<String> = listOf("in_person"),
+    val qualifications: List<String> = emptyList(),
+    val yearsExperience: Int? = null,
+    val credentialsApprovedAt: String? = null,
+    val pendingCredentials: PendingCredentials? = null,
+    val listed: Boolean = true,
+    val listingReason: String? = null,
+    val photoVisible: Boolean = true,
+)
+
+@Serializable
+data class CounsellorPublicProfileView(val profile: CounsellorPublicProfile = CounsellorPublicProfile(), val preview: DirectoryCounsellor? = null, val feedbackMinimum: Int = 3)
+
+@Serializable
+data class CounsellorPublicProfileSaved(val profile: CounsellorPublicProfile = CounsellorPublicProfile(), val credentialsPending: Boolean = false)
 
 @Serializable
 data class SlotDay(val date: String, val slots: List<String> = emptyList(), val full: Boolean = false)
@@ -94,14 +156,30 @@ data class ReminderDto(val id: String, val kind: String, val dueAt: String, val 
 class WellnessApi(private val c: ApiClient) {
     private fun q(v: String) = URLEncoder.encode(v, "UTF-8")
 
-    suspend fun directory(specialization: String? = null, language: String? = null, mode: String? = null, date: String? = null): List<DirectoryCounsellor> {
+    /** [sort]: name · availability · rating. [query] matches name, title, department, specialisation and language. */
+    suspend fun directory(
+        specialization: String? = null, language: String? = null, mode: String? = null, date: String? = null,
+        query: String? = null, sort: String? = null,
+    ): List<DirectoryCounsellor> {
         val params = listOfNotNull(
             specialization?.let { "specialization=${q(it)}" }, language?.let { "language=${q(it)}" },
             mode?.let { "mode=${q(it)}" }, date?.let { "date=${q(it)}" },
+            query?.takeIf { it.isNotBlank() }?.let { "q=${q(it.trim())}" }, sort?.let { "sort=${q(it)}" },
         )
         return c.get("/counselling/counsellors" + if (params.isEmpty()) "" else "?" + params.joinToString("&"))
     }
     suspend fun profile(id: String): DirectoryCounsellor = c.get("/counselling/counsellors/$id")
+    /** Withdraws the comment from the profile until a moderator reviews it. */
+    suspend fun reportComment(counsellorId: String, ref: String, reason: String): Ignored =
+        c.post("/counselling/counsellors/$counsellorId/comments/$ref/report", mapOf("reason" to reason))
+
+    suspend fun myPublicProfile(): CounsellorPublicProfileView = c.get("/counselling/profile/public")
+    suspend fun saveMyPublicProfile(p: CounsellorPublicProfile, credentialsChanged: Boolean): CounsellorPublicProfileSaved = c.put(
+        "/counselling/profile/public",
+        mapOf(
+            "title" to p.title, "bio" to p.bio, "specializations" to p.specializations, "languages" to p.languages, "supportedModes" to p.supportedModes,
+        ) + if (credentialsChanged) mapOf("qualifications" to p.qualifications, "yearsExperience" to p.yearsExperience) else emptyMap(),
+    )
 
     /** [allowReassignment]: the student agrees that another counsellor may take the request if this one declines or does not reply within an hour. */
     suspend fun book(counsellorId: String, startAt: String, mode: String, reason: String?, allowReassignment: Boolean, idempotencyKey: String): BookingResult =
@@ -122,9 +200,10 @@ class WellnessApi(private val c: ApiClient) {
 
     suspend fun pendingFeedback(): List<FeedbackPending> = c.get("/counselling/feedback/pending")
     suspend fun feedbackNotice(): FeedbackNotice = c.get("/counselling/feedback/notice")
-    suspend fun submitFeedback(appointmentId: String, anonymous: Boolean, rating: Int?, categories: List<String>, comment: String?, concern: Boolean): FeedbackSubmitted =
+    suspend fun submitFeedback(appointmentId: String, anonymous: Boolean, rating: Int?, categories: List<String>, comment: String?, concern: Boolean, sharePublicly: Boolean = false): FeedbackSubmitted =
         c.post("/counselling/appointments/$appointmentId/feedback", mapOf(
             "anonymous" to anonymous, "rating" to rating, "categories" to categories, "comment" to comment, "concern" to concern,
+            "sharePublicly" to sharePublicly,
         ))
     suspend fun feedbackSummary(): FeedbackSummary = c.get("/counselling/feedback/summary")
 
@@ -145,6 +224,30 @@ val SPECIALIZATION_LABELS = linkedMapOf(
     "relationships" to "Relationships",
     "grief_loss" to "Grief & loss",
 )
+
+val FEEDBACK_REPORT_REASONS = linkedMapOf(
+    "identifying" to "It could identify someone",
+    "inappropriate" to "It's inappropriate",
+    "offensive" to "It's offensive",
+    "not_about_counselling" to "It isn't about counselling",
+    "other" to "Something else",
+)
+
+/** Accessible, honest wording for a public rating. Pure, so it is unit-tested. */
+object RatingText {
+    fun summary(r: PublicRating?): String = when {
+        r == null || !r.isAvailable -> "Not enough feedback yet"
+        r.average == null -> "Feedback shared, not enough star ratings yet"
+        else -> "${"%.1f".format(java.util.Locale.ENGLISH, r.average)} out of 5 from ${r.ratingCount} rating${if (r.ratingCount == 1) "" else "s"}"
+    }
+
+    fun short(r: PublicRating?): String? = r?.takeIf { it.isAvailable }?.average?.let { "%.1f".format(java.util.Locale.ENGLISH, it) + " (${r.ratingCount})" }
+
+    /** Whole stars to fill, rounding to the nearest half and then down, so 4.3 shows 4 and 4.8 shows 5. */
+    fun filledStars(average: Double): Int = kotlin.math.floor(average + 0.25).toInt().coerceIn(0, 5)
+
+    fun threshold(minimum: Int) = "Feedback will appear after more students have shared their experience (at least $minimum)."
+}
 
 val FEEDBACK_CATEGORY_LABELS = linkedMapOf(
     "helpful" to "Helpful",

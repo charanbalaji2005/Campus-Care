@@ -12,6 +12,7 @@ import { apiLimiter, csrfProtection, errorHandler, notFoundHandler } from './mid
 import { authRouter } from './routes/auth.routes';
 import { incidentsRouter } from './routes/incidents.routes';
 import { counsellingRouter } from './routes/counselling.routes';
+import { counsellorProfileRouter } from './routes/counsellor-profile.routes';
 import { chatRouter } from './routes/chat.routes';
 import { chatsRouter } from './routes/chats.routes';
 import { safetyRouter } from './routes/safety.routes';
@@ -113,6 +114,7 @@ export function createApp() {
   app.use('/api/v1/incidents', incidentsRouter);
   app.use('/api/v1/counselling', counsellingRouter);
   app.use('/api/v1/counselling', wellnessRouter);
+  app.use('/api/v1/counselling', counsellorProfileRouter);
   app.use('/api/v1/chat', chatRouter);
   app.use('/api/v1/chats', chatsRouter);
   app.use('/api/v1/safety', safetyRouter);

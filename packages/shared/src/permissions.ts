@@ -87,7 +87,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'contacts:manage', 'analytics:read', 'audit:read', 'chat:moderate', 'chat:community', 'domains:manage',
     'identity_providers:manage', 'email:manage', 'roles:manage', 'routing:manage', 'security:manage',
     'settings:manage', 'retention:manage', 'chat:configure', 'sos:configure', 'community_safety:manage', 'safety_intel:manage',
-    'duty:view', 'duty:manage', 'sos:dispatch', 'location:view_live', 'notifications:manage',
+    'duty:view', 'duty:manage', 'duty:self', 'sos:dispatch', 'location:view_live', 'notifications:manage',
     'community:moderate', 'community_channels:manage', 'support:manage',
   ],
 };
@@ -130,6 +130,23 @@ export function homePathFor(role: Role): string {
     case 'super_admin':
       return '/super-admin/dashboard';
   }
+}
+
+/**
+ * The two Android apps. Students use CampusCare Student; every staff role (and a Super Admin acting
+ * as a counsellor) uses CampusCare College. Each app sends X-CampusCare-App and the API binds the
+ * session to it, so an account can only ever be signed in to the app that matches its current role.
+ */
+export const APP_AUDIENCES = ['student', 'college'] as const;
+export type AppAudience = (typeof APP_AUDIENCES)[number];
+export const APP_NAMES: Record<AppAudience, string> = { student: 'CampusCare Student', college: 'CampusCare College' };
+
+export function appAudienceForRole(role: Role): AppAudience {
+  return role === 'student' ? 'student' : 'college';
+}
+
+export function parseAppAudience(value: unknown): AppAudience | null {
+  return typeof value === 'string' && (APP_AUDIENCES as readonly string[]).includes(value) ? (value as AppAudience) : null;
 }
 
 /** Which roles a given actor may assign. Nobody may assign a role equal to or above their own except Super Admin. */

@@ -65,6 +65,7 @@ export function validateSettings(s: PlatformSettings) {
   if (s.sos.secondEscalationAfterSeconds <= s.sos.escalateAfterSeconds) errors.push('Second escalation must come after the first');
   if (Math.abs(s.map.centerLatitude) > 90 || Math.abs(s.map.centerLongitude) > 180) errors.push('Map centre is not a valid coordinate');
   if (s.map.heatmapMinCount < 3) errors.push('Heatmap minimum group size must be at least 3');
+  if (!Number.isInteger(s.counsellorDirectory.feedbackMinimum) || s.counsellorDirectory.feedbackMinimum < 3 || s.counsellorDirectory.feedbackMinimum > 50) errors.push('Public feedback needs 3–50 students before it is shown');
   const within = (v: number, k: keyof typeof DUTY_LIMITS) => v >= DUTY_LIMITS[k].min && v <= DUTY_LIMITS[k].max && Number.isInteger(v);
   if (!within(s.duty.heartbeatIntervalSeconds, 'heartbeatIntervalSeconds')) errors.push(`Heartbeat interval must be ${DUTY_LIMITS.heartbeatIntervalSeconds.min}–${DUTY_LIMITS.heartbeatIntervalSeconds.max} seconds`);
   if (!within(s.duty.staleThresholdSeconds, 'staleThresholdSeconds')) errors.push(`Stale threshold must be ${DUTY_LIMITS.staleThresholdSeconds.min}–${DUTY_LIMITS.staleThresholdSeconds.max} seconds`);

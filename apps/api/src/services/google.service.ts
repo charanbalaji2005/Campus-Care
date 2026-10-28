@@ -43,6 +43,8 @@ export interface OAuthStatePayload {
   nonce: string;
   mode: 'login' | 'link';
   client?: 'web' | 'android';
+  /** Which Android app started the sign-in (decides the URL scheme the token returns to). */
+  app?: 'student' | 'college' | null;
   exp: number;
 }
 

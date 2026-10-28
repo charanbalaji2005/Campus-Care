@@ -48,7 +48,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import edu.srmap.campuscare.AppAudience
 import edu.srmap.campuscare.AppContainer
+import edu.srmap.campuscare.BuildConfig
 import edu.srmap.campuscare.data.SessionEvent
 import edu.srmap.campuscare.services.Notifications
 import edu.srmap.campuscare.services.PushRegistrar
@@ -71,7 +73,6 @@ import edu.srmap.campuscare.ui.screens.auth.ResetPasswordScreen
 import edu.srmap.campuscare.ui.screens.auth.SplashScreen
 import edu.srmap.campuscare.ui.screens.auth.UpdateRequiredScreen
 import edu.srmap.campuscare.ui.screens.auth.VerifyEmailScreen
-import edu.srmap.campuscare.ui.screens.common.CaseScreen
 import edu.srmap.campuscare.ui.screens.common.ChatScreen
 import edu.srmap.campuscare.ui.screens.common.EditProfileScreen
 import edu.srmap.campuscare.ui.screens.common.NotificationPrefsScreen
@@ -79,71 +80,30 @@ import edu.srmap.campuscare.ui.screens.common.NotificationsScreen
 import edu.srmap.campuscare.ui.screens.common.PrivacyScreen
 import edu.srmap.campuscare.ui.screens.common.ProfileScreen
 import edu.srmap.campuscare.ui.screens.common.SecurityScreen
-import edu.srmap.campuscare.ui.screens.staff.AdminAlertsScreen
-import edu.srmap.campuscare.ui.screens.staff.AdminAnnouncementsScreen
-import edu.srmap.campuscare.ui.screens.staff.AdminHomeScreen
-import edu.srmap.campuscare.ui.screens.staff.AdminStaffScreen
-import edu.srmap.campuscare.ui.screens.staff.AdminTriageScreen
-import edu.srmap.campuscare.ui.screens.staff.AppointmentScreen
-import edu.srmap.campuscare.ui.screens.staff.AvailabilityScreen
-import edu.srmap.campuscare.ui.screens.staff.MyScheduleScreen
-import edu.srmap.campuscare.ui.screens.staff.CommitteeCasesScreen
-import edu.srmap.campuscare.ui.screens.staff.CounsellorAppointmentsScreen
-import edu.srmap.campuscare.ui.screens.staff.CounsellorHomeScreen
-import edu.srmap.campuscare.ui.screens.staff.CounsellorStudentsScreen
-import edu.srmap.campuscare.ui.screens.staff.InboxScreen
-import edu.srmap.campuscare.ui.screens.staff.ModerationScreen
-import edu.srmap.campuscare.ui.screens.staff.ResponderAlertScreen
-import edu.srmap.campuscare.ui.screens.staff.ResponderAlertsScreen
-import edu.srmap.campuscare.ui.screens.staff.ResponderCasesScreen
-import edu.srmap.campuscare.ui.screens.staff.ResponderLocationsScreen
-import edu.srmap.campuscare.ui.screens.student.AwarenessScreen
-import edu.srmap.campuscare.ui.screens.student.QuickSosSetupScreen
-import edu.srmap.campuscare.ui.screens.student.BookSessionScreen
 import edu.srmap.campuscare.ui.screens.student.AppointmentRemindersScreen
-import edu.srmap.campuscare.ui.screens.student.CounsellingFeedbackScreen
-import edu.srmap.campuscare.ui.screens.student.CounsellorProfileScreen
-import edu.srmap.campuscare.ui.screens.student.FindCounsellorScreen
 import edu.srmap.campuscare.ui.screens.student.CampusAlertsScreen
-import edu.srmap.campuscare.ui.screens.student.CertificateScreen
-import edu.srmap.campuscare.ui.screens.student.CommitteesScreen
 import edu.srmap.campuscare.ui.screens.student.CommunitySpacesScreen
 import edu.srmap.campuscare.ui.screens.community.BlockedAccountsScreen
-import edu.srmap.campuscare.ui.screens.community.ChannelComposeScreen
-import edu.srmap.campuscare.ui.screens.community.ChannelDashboardScreen
 import edu.srmap.campuscare.ui.screens.community.CommunityComposeScreen
 import edu.srmap.campuscare.ui.screens.community.CommunityEventNewScreen
 import edu.srmap.campuscare.ui.screens.community.CommunityEventScreen
 import edu.srmap.campuscare.ui.screens.community.CommunityEventsScreen
-import edu.srmap.campuscare.ui.screens.community.CommunityModerationScreen
 import edu.srmap.campuscare.ui.screens.community.CommunityPostScreen
 import edu.srmap.campuscare.ui.screens.community.CommunityScreen
 import edu.srmap.campuscare.ui.screens.community.CounsellingChannelScreen
 import edu.srmap.campuscare.ui.screens.community.CounsellorChatsScreen
 import edu.srmap.campuscare.ui.screens.student.ContactsScreen
-import edu.srmap.campuscare.ui.screens.student.CounsellingScreen
 import edu.srmap.campuscare.ui.screens.student.HazardScreen
 import edu.srmap.campuscare.ui.screens.student.HelpScreen
-import edu.srmap.campuscare.ui.screens.student.HomeScreen
 import edu.srmap.campuscare.ui.screens.student.LostFoundItemScreen
 import edu.srmap.campuscare.ui.screens.student.LostFoundNewScreen
 import edu.srmap.campuscare.ui.screens.student.LostFoundScreen
-import edu.srmap.campuscare.ui.screens.student.ModuleScreen
-import edu.srmap.campuscare.ui.screens.student.MyReportsScreen
-import edu.srmap.campuscare.ui.screens.student.ReportDetailScreen
-import edu.srmap.campuscare.ui.screens.student.ReportIncidentScreen
-import edu.srmap.campuscare.ui.screens.student.SafeWalkScreen
-import edu.srmap.campuscare.ui.screens.student.SafetyCardScreen
 import edu.srmap.campuscare.ui.screens.student.SafetyMapScreen
-import edu.srmap.campuscare.ui.screens.student.SosScreen
-import edu.srmap.campuscare.ui.screens.student.SosStatusScreen
-import edu.srmap.campuscare.ui.screens.student.SuggestionsScreen
-import edu.srmap.campuscare.ui.screens.student.SupportScreen
-import edu.srmap.campuscare.ui.screens.student.TrustedContactsScreen
 import edu.srmap.campuscare.ui.theme.CcColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Destinations that show the role's bottom navigation bar. */
 private val TOP_LEVEL = setOf(
@@ -196,8 +156,8 @@ fun AppRoot(container: AppContainer, pendingLink: String?, onLinkHandled: () -> 
     // Server-side session end (expired, revoked from another device, password changed).
     LaunchedEffect(Unit) {
         container.session.events.collect { e ->
-            if (e == SessionEvent.Expired) {
-                snack.show("Your session ended. Please sign in again.", long = true)
+            if (e == SessionEvent.Expired || e == SessionEvent.WrongApp) {
+                snack.show(if (e == SessionEvent.WrongApp) "Your account belongs to ${AppAudience.current.other.appName}. Sign in there instead." else "Your session ended. Please sign in again.", long = true)
                 nav.navigate(Routes.Login) { popUpTo(0) { inclusive = true } }
             }
         }
@@ -225,14 +185,25 @@ fun AppRoot(container: AppContainer, pendingLink: String?, onLinkHandled: () -> 
     // Deep links (notification taps, verification / reset links, OAuth callback).
     LaunchedEffect(pendingLink, user?.id, route) {
         val link = pendingLink ?: return@LaunchedEffect
-        if (link.startsWith("campuscare://auth") && link.contains("token=")) {
-            val token = android.net.Uri.parse(link).getQueryParameter("token")
+        // Browser Google sign-in returns here on this app's own scheme (campuscare / campuscare-college).
+        if (link.startsWith("${BuildConfig.APP_SCHEME}://auth") && (link.contains("token=") || link.contains("error="))) {
+            val uri = android.net.Uri.parse(link)
+            val token = uri.getQueryParameter("token")
+            when (uri.getQueryParameter("error")) {
+                null -> Unit
+                "no_staff_account" -> snack.show("No college staff account uses this Google address. Staff accounts are created by your campus administrator.", long = true)
+                "wrong_app" -> snack.show("This account belongs to ${AppAudience.current.other.appName}. Sign in there instead.", long = true)
+                else -> snack.show("Sign-in failed. Please try again.")
+            }
             if (!token.isNullOrBlank()) {
                 scope.launch {
                     val dummy = edu.srmap.campuscare.data.User(id = "", fullName = "User", email = "")
                     container.session.signIn(token, dummy)
                     val me = runCatching { container.api.auth.me() }.getOrNull()
-                    if (me != null) {
+                    if (me != null && !AppAudience.current.allows(me.user.role)) {
+                        container.session.clear()
+                        snack.show(AppAudience.wrongAppMessage(me.user.role), long = true)
+                    } else if (me != null) {
                         container.session.updateUser(me.user)
                         snack.show("Signed in as ${me.user.fullName}")
                         nav.navigate(Routes.homeFor(me.user.role)) { popUpTo(0) { inclusive = true } }
@@ -320,14 +291,6 @@ private fun NavGraphBuilder.graph() {
     composable(Routes.UpdateRequired) { UpdateRequiredScreen() }
     composable(Routes.OfflineEmergency) { OfflineEmergencyScreen() }
 
-    composable(Routes.Home) { HomeScreen() }
-    composable(Routes.Sos) { SosScreen() }
-    composable(Routes.QuickSos) { QuickSosSetupScreen() }
-    composable(Routes.SosStatus, arguments = listOf(req("id"))) { SosStatusScreen(it.arg("id")) }
-    composable(Routes.Report, arguments = listOf(opt("category"))) { ReportIncidentScreen(it.arg("category").ifBlank { null }) }
-    composable(Routes.Reports) { MyReportsScreen() }
-    composable(Routes.ReportDetail, arguments = listOf(req("id"), opt("tab"))) { ReportDetailScreen(it.arg("id"), it.arg("tab").ifBlank { null }) }
-    composable(Routes.Support) { SupportScreen() }
     composable(Routes.Community) { CommunityScreen() }
     composable(Routes.CommunitySpaces) { CommunitySpacesScreen() }
     composable(Routes.CommunityPost, arguments = listOf(req("id"))) { CommunityPostScreen(it.arg("id")) }
@@ -338,27 +301,14 @@ private fun NavGraphBuilder.graph() {
     composable(Routes.BlockedAccounts) { BlockedAccountsScreen() }
     composable(Routes.CounsellingChannel) { CounsellingChannelScreen() }
     composable(Routes.CounsellorChats) { CounsellorChatsScreen() }
-    composable(Routes.Counselling) { CounsellingScreen() }
-    composable(Routes.BookSession, arguments = listOf(opt("counsellor"))) { BookSessionScreen(it.arg("counsellor").ifBlank { null }) }
-    composable(Routes.FindCounsellor) { FindCounsellorScreen() }
-    composable(Routes.CounsellorProfile) { CounsellorProfileScreen(it.arg("id")) }
-    composable(Routes.CounsellingFeedback) { CounsellingFeedbackScreen(it.arg("id")) }
     composable(Routes.AppointmentReminders, arguments = listOf(opt("counsellor"))) { AppointmentRemindersScreen(it.arg("id"), it.arg("counsellor") == "true") }
-    composable(Routes.SafeWalk) { SafeWalkScreen() }
     composable(Routes.SafetyMap) { SafetyMapScreen() }
     composable(Routes.Hazard) { HazardScreen() }
     composable(Routes.Contacts) { ContactsScreen() }
-    composable(Routes.Awareness) { AwarenessScreen() }
-    composable(Routes.Module, arguments = listOf(req("id"))) { ModuleScreen(it.arg("id")) }
-    composable(Routes.Certificate, arguments = listOf(req("id"))) { CertificateScreen(it.arg("id")) }
     composable(Routes.CampusAlerts) { CampusAlertsScreen() }
-    composable(Routes.Trusted) { TrustedContactsScreen() }
-    composable(Routes.SafetyCard) { SafetyCardScreen() }
     composable(Routes.LostFound) { LostFoundScreen() }
     composable(Routes.LostFoundNew) { LostFoundNewScreen() }
     composable(Routes.LostFoundItem, arguments = listOf(req("id"))) { LostFoundItemScreen(it.arg("id")) }
-    composable(Routes.Suggestions) { SuggestionsScreen() }
-    composable(Routes.Committees) { CommitteesScreen() }
     composable(Routes.Help) { HelpScreen() }
 
     composable(Routes.Notifications) { NotificationsScreen() }
@@ -368,32 +318,9 @@ private fun NavGraphBuilder.graph() {
     composable(Routes.NotificationPrefs) { NotificationPrefsScreen() }
     composable(Routes.Security) { SecurityScreen() }
     composable(Routes.Chat, arguments = listOf(req("id"))) { ChatScreen(it.arg("id")) }
-    composable(Routes.Case, arguments = listOf(req("id"))) { CaseScreen(it.arg("id")) }
 
-    composable(Routes.CounsellorHome) { CounsellorHomeScreen() }
-    composable(Routes.CounsellorAppointments) { CounsellorAppointmentsScreen() }
-    composable(Routes.Appointment, arguments = listOf(req("id"))) { AppointmentScreen(it.arg("id")) }
-    composable(Routes.Availability) { AvailabilityScreen() }
-    composable(Routes.MySchedule) { MyScheduleScreen() }
-    composable(Routes.CounsellorStudents) { CounsellorStudentsScreen() }
-    composable(Routes.Inbox) { InboxScreen() }
-    composable(Routes.ChannelDashboard) { ChannelDashboardScreen() }
-    composable(Routes.ChannelCompose, arguments = listOf(opt("edit"))) { ChannelComposeScreen(it.arg("edit").ifBlank { null }) }
-
-    composable(Routes.CommitteeCases) { CommitteeCasesScreen() }
-
-    composable(Routes.ResponderAlerts) { ResponderAlertsScreen() }
-    composable(Routes.ResponderAlert, arguments = listOf(req("id"))) { ResponderAlertScreen(it.arg("id")) }
-    composable(Routes.ResponderLocations) { ResponderLocationsScreen() }
-    composable(Routes.ResponderCases) { ResponderCasesScreen() }
-
-    composable(Routes.AdminHome) { AdminHomeScreen() }
-    composable(Routes.AdminTriage) { AdminTriageScreen() }
-    composable(Routes.AdminAlerts) { AdminAlertsScreen() }
-    composable(Routes.AdminAnnouncements) { AdminAnnouncementsScreen() }
-    composable(Routes.AdminStaff) { AdminStaffScreen() }
-    composable(Routes.Moderation) { ModerationScreen() }
-    composable(Routes.CommunityModeration) { CommunityModerationScreen() }
+    // CampusCare Student / CampusCare College: each app's own screens (src/student, src/college).
+    variantGraph()
 }
 
 /** Helpers shared by screens. */
@@ -404,6 +331,10 @@ fun rememberSignOut(): () -> Unit {
     val scope = rememberCoroutineScope()
     return {
         scope.launch {
+            // A signed-out phone can't ring, so tell dispatch first (best effort: an active emergency keeps
+            // the officer on duty, and the server then marks this phone stale instead).
+            if (app.duty.state.value.onDuty) withTimeoutOrNull(5_000) { app.duty.setOnDuty(false, reason = "Signed out of the app") }
+            app.duty.reset()
             PushRegistrar.unregister(app.api)
             runCatching { app.api.auth.logout() }
             app.realtime.disconnect()

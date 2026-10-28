@@ -1,5 +1,6 @@
 package edu.srmap.campuscare.ui.screens.auth
 
+import edu.srmap.campuscare.AppAudience
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -136,13 +137,18 @@ fun SplashScreen() {
         val cfg = app.config.refresh()
         val destination: String = when {
             cfg?.update?.required == true -> Routes.UpdateRequired
-            !app.onboardingSeen -> Routes.Onboarding
+            // The welcome tour is for students; CampusCare College opens straight on staff sign-in.
+            !app.onboardingSeen && AppAudience.current == AppAudience.Student -> Routes.Onboarding
             !app.session.isSignedIn -> Routes.Login
             else -> try {
                 val me = app.api.auth.me()
                 app.session.updateUser(me.user)
                 app.session.recordAppOpen()
                 when {
+                    !AppAudience.current.allows(me.user.role) -> {
+                        app.session.clear(edu.srmap.campuscare.data.SessionEvent.WrongApp)
+                        Routes.Login
+                    }
                     me.user.role == "super_admin" -> Routes.CounsellorHome
                     me.mfaRequired && !me.session.mfaVerified && me.user.mfaEnabled -> Routes.Mfa
                     me.user.role == "student" && me.user.studentId.isNullOrBlank() -> Routes.CompleteProfile

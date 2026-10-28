@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { Types } from 'mongoose';
 import {
   ACTIVE_APPOINTMENT_STATUSES, counsellorScheduleSchema, dutyToggleSchema, feedbackModerateSchema, feedbackSubmitSchema, hasPermission, reminderCreateSchema,
-  type Role,
+  sanitizeFeedbackText, type Role,
 } from '@campuscare/shared';
 import { AppError, asyncHandler, notFound, ok, pageParams, parse } from '../lib/http';
 import { validateSchedule } from '../lib/schedule';
@@ -14,6 +14,7 @@ import { requireAuth, requirePermission, requireRole } from '../middleware/auth'
 import { audit } from '../services/audit.service';
 import { slotsFor } from '../services/counselling-schedule.service';
 import { addReminder } from '../services/counselling-workflow.service';
+import { raterKeyFor } from '../services/counsellor-directory.service';
 import { notifyMany } from '../services/notification.service';
 
 /**
@@ -128,9 +129,15 @@ wellnessRouter.post(
       throw err;
     }
     const sessionMonth = zonedParts(appt.startAt ?? new Date(), 'Asia/Kolkata').ymd.slice(0, 7);
+    // A public comment needs the student's opt-in, is masked here and still waits for a moderator.
+    const publicText = input.sharePublicly && input.comment && !input.concern ? sanitizeFeedbackText(input.comment) : '';
     const fb = await CounsellingFeedback.create({
       counsellorId: appt.counsellorId, anonymous: input.anonymous, studentId: input.anonymous ? null : req.user!._id,
       rating: input.rating ?? null, categories: input.categories, comment: input.comment || null, concern: input.concern, sessionMonth,
+      raterKey: raterKeyFor(appt.counsellorId, req.user!._id),
+      sharePublicly: Boolean(publicText),
+      publicComment: publicText.length >= 3 ? 'pending' : 'none',
+      publicText: publicText.length >= 3 ? publicText : null,
     });
     // The audit entry names neither the student nor the appointment for anonymous feedback.
     await audit({ action: 'counselling.feedback_submitted', actorId: input.anonymous ? null : String(req.user!._id), actorRole: 'student', targetType: 'counselling_feedback', targetId: String(fb._id), meta: { anonymous: input.anonymous, concern: input.concern } });
@@ -185,6 +192,8 @@ wellnessRouter.get(
     const filter: Record<string, unknown> = {};
     if (typeof req.query.status === 'string' && req.query.status) filter.status = req.query.status;
     if (req.query.concern === 'true') filter.concern = true;
+    if (req.query.publicComment === 'pending') filter.publicComment = 'pending';
+    if (req.query.reported === 'true') filter.reportCount = { $gt: 0 };
     const [rows, total] = await Promise.all([
       CounsellingFeedback.find(filter).sort({ concern: -1, createdAt: -1 }).skip(skip).limit(limit).lean(),
       CounsellingFeedback.countDocuments(filter),
@@ -196,6 +205,9 @@ wellnessRouter.get(
         id: String(r._id), counsellor: people.get(String(r.counsellorId)) ?? 'Counsellor', rating: r.rating, categories: r.categories, comment: r.comment,
         concern: r.concern, anonymous: r.anonymous, student: r.anonymous ? null : people.get(String(r.studentId)) ?? 'Student',
         sessionMonth: r.sessionMonth, status: r.status, moderationNote: r.moderationNote, reviewedAt: r.reviewedAt,
+        publicComment: r.publicComment ?? 'none', publicText: r.publicText ?? null, reportCount: r.reportCount ?? 0, hiddenFromPublic: Boolean(r.hiddenFromPublic),
+        // Feedback from before rater keys existed is kept out of public figures.
+        countsPublicly: Boolean(r.raterKey) && !r.concern && !r.hiddenFromPublic,
       })),
       total, page, limit,
     });
@@ -210,14 +222,28 @@ wellnessRouter.patch(
     if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
     const fb = await CounsellingFeedback.findById(req.params.id);
     if (!fb) throw notFound();
-    const before = fb.status;
+    const before = { status: fb.status, publicComment: fb.publicComment, hiddenFromPublic: fb.hiddenFromPublic };
     fb.status = input.status;
     if (input.note !== undefined) fb.moderationNote = input.note || null;
+    if (input.publicText !== undefined) {
+      if (fb.publicComment === 'none') throw new AppError(422, 'no_consent', 'The student did not agree to a public comment.');
+      fb.publicText = sanitizeFeedbackText(input.publicText); // masked again: a moderator's edit is held to the same rules
+    }
+    if (input.publicComment !== undefined) {
+      if (fb.publicComment === 'none' || !fb.publicText) throw new AppError(422, 'no_consent', 'The student did not agree to a public comment.');
+      if (input.publicComment === 'approved' && fb.concern) throw new AppError(422, 'concern', 'Concerns are never shown publicly.');
+      fb.publicComment = input.publicComment;
+    }
+    if (input.hiddenFromPublic !== undefined) fb.hiddenFromPublic = input.hiddenFromPublic;
     fb.reviewedBy = req.user!._id;
     fb.reviewedAt = new Date();
     await fb.save();
-    await audit({ action: `counselling.feedback_${input.status}`, req, targetType: 'counselling_feedback', targetId: String(fb._id), before: { status: before }, after: { status: fb.status } });
-    ok(res, { id: String(fb._id), status: fb.status });
+    const after = { status: fb.status, publicComment: fb.publicComment, hiddenFromPublic: fb.hiddenFromPublic };
+    await audit({ action: `counselling.feedback_${input.status}`, req, targetType: 'counselling_feedback', targetId: String(fb._id), before, after, reason: input.note ?? null });
+    if (before.publicComment !== after.publicComment || before.hiddenFromPublic !== after.hiddenFromPublic || input.publicText !== undefined) {
+      await audit({ action: 'counselling.feedback_public_moderated', req, targetType: 'counselling_feedback', targetId: String(fb._id), before, after, meta: { textEdited: input.publicText !== undefined } });
+    }
+    ok(res, { id: String(fb._id), status: fb.status, publicComment: fb.publicComment, publicText: fb.publicText, hiddenFromPublic: fb.hiddenFromPublic });
   }),
 );
 

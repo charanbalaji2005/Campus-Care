@@ -86,6 +86,7 @@ const nav: NavItem[] = [
   // 5. Services
   { group: 'Services', href: '/super-admin/counselling', label: 'Counselling Operations', icon: CalendarDays, permission: 'appointments:read_aggregate' },
   { group: 'Services', href: '/super-admin/counselling-insights', label: 'Counselling Insights', icon: BarChart3, permission: 'appointments:read_aggregate' },
+  { group: 'Services', href: '/super-admin/counsellor-directory', label: 'Counsellor Directory', icon: UserRoundCheck, permission: 'super_admin:access' },
   { group: 'Services', href: '/super-admin/community', label: 'Community Safety', icon: HeartHandshake, permission: 'community_safety:manage' },
   { group: 'Services', href: '/super-admin/moderation', label: 'Community Moderation', icon: ShieldCheck, permission: 'chat:moderate' },
   { group: 'Services', href: '/super-admin/awareness', label: 'Awareness & Training', icon: BookOpenCheck, permission: 'training:manage' },

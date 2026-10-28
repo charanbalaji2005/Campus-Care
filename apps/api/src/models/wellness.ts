@@ -1,5 +1,5 @@
 import { Schema, model } from 'mongoose';
-import { FEEDBACK_CATEGORIES, FEEDBACK_STATUSES, REMINDER_KINDS } from '@campuscare/shared';
+import { FEEDBACK_CATEGORIES, FEEDBACK_REPORT_REASONS, FEEDBACK_STATUSES, PUBLIC_COMMENT_STATES, REMINDER_KINDS } from '@campuscare/shared';
 
 /**
  * Anonymous counselling feedback. Identity is kept apart from content:
@@ -35,12 +35,41 @@ const counsellingFeedbackSchema = new Schema(
     moderationNote: { type: String, default: null, maxlength: 1000 },
     reviewedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     reviewedAt: { type: Date, default: null },
+    /**
+     * Pseudonymous rater: HMAC(server pepper, counsellor + student). Lets public thresholds count distinct
+     * students without storing who they are; it cannot be reversed without the server's key.
+     */
+    raterKey: { type: String, default: null },
+    /** Moderator removed this item from every public aggregate and comment list. */
+    hiddenFromPublic: { type: Boolean, default: false },
+    /** The student opted in to an anonymised public comment. */
+    sharePublicly: { type: Boolean, default: false },
+    publicComment: { type: String, enum: PUBLIC_COMMENT_STATES, default: 'none' },
+    /** Masked, shortened text shown publicly once approved. Never the original comment. */
+    publicText: { type: String, default: null, maxlength: 600 },
+    reportCount: { type: Number, default: 0 },
   },
   { timestamps: true },
 );
 counsellingFeedbackSchema.index({ counsellorId: 1, createdAt: -1 });
 counsellingFeedbackSchema.index({ status: 1, concern: -1, createdAt: -1 });
+counsellingFeedbackSchema.index({ counsellorId: 1, concern: 1, hiddenFromPublic: 1 });
+counsellingFeedbackSchema.index({ publicComment: 1, createdAt: -1 });
 export const CounsellingFeedback = model('CounsellingFeedback', counsellingFeedbackSchema);
+
+/** A viewer's report of a public comment. One per person per comment; the comment is withdrawn until reviewed. */
+const feedbackReportSchema = new Schema(
+  {
+    feedbackId: { type: Schema.Types.ObjectId, ref: 'CounsellingFeedback', required: true },
+    reporterId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    reason: { type: String, enum: FEEDBACK_REPORT_REASONS, required: true },
+    note: { type: String, default: null, maxlength: 300 },
+  },
+  { timestamps: true },
+);
+feedbackReportSchema.index({ feedbackId: 1, reporterId: 1 }, { unique: true });
+feedbackReportSchema.index({ reporterId: 1, createdAt: -1 });
+export const FeedbackReport = model('FeedbackReport', feedbackReportSchema);
 
 /** Stored reminders, sent by a periodic sweep so they survive restarts. */
 const counsellingReminderSchema = new Schema(

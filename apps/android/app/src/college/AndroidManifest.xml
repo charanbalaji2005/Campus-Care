@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CampusCare College: merged into src/main/AndroidManifest.xml. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <activity android:name=".MainActivity">
+            <!-- Staff email links: cases, SOS alerts, counselling and moderation. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="${webHost}" />
+                <data android:pathPrefix="/committee" />
+                <data android:pathPrefix="/security" />
+                <data android:pathPrefix="/consultancy" />
+                <data android:pathPrefix="/moderator" />
+            </intent-filter>
+            <!-- Raising an SOS is a student feature: no SOS home-screen shortcut in the staff app. -->
+            <meta-data android:name="android.app.shortcuts" tools:node="remove" />
+        </activity>
+
+        <!-- Nor the SOS Quick Settings tile. -->
+        <service android:name=".services.SosTileService" tools:node="remove" />
+    </application>
+</manifest>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CampusCare Student: merged into src/main/AndroidManifest.xml. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity android:name=".MainActivity">
+            <!-- Student email links: account verification and student notifications. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="${webHost}" />
+                <data android:pathPrefix="/verify-email" />
+                <data android:pathPrefix="/student" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

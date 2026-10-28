@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import {
-  PRIVILEGED_ROLES, googleIdTokenSchema, changePasswordSchema, forgotPasswordSchema, homePathFor, loginSchema, mfaChallengeSchema, mfaDisableSchema, mfaRecoverySchema, mfaVerifySchema,
+  PRIVILEGED_ROLES, parseAppAudience, type AppAudience, googleIdTokenSchema, changePasswordSchema, forgotPasswordSchema, homePathFor, loginSchema, mfaChallengeSchema, mfaDisableSchema, mfaRecoverySchema, mfaVerifySchema,
   passwordSchema, profileUpdateSchema, reauthSchema, registerSchema, resendVerificationSchema, resetPasswordSchema, tokenSchema, totpCodeSchema, type Role,
 } from '@campuscare/shared';
 import type { Request, Response } from 'express';
@@ -12,7 +12,7 @@ import { RealtimeTicket } from '../models/platform';
 import {
   ACCOUNT_EMAIL_COOLDOWN_SECONDS, CSRF_COOKIE, checkEmailVerification, clearAuthCookies, consumeEmailVerification, consumePasswordReset, createSession,
   isDomainAllowed, issueEmailVerification, mfaRequiredFor, requestPasswordReset, resendEmailVerification, resetTokenState, revokeAllSessions, revokeSession, setCsrfCookie,
-  verifyMfaCode,
+  verifyMfaCode, assertAppForUser, wrongAppError, wrongAppFor,
 } from '../services/auth.service';
 import {
   consumeMfaChallenge, consumeRecoveryCode, createMfaChallenge, failMfaChallenge, loadMfaChallenge, mfaStatus, regenerateRecoveryCodes, removeTotp,
@@ -53,8 +53,9 @@ function setMfaCookie(res: Response, token: string, expiresAt: Date) {
 
 /** Creates the full session only after every required factor passed, and builds the sign-in response. */
 async function completeSignIn(req: Request, res: Response, user: UserDoc, opts: { method: 'password' | 'google'; remember?: boolean; mfaVerified: boolean }) {
+  assertAppForUser(req, user);
   const session = await createSession(req, res, user, { remember: opts.remember ?? undefined, method: opts.method, mfaVerified: opts.mfaVerified });
-  await audit({ action: 'auth.login', actorId: String(user._id), actorRole: user.role, req, meta: { client: req.isMobileClient ? 'android' : 'web', method: opts.method, mfa: opts.mfaVerified } });
+  await audit({ action: 'auth.login', actorId: String(user._id), actorRole: user.role, req, meta: { client: req.isMobileClient ? 'android' : 'web', app: req.clientApp ?? null, method: opts.method, mfa: opts.mfaVerified } });
   const needsMfaSetup = !user.mfaEnabled && (await mfaRequiredFor(user));
   const pubUser = publicUser(user);
   if (req.isMobileClient && user.role === 'super_admin') pubUser.role = 'counsellor';
@@ -82,6 +83,9 @@ authRouter.post(
     const s = await getSettings();
     if (!s.registration.studentRegistrationOpen) throw new AppError(403, 'registration_closed', 'Student registration is currently closed.');
     const input = parse(registerSchema, req.body);
+    if (req.clientApp === 'college') {
+      throw new AppError(403, 'registration_student_only', 'CampusCare College has no sign-up: staff accounts are created by your campus administrator. Students register in CampusCare Student.');
+    }
     if (input.password.length < s.security.passwordMinLength) throw new AppError(422, 'validation_failed', 'Password too short.', { fields: { password: `Use at least ${s.security.passwordMinLength} characters` } });
     // Any "role" in the body is ignored — public registration always creates a student.
     if (!(await isDomainAllowed(input.email, 'students'))) {
@@ -194,6 +198,8 @@ authRouter.post(
     if (!req.isMobileClient && user.role !== 'super_admin') {
       return fail('use_app', 'Students and staff sign in with the CampusCare app. This website is for the Super Admin only.');
     }
+    // Students use CampusCare Student; staff use CampusCare College (checked before any MFA challenge).
+    assertAppForUser(req, user);
 
     let mfaVerified = false;
     if (user.mfaEnabled) {
@@ -292,6 +298,7 @@ authRouter.post(
 authRouter.get(
   '/me',
   asyncHandler(async (req, res) => {
+    if (req.wrongApp) throw wrongAppError(req.wrongApp, 401);
     if (!req.user || !req.authSession) throw new AppError(401, 'session_expired', 'Please sign in.');
     const u = publicUser(req.user);
     if (req.isMobileClient && req.user.role === 'super_admin') {
@@ -602,6 +609,8 @@ authRouter.post(
 
 // ------------------------------------------------------------------ Google OAuth 2.0 (authorization code + PKCE)
 const OAUTH_COOKIE = 'cc_oauth';
+/** Each Android app has its own URL scheme, so a sign-in token can only return to the app that asked for it. */
+const appScheme = (app: AppAudience | null) => (app === 'college' ? 'campuscare-college' : 'campuscare');
 
 authRouter.get(
   '/google',
@@ -611,8 +620,9 @@ authRouter.get(
     if (!cfg) return res.redirect(new URL('/login?error=google_unavailable', env.WEB_ORIGIN).toString());
     const mode = req.query.mode === 'link' && req.user ? 'link' : 'login';
     const client = req.query.client === 'android' ? 'android' : 'web';
+    const app = client === 'android' ? parseAppAudience(req.query.app) : null;
     const { url, payload } = await buildGoogleAuthUrl(cfg, mode);
-    res.cookie(OAUTH_COOKIE, sealState({ ...payload, client }), { httpOnly: true, secure: env.COOKIE_SECURE, sameSite: 'lax', path: '/', maxAge: 10 * 60_000 });
+    res.cookie(OAUTH_COOKIE, sealState({ ...payload, client, app }), { httpOnly: true, secure: env.COOKIE_SECURE, sameSite: 'lax', path: '/', maxAge: 10 * 60_000 });
     res.redirect(url);
   }),
 );
@@ -672,6 +682,8 @@ authRouter.get(
         );
         user = existing;
       } else {
+        // The College app never creates accounts: staff accounts come from an administrator's invitation.
+        if ((state as any).app === 'college') return res.redirect(`${appScheme('college')}://auth?error=no_staff_account`);
         const isAdmin = identity.email === 'neelampallicharanbalaji14@gmail.com' || identity.email === 'charanbalaji_neelampalli@srmap.edu.in' || (await User.countDocuments({ role: 'super_admin' })) === 0;
         const role = isAdmin ? 'super_admin' : 'student';
         user = await User.create({
@@ -697,10 +709,16 @@ authRouter.get(
       await createSession(req, res, user, { method: 'google', mfaVerified: false });
       return res.redirect(new URL('/mfa?next=' + encodeURIComponent(homePathFor(user.role as Role)), env.WEB_ORIGIN).toString());
     }
-    const session = await createSession(req, res, user, { method: 'google', remember: Boolean((state as any)?.remember ?? true), mfaVerified: false });
-    await audit({ action: 'auth.login', actorId: String(user._id), actorRole: user.role, req, meta: { method: 'google' } });
-    if ((state as any).client === 'android') {
-      return res.redirect(`campuscare://auth?token=${encodeURIComponent(session.plainToken || '')}`);
+    const android = (state as any).client === 'android';
+    const androidApp = android ? parseAppAudience((state as any).app) : null;
+    if (android && wrongAppFor(user.role, androidApp)) return res.redirect(`${appScheme(androidApp)}://auth?error=wrong_app`);
+    // The app gets its session as a bearer token through its own URL scheme (never a browser cookie).
+    const session = await createSession(req, res, user, {
+      method: 'google', remember: Boolean((state as any)?.remember ?? true), mfaVerified: false, ...(android ? { mobile: true, app: androidApp } : {}),
+    });
+    await audit({ action: 'auth.login', actorId: String(user._id), actorRole: user.role, req, meta: { method: 'google', ...(android ? { client: 'android', app: androidApp } : {}) } });
+    if (android) {
+      return res.redirect(`${appScheme(androidApp)}://auth?token=${encodeURIComponent(session.plainToken || '')}`);
     }
     res.redirect(new URL(homePathFor(user.role as Role), env.WEB_ORIGIN).toString());
   }),
@@ -748,6 +766,9 @@ authRouter.post(
         );
         user = existing;
       } else {
+        if (req.clientApp === 'college') {
+          throw new AppError(403, 'no_staff_account', 'No college staff account uses this Google address. Staff accounts are created by your campus administrator.');
+        }
         const s = await getSettings();
         if (!s.registration.studentRegistrationOpen) throw new AppError(403, 'registration_closed', 'Student registration is currently closed.');
         user = await User.create({ fullName: identity.name || 'Student', email: identity.email, emailVerified: true, emailVerifiedAt: new Date(), role: 'student', accountStatus: 'active' });
@@ -758,8 +779,9 @@ authRouter.post(
     }
     if (user.accountStatus === 'suspended') throw new AppError(403, 'account_suspended', 'This account has been suspended.');
     if (user.accountStatus !== 'active') throw new AppError(403, 'account_inactive', 'This account is not active yet.');
+    assertAppForUser(req, user);
     const session = await createSession(req, res, user, { method: 'google', mfaVerified: false });
-    await audit({ action: 'auth.login', actorId: String(user._id), actorRole: user.role, req, meta: { method: 'google', client: 'android' } });
+    await audit({ action: 'auth.login', actorId: String(user._id), actorRole: user.role, req, meta: { method: 'google', client: 'android', app: req.clientApp ?? null } });
     const pubUser = publicUser(user);
     if (user.role === 'super_admin') {
       pubUser.role = 'counsellor';

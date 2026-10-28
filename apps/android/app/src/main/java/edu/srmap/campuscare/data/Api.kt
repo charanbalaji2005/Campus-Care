@@ -290,12 +290,20 @@ class SafetyApi(private val c: ApiClient) {
     suspend fun checkIn(alertId: String, status: String, note: String?): Ignored = c.post("/safety/campus-alerts/$alertId/check-in", mapOf("status" to status, "note" to note))
 }
 
+/** The duty calls the duty switch makes (see DutyController); a fake replaces it in unit tests. */
+interface DutyGateway {
+    suspend fun mine(): DutyOverview
+    suspend fun setStatus(status: String, reason: String? = null, shiftId: String? = null): DutyAvailability
+    suspend fun decideShift(id: String, decision: String, reason: String? = null): StatusResponse
+    suspend fun startShift(id: String): StatusResponse
+}
+
 /** Responder self-service: server-driven duty status, heartbeats, shifts and location consent. */
-class DutyApi(private val c: ApiClient) {
-    suspend fun mine(): DutyOverview = c.get("/responders/me/duty")
+class DutyApi(private val c: ApiClient) : DutyGateway {
+    override suspend fun mine(): DutyOverview = c.get("/responders/me/duty")
 
     /** on_duty | on_break | busy | unavailable | off_duty. Errors: 409 invalid_transition / open_assignments, 422 shift_required. */
-    suspend fun setStatus(status: String, reason: String? = null, shiftId: String? = null): DutyAvailability =
+    override suspend fun setStatus(status: String, reason: String?, shiftId: String?): DutyAvailability =
         c.patch("/responders/me/duty-status", mapOf("status" to status, "reason" to reason, "shiftId" to shiftId).filterValues { it != null })
 
     /** Coordinates are sent only as a pair. [locationAgeSeconds] is the fix's age, never a device timestamp. 409 not_on_duty when duty has ended. */
@@ -313,10 +321,10 @@ class DutyApi(private val c: ApiClient) {
 
     /** Explicit opt-in; withdrawing deletes the stored position on the server. */
     suspend fun setLocationConsent(share: Boolean): Ignored = c.patch("/responders/me/location-consent", mapOf("shareLocation" to share))
-    suspend fun decideShift(id: String, decision: String, reason: String? = null): StatusResponse =
+    override suspend fun decideShift(id: String, decision: String, reason: String?): StatusResponse =
         c.post("/responders/me/shifts/$id/decision", mapOf("decision" to decision, "reason" to reason).filterValues { it != null })
     /** Puts the responder on duty. Errors: 422 too_early / shift_ended, 409 invalid_state. */
-    suspend fun startShift(id: String): StatusResponse = c.post("/responders/me/shifts/$id/start")
+    override suspend fun startShift(id: String): StatusResponse = c.post("/responders/me/shifts/$id/start")
     suspend fun endShift(id: String, reason: String? = null): StatusResponse =
         c.post("/responders/me/shifts/$id/end", mapOf("reason" to reason).filterValues { it != null })
 }

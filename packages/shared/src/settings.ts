@@ -135,6 +135,12 @@ export interface PlatformSettings {
     allowCaseCreation: boolean;
     allowReplies: boolean;
   };
+  counsellorDirectory: {
+    /** Distinct students who must have shared feedback before a counsellor's ratings, themes or comments are public (minimum 3). */
+    feedbackMinimum: number;
+    /** Show moderator-approved, anonymised comments on public profiles (ratings and themes are unaffected). */
+    showComments: boolean;
+  };
   duty: {
     /** How often the app sends a heartbeat while its responder is on duty. */
     heartbeatIntervalSeconds: number;
@@ -299,6 +305,10 @@ export const DEFAULT_SETTINGS: PlatformSettings = {
     enabled: false,
     allowCaseCreation: false,
     allowReplies: true,
+  },
+  counsellorDirectory: {
+    feedbackMinimum: 3,
+    showComments: true,
   },
   duty: {
     heartbeatIntervalSeconds: 45,

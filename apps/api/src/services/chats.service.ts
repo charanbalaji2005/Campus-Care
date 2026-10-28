@@ -13,6 +13,8 @@ import { Announcement } from '../models/content';
 import { Appointment } from '../models/counselling';
 import { Incident } from '../models/incident';
 import { SupportTicket } from '../models/support';
+import { EmergencyAlert } from '../models/safety';
+import { EmailDelivery } from '../models/platform';
 import { User, type UserDoc } from '../models/user';
 import { emitBroadcast, isUserOnline } from '../realtime/socket';
 import { audit } from './audit.service';
@@ -33,15 +35,40 @@ export const COUNSELLING_RESPONSE_MS = 3600_000;
 export async function categoriesFor(user: UserDoc): Promise<ChatCategory[]> {
   const settings = await getSettings();
   const out: ChatCategory[] = ['all', 'announcements'];
-  if (user.role === 'counsellor' || can(user, 'appointments:read_aggregate')) out.push('counselling');
-  if (user.role === 'student' || user.role === 'counsellor' || can(user, 'appointments:read_aggregate')) out.push('student_counsellor');
-  if (user.role === 'student' || isAdmin(user)) out.push('student_admin');
-  if (isAdmin(user)) out.push('admin_super_admin');
-  if (user.role === 'counsellor' || isAdmin(user)) out.push('counsellor_admin');
-  if (can(user, 'support:manage') || can(user, 'chat:support') || SERVICE_ROLES.includes(user.role)) out.push('support');
-  if (can(user, 'sos:dispatch') || user.role === 'security_officer' || isAdmin(user)) out.push('security');
-  if (can(user, 'chat:community') && (settings.chat.communityEnabled || (await ChatChannel.exists({ kind: 'community', published: true, readOnly: true })))) out.push('community');
-  if (['incidents:triage', 'incidents:read_committee', 'incidents:read_sensitive', 'incidents:read_own'].some((p) => can(user, p as Permission))) out.push('reports');
+  if (user.role === 'counsellor' || can(user, 'appointments:read_aggregate') || user.role === 'student' || isAdmin(user)) {
+    out.push('bookings');
+  }
+  if (['incidents:triage', 'incidents:read_committee', 'incidents:read_sensitive', 'incidents:read_own'].some((p) => can(user, p as Permission)) || isAdmin(user)) {
+    out.push('reports');
+  }
+  if (user.role === 'counsellor' || can(user, 'appointments:read_aggregate')) { out.push('counselling'); }
+  if (user.role === 'student' || user.role === 'counsellor' || can(user, 'appointments:read_aggregate')) {
+    out.push('student_counsellor');
+  }
+  if (user.role === 'student' || isAdmin(user)) {
+    out.push('student_admin');
+  }
+  if (isAdmin(user)) {
+    out.push('admin_super_admin');
+  }
+  if (user.role === 'counsellor' || isAdmin(user)) {
+    out.push('counsellor_admin');
+  }
+  if (can(user, 'support:manage') || can(user, 'chat:support') || SERVICE_ROLES.includes(user.role) || isAdmin(user) || user.role === 'student') {
+    out.push('support');
+  }
+  if (can(user, 'sos:dispatch') || user.role === 'security_officer' || isAdmin(user)) {
+    out.push('security');
+  }
+  if (can(user, 'chat:community') && (settings.chat.communityEnabled || (await ChatChannel.exists({ kind: 'community', published: true, readOnly: true })))) {
+    out.push('community');
+  }
+  if (isAdmin(user) || user.role === 'counsellor' || user.role === 'student') {
+    out.push('direct');
+  }
+  if (isAdmin(user) || can(user, 'email:manage') || can(user, 'admin:access')) {
+    out.push('notifications');
+  }
   out.push('unread', 'archived');
   return out;
 }
@@ -60,7 +87,7 @@ function channelCategory(c: { kind: string; purpose?: string | null }): ChatCate
 // ------------------------------------------------------------------ unified conversation list
 
 export interface ConversationItem {
-  type: 'channel' | 'ticket' | 'appointment' | 'report';
+  type: 'channel' | 'ticket' | 'appointment' | 'report' | 'sos' | 'notification' | 'announcement';
   id: string;
   category: ChatCategory;
   kind: string;
@@ -110,6 +137,7 @@ async function accessibleChannels(user: UserDoc, category: ChatCategory) {
   }
   let channels = (await ChatChannel.find({ $or: or }).sort({ lastMessageAt: -1 }).limit(300).lean()) as ChannelLean[];
   if (['student_admin', 'admin_super_admin', 'counsellor_admin'].includes(category)) channels = channels.filter((c) => c.kind !== 'direct' || c.purpose === category);
+  if (category === 'direct') channels = channels.filter((c) => c.kind === 'direct' || c.kind === 'counselling_thread');
 
   if (wants(category, 'community') && can(user, 'chat:community')) {
     const settings = await getSettings();
@@ -214,6 +242,131 @@ async function counsellingRequests(user: UserDoc): Promise<ConversationItem[]> {
 }
 
 
+
+async function bookingItems(user: UserDoc, category: ChatCategory): Promise<ConversationItem[]> {
+  if (!wants(category, 'bookings')) return [];
+  const own = user.role === 'counsellor';
+  const isStudent = user.role === 'student';
+  const canAggregate = can(user, 'appointments:read_aggregate') || isAdmin(user);
+  if (!own && !isStudent && !canAggregate) return [];
+
+  const filter: Record<string, unknown> = {};
+  if (own) filter.counsellorId = user._id;
+  else if (isStudent) filter.studentId = user._id;
+
+  const appts = await Appointment.find(filter).sort({ createdAt: -1 }).limit(category === 'bookings' ? 100 : 30).lean();
+  const peopleIds = appts.flatMap((a) => [a.studentId, a.counsellorId]).filter(Boolean);
+  const people = await User.find({ _id: { $in: peopleIds } }, { fullName: 1, role: 1 }).lean();
+  const names = new Map(people.map((p) => [String(p._id), p.fullName]));
+  const prefs = await preferencesFor(user._id, appts.map((a) => String(a._id)));
+
+  return appts.map((a) => {
+    const pref = prefs.get(`channel:${a._id}`);
+    const overdue = a.status === 'requested' && Date.now() - (a.createdAt as Date).getTime() > COUNSELLING_RESPONSE_MS;
+    const studentName = names.get(String(a.studentId)) ?? 'Student';
+    const counsellorName = a.counsellorId ? names.get(String(a.counsellorId)) ?? 'Counsellor' : 'Awaiting Counsellor';
+    const timeStr = a.startAt ? new Date(a.startAt).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Flexible';
+
+    return {
+      type: 'appointment',
+      id: String(a._id),
+      category: 'bookings',
+      kind: 'appointment',
+      title: `${(a.counsellingType || 'counselling').replace(/_/g, ' ').toUpperCase()} • ${a.mode === 'online' ? 'Video' : 'In-Person'}`,
+      subtitle: isStudent ? `Counsellor: ${counsellorName} • ${timeStr}` : `${studentName} with ${counsellorName} • ${timeStr}`,
+      preview: a.reason ? `Reason: ${a.reason}` : `Appointment status: ${a.status}`,
+      lastActivityAt: (a.updatedAt as Date) ?? (a.createdAt as Date) ?? null,
+      unread: a.status === 'requested' && (own || canAggregate) ? 1 : 0,
+      online: null,
+      status: a.status,
+      priority: overdue ? 'urgent' : a.status === 'requested' ? 'high' : null,
+      locked: false,
+      needsResponse: a.status === 'requested' && (own || canAggregate),
+      threadId: a.threadId ? String(a.threadId) : null,
+      pinned: Boolean(pref?.pinned),
+      archived: Boolean(pref?.archived),
+      muted: false,
+      markedUnread: false,
+    } satisfies ConversationItem;
+  });
+}
+
+async function sosAlertItems(user: UserDoc, category: ChatCategory): Promise<ConversationItem[]> {
+  if (!wants(category, 'security')) return [];
+  if (!can(user, 'sos:dispatch') && user.role !== 'security_officer' && !isAdmin(user)) return [];
+
+  const alerts = await EmergencyAlert.find({}).sort({ createdAt: -1 }).limit(category === 'security' ? 50 : 20).lean();
+  const students = await User.find({ _id: { $in: alerts.map((a) => a.userId) } }, { fullName: 1, phone: 1 }).lean();
+  const studentMap = new Map(students.map((s) => [String(s._id), s]));
+  const prefs = await preferencesFor(user._id, alerts.map((a) => String(a._id)));
+
+  return alerts.map((a) => {
+    const pref = prefs.get(`channel:${a._id}`);
+    const student = studentMap.get(String(a.userId));
+    const active = ['active', 'queued', 'pending'].includes(a.status);
+    const loc = a.latitude && a.longitude ? `Lat: ${a.latitude.toFixed(4)}, Lng: ${a.longitude.toFixed(4)}` : 'Location unavailable';
+
+    return {
+      type: 'sos',
+      id: String(a._id),
+      category: 'security',
+      kind: 'sos_alert',
+      title: `${a.alertNumber || 'SOS Alert'} • ${student?.fullName || 'Campus Member'}`,
+      subtitle: `Status: ${a.status.toUpperCase()} • Battery: ${a.batteryLevel ?? 'N/A'}% • ${loc}`,
+      preview: a.note ? `Note: ${a.note}` : `Emergency dispatch trigger (${a.triggerSource || 'app'}). ${a.status === 'resolved' ? 'Resolved successfully.' : 'Urgent officer response required.'}`,
+      lastActivityAt: (a.updatedAt as Date) ?? (a.createdAt as Date) ?? null,
+      unread: active ? 1 : 0,
+      online: null,
+      status: a.status,
+      priority: active ? 'urgent' : null,
+      locked: false,
+      needsResponse: active,
+      threadId: null,
+      pinned: Boolean(pref?.pinned) || active,
+      archived: Boolean(pref?.archived),
+      muted: false,
+      markedUnread: false,
+    } satisfies ConversationItem;
+  });
+}
+
+async function notificationDeliveryItems(user: UserDoc, category: ChatCategory): Promise<ConversationItem[]> {
+  if (!wants(category, 'notifications')) return [];
+  if (!isAdmin(user) && !can(user, 'email:manage') && !can(user, 'admin:access')) return [];
+
+  const deliveries = await EmailDelivery.find({}).sort({ createdAt: -1 }).limit(category === 'notifications' ? 50 : 20).lean();
+  const prefs = await preferencesFor(user._id, deliveries.map((d) => String(d._id)));
+
+  return deliveries.map((d) => {
+    const pref = prefs.get(`ticket:${d._id}`);
+    const failed = d.status === 'failed' || d.status === 'bounced';
+
+    const templateName = (d.template || 'System Notification').replace(/_/g, ' ');
+    const to = (d as any).toMasked || (d as any).to || 'recipient';
+    return {
+      type: 'notification',
+      id: String(d._id),
+      category: 'notifications',
+      kind: 'notification_delivery',
+      title: templateName,
+      subtitle: `To: ${to} • Provider: ${d.provider ?? 'SMTP'} • Attempts: ${d.attempts}`,
+      preview: d.lastError ? `Delivery Error: ${d.lastError}` : `Delivered via ${d.provider ?? 'SMTP'} successfully.`,
+      lastActivityAt: (d.sentAt ?? d.updatedAt ?? d.createdAt ?? null) as Date | null,
+      unread: failed ? 1 : 0,
+      online: null,
+      status: d.status,
+      priority: failed ? 'urgent' : null,
+      locked: false,
+      needsResponse: failed,
+      threadId: null,
+      pinned: Boolean(pref?.pinned),
+      archived: Boolean(pref?.archived),
+      muted: false,
+      markedUnread: false,
+    } satisfies ConversationItem;
+  });
+}
+
 async function reportCases(user: UserDoc, category: ChatCategory): Promise<ConversationItem[]> {
   if (!wants(category, 'reports')) return [];
   const canTriage = can(user, 'incidents:triage') || user.role === 'super_admin';
@@ -269,6 +422,9 @@ export async function listConversations(user: UserDoc, opts: { category: ChatCat
   const view = opts.view ?? (category === 'archived' ? 'archived' : category === 'unread' ? 'unread' : undefined);
   if (category === 'counselling') return finish(await counsellingRequests(user), view, opts.q);
   if (category === 'announcements' || category === 'reports') return [];
+  if (category === 'bookings') return finish(await bookingItems(user, category), view, opts.q);
+  if (category === 'security') return finish(await sosAlertItems(user, category), view, opts.q);
+  if (category === 'notifications') return finish(await notificationDeliveryItems(user, category), view, opts.q);
 
   const { channels, lastRead } = await accessibleChannels(user, category);
   const accessible = new Set(channels.map((c) => String(c._id)));
@@ -393,6 +549,29 @@ export async function assertItemVisible(user: UserDoc, itemType: ChatItemType, i
       if (!visible) throw notFound();
       return {};
     }
+    case 'appointment': {
+      const appt = await Appointment.findById(itemId).lean();
+      if (!appt) throw notFound();
+      const isOwner = String(appt.studentId) === String(user._id);
+      const isCounsellor = String(appt.counsellorId) === String(user._id);
+      const canAgg = can(user, 'appointments:read_aggregate') || user.role === 'super_admin';
+      if (!isOwner && !isCounsellor && !canAgg) throw notFound();
+      return {};
+    }
+    case 'sos': {
+      if (!can(user, 'sos:dispatch') && user.role !== 'security_officer' && !isAdmin(user)) throw notFound();
+      const alert = await EmergencyAlert.findById(itemId).lean();
+      if (!alert) throw notFound();
+      return {};
+    }
+    case 'notification': {
+      if (!isAdmin(user) && !can(user, 'email:manage') && !can(user, 'admin:access')) throw notFound();
+      const delivery = await EmailDelivery.findById(itemId).lean();
+      if (!delivery) throw notFound();
+      return {};
+    }
+    default:
+      return {};
   }
 }
 

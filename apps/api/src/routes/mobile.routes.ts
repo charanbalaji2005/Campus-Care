@@ -108,11 +108,15 @@ mobileRouter.post(
   requireAuth,
   asyncHandler(async (req, res) => {
     const input = parse(deviceRegistrationSchema, req.body);
+    // One FCM token = one app installation = the account signed in there now. If the app switched
+    // accounts without a clean sign-out (offline logout), drop the old account's row so its
+    // notifications never reach the person now using this phone.
+    if (input.pushToken) await DeviceRegistration.deleteMany({ pushToken: input.pushToken, sessionId: { $ne: req.authSession!._id } });
     await DeviceRegistration.findOneAndUpdate(
       { sessionId: req.authSession!._id },
       {
         $set: {
-          userId: req.user!._id, platform: input.platform, pushToken: input.pushToken ?? null, appVersion: input.appVersion,
+          userId: req.user!._id, platform: input.platform, app: req.authSession!.app ?? req.clientApp ?? null, pushToken: input.pushToken ?? null, appVersion: input.appVersion,
           appVersionCode: input.appVersionCode, deviceName: input.deviceName ?? null, lastSeenAt: new Date(), pushFailures: 0,
         },
       },

@@ -1,5 +1,6 @@
 package edu.srmap.campuscare.services
 
+import edu.srmap.campuscare.BuildConfig
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -60,7 +61,7 @@ object Notifications {
     fun contentIntent(context: Context, link: String?): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
-            data = Uri.parse("campuscare://open").buildUpon().appendQueryParameter("link", link ?: "/").build()
+            data = Uri.parse("${BuildConfig.APP_SCHEME}://open").buildUpon().appendQueryParameter("link", link ?: "/").build()
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         return PendingIntent.getActivity(context, (link ?: "").hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)

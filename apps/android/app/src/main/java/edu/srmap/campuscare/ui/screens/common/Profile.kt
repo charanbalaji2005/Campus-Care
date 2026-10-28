@@ -122,6 +122,8 @@ import edu.srmap.campuscare.ui.components.enterStagger
 import edu.srmap.campuscare.ui.components.rememberLoad
 import edu.srmap.campuscare.ui.navigation.Routes
 import edu.srmap.campuscare.ui.navigation.rememberSignOut
+import edu.srmap.campuscare.ui.screens.staff.ResponderDutyCard
+import edu.srmap.campuscare.ui.screens.staff.dispatchLabel
 import edu.srmap.campuscare.ui.theme.CcColors
 import edu.srmap.campuscare.util.Fmt
 import java.io.ByteArrayOutputStream
@@ -139,19 +141,6 @@ import kotlinx.coroutines.withContext
 private val WEEKDAY_NAMES = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 
 private fun campusLabel(campus: String?): String? = campus?.takeIf { it.isNotBlank() }?.let { if (it == "main") "Main campus" else Fmt.humanize(it) }
-
-private fun dutyTone(status: String) = when (status) {
-    "on_duty" -> Tone.Brand
-    "responding", "busy" -> Tone.Danger
-    "on_break" -> Tone.Amber
-    "stale" -> Tone.Rose
-    else -> Tone.Neutral
-}
-
-private val DUTY_LABELS = mapOf(
-    "on_duty" to "On duty", "off_duty" to "Off duty", "on_break" to "On break", "busy" to "Busy",
-    "responding" to "Responding", "unavailable" to "Unavailable", "stale" to "Unreachable",
-)
 
 private fun activityLabel(a: ProfileActivity) = Fmt.humanize(a.action.replace('.', ' ').replace(':', ' '))
 
@@ -260,7 +249,7 @@ fun ProfileScreen() {
         }
 
         // Role-specific quick status (duty switches) sits right under the header.
-        o?.officer?.let { OfficerDutyCard(it) { overview.reload() } }
+        o?.officer?.let { ResponderDutyCard(onChanged = { overview.reload() }) }
         o?.counsellor?.let { c -> CounsellorDutyCard(c) { overview.reload() } }
 
         SectionHeader("Personal information", action = "Edit", onAction = { nav.navigate(Routes.EditProfile) })
@@ -549,6 +538,13 @@ private fun CounsellorSection(c: CounsellorProfileSummary) {
         if (c.supportedModes.isNotEmpty()) KeyValue("Session modes", c.supportedModes.joinToString { Fmt.humanize(it) }, Modifier.padding(top = 4.dp))
     }
 
+    CcCard(padding = 8.dp) {
+        ListRow(
+            "Public profile", subtitle = "Bio, focus areas, languages and qualifications students see",
+            icon = Icons.Rounded.Groups, tone = Tone.Violet, onClick = { nav.navigate(Routes.CounsellorPublicProfile) },
+        )
+    }
+
     SectionHeader("Availability", action = "Manage", onAction = { nav.navigate(Routes.Availability) })
     CcCard {
         Row {
@@ -587,27 +583,6 @@ private fun CounsellorSection(c: CounsellorProfileSummary) {
 }
 
 @Composable
-private fun OfficerDutyCard(o: OfficerProfileSummary, onChanged: () -> Unit) {
-    val context = LocalContext.current
-    var onDuty by remember { mutableStateOf(ResponderDutyService.isOnDuty(context)) }
-    CcCard(color = if (onDuty) CcColors.Mint50 else Color.White) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
-            Text("Server status", style = MaterialTheme.typography.labelMedium, color = CcColors.InkSoft, modifier = Modifier.weight(1f))
-            StatusChip(DUTY_LABELS[o.dutyStatus] ?: Fmt.humanize(o.dutyStatus), dutyTone(o.dutyStatus), dot = true)
-        }
-        SwitchRow(
-            if (onDuty) "On duty — receiving SOS alerts" else "Off duty", onDuty,
-            { on ->
-                onDuty = on
-                if (on) ResponderDutyService.start(context) else ResponderDutyService.stop(context)
-                onChanged()
-            },
-            description = "While on duty, new SOS alerts ring through even when the app is closed.",
-        )
-    }
-}
-
-@Composable
 private fun OfficerSection(o: OfficerProfileSummary) {
     val app = LocalApp.current
     val nav = LocalNav.current
@@ -615,6 +590,9 @@ private fun OfficerSection(o: OfficerProfileSummary) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var consent by remember(o.locationConsent) { mutableStateOf(o.locationConsent) }
+    // Same source as the duty switch, so the two never disagree.
+    val duty by app.duty.state.collectAsState()
+    val dutyStatus = duty.status ?: o.dutyStatus
     val locationPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     SectionHeader("Duty & coverage")
@@ -629,7 +607,7 @@ private fun OfficerSection(o: OfficerProfileSummary) {
         )
         if (o.responsibilities.isNotEmpty()) KeyValue("Responsibilities", o.responsibilities.joinToString { Fmt.humanize(it) })
         if (o.skills.isNotEmpty()) KeyValue("Skills", o.skills.joinToString { Fmt.humanize(it) })
-        KeyValue("Emergency response", if (o.dutyStatus in setOf("on_duty", "responding", "busy")) "Available for dispatch" else "Not receiving dispatches")
+        KeyValue("Emergency response", dispatchLabel(dutyStatus))
         KeyValue("Last check-in from this phone", o.lastHeartbeatAt?.let { Fmt.ago(it) })
     }
 

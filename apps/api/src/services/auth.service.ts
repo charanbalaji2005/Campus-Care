@@ -4,7 +4,8 @@ import { hmac, randomToken, sha256 } from '../lib/crypto';
 import {
   EmailVerificationToken, PasswordResetToken, Session, User, type SessionDoc, type UserDoc,
 } from '../models/user';
-import { isAllowedAccountEmail, ACCOUNT_EMAIL_DOMAIN } from '@campuscare/shared';
+import { isAllowedAccountEmail, ACCOUNT_EMAIL_DOMAIN, APP_NAMES, appAudienceForRole, type AppAudience, type Role } from '@campuscare/shared';
+import { AppError } from '../lib/http';
 import { EmailDomain } from '../models/platform';
 import { getSettings } from './settings.service';
 import { accountLink, appLink, sendEmail } from './email/email.service';
@@ -16,6 +17,8 @@ import { startTotpEnrollment, verifyTotpEnrollment, verifyTotpForUser } from './
 export const SESSION_COOKIE = 'cc_session';
 /** Header the Android app sends on every request. Browsers cannot send it cross-site without a CORS preflight. */
 export const MOBILE_CLIENT_HEADER = 'x-campuscare-client';
+/** Which Android app is calling: 'student' (CampusCare Student) or 'college' (CampusCare College). */
+export const MOBILE_APP_HEADER = 'x-campuscare-app';
 export const CSRF_COOKIE = 'cc_csrf';
 const VERIFY_TTL_MS = env.EMAIL_VERIFICATION_TTL_HOURS * 3600 * 1000;
 const RESET_TTL_MS = env.PASSWORD_RESET_TTL_MINUTES * 60 * 1000;
@@ -30,17 +33,38 @@ export function setCsrfCookie(res: Response, token = randomToken(24)) {
   return token;
 }
 
+// ------------------------------------------------------------------ app audience (Student vs College app)
+/** When `app` is set and is not the app this role uses, returns the app the account belongs to. */
+export function wrongAppFor(role: string, app: AppAudience | null | undefined): AppAudience | null {
+  if (!app) return null;
+  const expected = appAudienceForRole(role as Role);
+  return expected === app ? null : expected;
+}
+
+export function wrongAppError(expected: AppAudience, status = 403) {
+  const message = expected === 'college'
+    ? `This is a college staff account. Sign in with the ${APP_NAMES.college} app.`
+    : `This is a student account. Sign in with the ${APP_NAMES.student} app.`;
+  return new AppError(status, 'wrong_app', message, { app: expected });
+}
+
+/** Refuses a sign-in from the Android app that does not match the account's role. */
+export function assertAppForUser(req: Request, user: { role: string }) {
+  const expected = wrongAppFor(user.role, req.clientApp);
+  if (expected) throw wrongAppError(expected);
+}
+
 // ------------------------------------------------------------------ sessions
 export async function createSession(
   req: Request,
   res: Response,
   user: UserDoc,
-  opts: { remember?: boolean; method: 'password' | 'google'; mfaVerified: boolean },
+  opts: { remember?: boolean; method: 'password' | 'google'; mfaVerified: boolean; mobile?: boolean; app?: AppAudience | null },
 ): Promise<SessionDoc & { plainToken?: string }> {
   const s = await getSettings();
   const token = randomToken(32);
   const now = Date.now();
-  const mobile = Boolean(req.isMobileClient);
+  const mobile = Boolean(opts.mobile ?? req.isMobileClient);
   const isSuperAdminWeb = user.role === 'super_admin' && !mobile;
   // Students on the mobile app stay signed in for the "remember me" period when checked.
   const longLived = Boolean(opts.remember) && user.role === 'student' && mobile;
@@ -68,6 +92,7 @@ export async function createSession(
     ipHash: req.ip ? hmac(env.SESSION_SECRET, `ip:${req.ip}`).slice(0, 32) : null,
     userAgent: String(req.headers['user-agent'] ?? '').slice(0, 300),
     client: mobile ? 'android' : 'web',
+    app: mobile ? (opts.app ?? req.clientApp ?? null) : null,
     deviceName: mobile ? String(req.headers['x-device-name'] ?? '').slice(0, 120) || null : null,
   });
   if (mobile) {

@@ -7,18 +7,24 @@ import {
   appointmentUpdateSchema,
   availabilitySchema,
   counsellingNoteSchema,
+  feedbackReportSchema,
   hasPermission,
   type AppointmentStatus,
   type Role,
 } from '@campuscare/shared';
-import { AppError, asyncHandler, notFound, ok, parse } from '../lib/http';
-import { nextAvailable } from '../lib/schedule';
+import { AppError, asyncHandler, notFound, ok, pageParams, parse } from '../lib/http';
 import { Appointment, Availability, CounsellingNote, type AppointmentDoc } from '../models/counselling';
-import { User, type UserDoc } from '../models/user';
+import { User, UserAvatar, type UserDoc } from '../models/user';
+import { CounsellingFeedback, FeedbackReport } from '../models/wellness';
+import { feedbackReportLimiter } from '../middleware/security';
 import { AuditLog } from '../models/platform';
 import { requireAuth, requirePermission, requireRole } from '../middleware/auth';
 import { audit } from '../services/audit.service';
-import { notify } from '../services/notification.service';
+import { notify, notifyMany } from '../services/notification.service';
+import { getSettings } from '../services/settings.service';
+import {
+  eligibleCounsellorFilter, feedbackMinimum, findCommentByRef, isStudentVisible, listDirectory, publicComments, publicCounsellor, ratingSummaries,
+} from '../services/counsellor-directory.service';
 import { appLink } from '../services/email/email.service';
 import {
   CounsellorAssignmentService,
@@ -27,7 +33,6 @@ import {
 } from '../services/counsellor-assignment.service';
 import { conflictError, slotConflict, slotsFor, startResponseClock } from '../services/counselling-schedule.service';
 import { activateCounsellingChat, declineRequest, onAppointmentStatus, scheduleFollowUp, scheduleUpcomingReminders } from '../services/counselling-workflow.service';
-import { counsellorPresence } from '../services/counsellor-availability';
 
 export const counsellingRouter = Router();
 counsellingRouter.use(requireAuth);
@@ -74,71 +79,85 @@ async function peopleFor(list: { studentId: unknown; counsellorId?: unknown }[])
 const listParam = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 60) : null);
 const dateParam = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
 
-/** Public counsellor profile. Never includes workload, other students or internal notes. */
-async function directoryEntry(c: { _id: unknown; fullName: string }, a: Record<string, any> | undefined, opts: { date?: string | null; withSlots?: boolean }) {
-  const { schedule, days } = await slotsFor(c._id, { days: 14 });
-  const presence = counsellorPresence(a as never);
-  const bookable = schedule.acceptingRequests !== false;
-  const day = opts.date ? days.find((d) => d.date === opts.date) : undefined;
-  return {
-    id: String(c._id),
-    name: c.fullName,
-    title: a?.title ?? 'Counsellor',
-    bio: a?.bio ?? '',
-    avatarUrl: a?.avatarUrl ?? null,
-    specializations: a?.specializations ?? [],
-    languages: a?.languages ?? [],
-    supportedModes: a?.supportedModes ?? ['in_person'],
-    campus: a?.campus ?? 'main',
-    acceptingRequests: bookable,
-    onDuty: bookable,
-    availability: !bookable ? 'unavailable' : presence.status === 'available' ? 'available_now' : 'by_appointment',
-    nextAvailableAt: nextAvailable(days),
-    slotsToday: days[0]?.slots.length ?? 0,
-    timezone: schedule.timezone,
-    slotMinutes: schedule.slotMinutes,
-    ...(opts.withSlots ? { days: days.map((d) => ({ date: d.date, slots: d.slots.map((x) => x.toISOString()), full: d.remaining === 0 })) } : {}),
-    ...(opts.date ? { slotsOnDate: day?.slots.length ?? 0 } : {}),
-  };
-}
+const sortParam = (v: unknown) => (v === 'availability' || v === 'rating' || v === 'name' ? v : null);
 
+/**
+ * Directory. Students see only listed, accepting counsellors with an open slot; staff see everyone
+ * eligible (with the listing flag). Paged with ?page&limit; the total is in X-Total-Count so older
+ * app builds that expect a plain list keep working.
+ */
 counsellingRouter.get(
   '/counsellors',
   asyncHandler(async (req, res) => {
-    const staffView = req.user!.role !== 'student';
-    const counsellors = await User.find({ role: 'counsellor', accountStatus: 'active' }, { fullName: 1 }).sort({ fullName: 1 }).limit(200).lean();
-    const avail = await Availability.find({ counsellorId: { $in: counsellors.map((c) => c._id) } }).lean();
-    const map = new Map(avail.map((a) => [String(a.counsellorId), a]));
-    const spec = listParam(req.query.specialization);
-    const lang = listParam(req.query.language);
-    const mode = listParam(req.query.mode);
-    const campus = listParam(req.query.campus);
-    const date = dateParam(req.query.date);
-    const rows = [];
-    for (const c of counsellors) {
-      const a = map.get(String(c._id)) as Record<string, any> | undefined;
-      if (spec && !(a?.specializations ?? []).includes(spec)) continue;
-      if (lang && !(a?.languages ?? []).some((l: string) => l.toLowerCase() === lang.toLowerCase())) continue;
-      if (mode && !(a?.supportedModes ?? []).includes(mode)) continue;
-      if (campus && (a?.campus ?? 'main') !== campus) continue;
-      const entry = await directoryEntry(c, a, { date });
-      // Students only see counsellors they can actually book: on duty, accepting, with an open slot.
-      if (!staffView && (!entry.acceptingRequests || !entry.nextAvailableAt)) continue;
-      if (date && !entry.slotsOnDate) continue;
-      rows.push(entry);
-    }
-    ok(res, rows);
+    const rows = await listDirectory(
+      {
+        q: listParam(req.query.q), specialization: listParam(req.query.specialization), language: listParam(req.query.language),
+        mode: listParam(req.query.mode), campus: listParam(req.query.campus), department: listParam(req.query.department),
+        date: dateParam(req.query.date), sort: sortParam(req.query.sort),
+      },
+      { student: req.user!.role === 'student' },
+    );
+    const { limit, skip } = pageParams(req.query, 100);
+    const paged = req.query.page || req.query.limit ? rows.slice(skip, skip + limit) : rows.slice(0, 200);
+    res.setHeader('X-Total-Count', String(rows.length));
+    ok(res, paged);
   }),
 );
 
+/** Public profile with slots, the privacy-thresholded rating and approved anonymous comments. */
 counsellingRouter.get(
   '/counsellors/:id',
   asyncHandler(async (req, res) => {
     if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
-    const c = await User.findOne({ _id: req.params.id, role: 'counsellor', accountStatus: 'active' }, { fullName: 1 }).lean();
+    const student = req.user!.role === 'student';
+    const c = await User.findOne({ _id: req.params.id, ...eligibleCounsellorFilter }, { fullName: 1, department: 1, avatarUpdatedAt: 1 }).lean();
     if (!c) throw notFound();
     const a = await Availability.findOne({ counsellorId: c._id }).lean();
-    ok(res, await directoryEntry(c, a as never, { withSlots: true }));
+    if (student && a?.listed === false) throw notFound();
+    const s = await getSettings();
+    const rating = (await ratingSummaries([c._id], s)).get(String(c._id))!;
+    const entry = await publicCounsellor(c, a, { withSlots: true, rating, staff: !student });
+    ok(res, { ...entry, comments: await publicComments(c._id, rating, s), feedbackMinimum: feedbackMinimum(s) });
+  }),
+);
+
+/** Profile photo, only for a visible counsellor whose photo a Super Admin has not hidden. */
+counsellingRouter.get(
+  '/counsellors/:id/photo',
+  asyncHandler(async (req, res) => {
+    if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
+    const a = await Availability.findOne({ counsellorId: req.params.id }, { listed: 1, photoVisible: 1 }).lean();
+    const visible = req.user!.role === 'student' ? await isStudentVisible(req.params.id) : Boolean(await User.exists({ _id: req.params.id, ...eligibleCounsellorFilter }));
+    if (!visible || a?.photoVisible === false) throw notFound();
+    const photo = await UserAvatar.findOne({ userId: req.params.id });
+    if (!photo) throw notFound();
+    res.setHeader('Content-Type', photo.mime);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end(photo.data);
+  }),
+);
+
+/** Report an approved public comment (e.g. it identifies someone). It is withdrawn until a moderator reviews it. */
+counsellingRouter.post(
+  '/counsellors/:id/comments/:ref/report',
+  feedbackReportLimiter,
+  asyncHandler(async (req, res) => {
+    const input = parse(feedbackReportSchema, req.body);
+    if (!Types.ObjectId.isValid(req.params.id)) throw notFound();
+    const fb = await findCommentByRef(req.params.id, req.params.ref);
+    if (!fb) throw notFound();
+    try {
+      await FeedbackReport.create({ feedbackId: fb._id, reporterId: req.user!._id, reason: input.reason, note: input.note ?? null });
+    } catch (err) {
+      if ((err as { code?: number }).code === 11000) return ok(res, { ok: true, alreadyReported: true });
+      throw err;
+    }
+    await CounsellingFeedback.updateOne({ _id: fb._id }, { $inc: { reportCount: 1 }, $set: { publicComment: 'pending' } });
+    await audit({ action: 'counselling.feedback_reported', req, targetType: 'counselling_feedback', targetId: String(fb._id), meta: { reason: input.reason } });
+    const staff = await User.find({ accountStatus: 'active', $or: [{ role: 'super_admin' }, { permissions: 'appointments:read_aggregate' }] }, { _id: 1 }).limit(50).lean();
+    await notifyMany(staff.map((x) => String(x._id)), { kind: 'counselling_feedback_reported', category: 'appointments', priority: 'normal', title: 'A public counselling comment was reported', body: 'It has been withdrawn from the profile until someone reviews it.', link: '/super-admin/counselling-insights' });
+    ok(res, { ok: true }, 201);
   }),
 );
 
@@ -212,6 +231,8 @@ counsellingRouter.post(
     let slotLock: string | null = null;
 
     if (!isAuto) {
+      // Only counsellors a student can see in the directory can be booked directly.
+      if (!(await isStudentVisible(input.counsellorId))) throw new AppError(422, 'not_bookable', 'This counsellor is not taking bookings through the directory right now.');
       assignedCounsellorId = new Types.ObjectId(input.counsellorId as string);
       const { schedule, days } = await slotsFor(assignedCounsellorId, { days: 31 });
       if (!schedule.acceptingRequests) {

@@ -131,6 +131,7 @@ class ResponderDutyService : Service() {
         try {
             val duty = api.duty.mine()
             storePolicy(this, duty)
+            controller().onServerOverview(duty)
             if (!isActiveStatus(duty.availability.status)) {
                 stopAndClear()
                 return
@@ -138,9 +139,10 @@ class ResponderDutyService : Service() {
             updateNotification(duty.availability.status)
         } catch (e: ApiException) {
             if (isFatal(e)) {
-                stopAndClear()
+                onFatal(e)
                 return
             }
+            // Offline or server trouble: keep running on the cached state; the heartbeat loop reconciles.
         }
         while (scope.isActive) {
             val waitMs = try {
@@ -151,12 +153,13 @@ class ResponderDutyService : Service() {
                     .putLong(KEY_LAST_HEARTBEAT, System.currentTimeMillis())
                     .apply()
                 updateNotification(r.status)
+                controller().onServerStatus(r.status, applyToDevice = false)
                 r.heartbeatIntervalSeconds.coerceIn(10, 600) * 1000L
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiException) {
                 if (isFatal(e)) {
-                    stopAndClear()
+                    onFatal(e)
                     return
                 }
                 // Offline or server trouble: try again sooner so dispatch sees us before the stale threshold.
@@ -180,22 +183,27 @@ class ResponderDutyService : Service() {
     private fun batteryPercent(): Int? =
         (getSystemService(Context.BATTERY_SERVICE) as? BatteryManager)?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)?.takeIf { it in 0..100 }
 
+    private fun controller() = (application as CampusCareApp).container.duty
+
     private fun isFatal(e: ApiException) = e.status == 401 || e.status == 403 || (e.status == 409 && e.code == "not_on_duty")
 
-    /** "Go off duty" from the notification asks the server; the service keeps running if it refuses. */
+    /** Signed out, no longer permitted, or the server says duty has ended: stop ringing on this phone. */
+    private fun onFatal(e: ApiException) {
+        if (e.code == "not_on_duty") controller().onServerStatus("off_duty", applyToDevice = false)
+        stopAndClear()
+    }
+
+    /** "Go off duty" from the notification goes through the same flow as the switch; the service keeps running if the server refuses. */
     private suspend fun goOffDuty() {
-        val api = (application as CampusCareApp).container.api
-        try {
-            api.duty.setStatus("off_duty", reason = "Ended from the duty notification")
-            stopAndClear()
-        } catch (e: ApiException) {
-            if (e.status == 401 || e.status == 403) {
-                stopAndClear()
-            } else {
-                Notifications.show(this, NOTIFICATION_ID + 1, "duty", "high", "You're still on duty", e.message ?: "Could not go off duty. Try again in the app.", "/security/alerts")
-            }
+        when (val r = controller().setOnDuty(false, reason = "Ended from the duty notification")) {
+            is DutyResult.Confirmed, DutyResult.Ignored -> Unit // confirmed: DutyController already stopped this service
+            // Signed out or no longer a responder: nothing more this phone can do on duty.
+            is DutyResult.Failed -> if (r.problem.httpStatus == 401 || r.problem.httpStatus == 403) stopAndClear() else showStillOnDuty(r.problem.message)
         }
     }
+
+    private fun showStillOnDuty(message: String) =
+        Notifications.show(this, NOTIFICATION_ID + 1, "duty", "high", "You're still on duty", message, "/security/alerts")
 
     // ------------------------------------------------------------------ realtime
     private fun handleEvent(e: RealtimeEvent) {
@@ -235,6 +243,7 @@ class ResponderDutyService : Service() {
                 if (me != null && who != null && who != me) return
                 if (e.payload.has("locationConsent")) prefs(this).edit().putBoolean(KEY_CONSENT, e.payload.optBoolean("locationConsent")).apply()
                 val status = e.payload.str("status") ?: return
+                controller().onServerStatus(status, applyToDevice = false)
                 if (isActiveStatus(status)) updateNotification(status) else stopAndClear()
             }
         }
@@ -262,14 +271,14 @@ class ResponderDutyService : Service() {
         private const val KEY_LAST_HEARTBEAT = "duty_last_heartbeat_ms"
         private const val MAX_FIX_AGE_SECONDS = 3_600.0
 
-        /** Statuses in which the server expects heartbeats (stale = heartbeats lost; sending one restores the status). */
-        val ACTIVE_STATUSES = setOf("on_duty", "on_break", "busy", "responding", "stale")
-
-        fun isActiveStatus(status: String) = status in ACTIVE_STATUSES
+        fun isActiveStatus(status: String) = DutyRules.isActive(status)
 
         private fun prefs(context: Context) = context.getSharedPreferences("cc_prefs", Context.MODE_PRIVATE)
 
-        /** Local mirror of the server's duty state: whether this phone should be running the duty service. */
+        /**
+         * Cached mirror of the server's last confirmed duty state, only so the service can resume after a
+         * restart or reboot (it re-reads the server first). Screens read DutyController instead.
+         */
         fun isOnDuty(context: Context) = prefs(context).getBoolean(KEY_ON_DUTY, false)
 
         fun setOnDuty(context: Context, on: Boolean) {
@@ -298,7 +307,7 @@ class ResponderDutyService : Service() {
             prefs(context).edit().putBoolean(KEY_CONSENT, consent).apply()
         }
 
-        /** Starts or stops the service so it matches the server's duty status. */
+        /** Starts or stops the service so it matches a server-confirmed duty status. Only DutyController calls these. */
         fun sync(context: Context, duty: DutyOverview) {
             storePolicy(context, duty)
             sync(context, duty.availability.status)
@@ -310,7 +319,17 @@ class ResponderDutyService : Service() {
 
         fun start(context: Context) {
             setOnDuty(context, true)
-            ContextCompat.startForegroundService(context, Intent(context, ResponderDutyService::class.java))
+            try {
+                ContextCompat.startForegroundService(context, Intent(context, ResponderDutyService::class.java))
+            } catch (e: IllegalStateException) {
+                // Android 12+ refuses a foreground service started from the background; the cached state
+                // lets the next app open or reboot resume it, and dispatch marks the phone stale meanwhile.
+            }
+        }
+
+        /** After a reboot: resume only if this phone was on duty; the service then re-reads the server and stops if duty ended. */
+        fun resumeAfterBoot(context: Context) {
+            if (isOnDuty(context)) start(context)
         }
 
         fun stop(context: Context) {
@@ -318,6 +337,12 @@ class ResponderDutyService : Service() {
             context.stopService(Intent(context, ResponderDutyService::class.java))
         }
     }
+}
+
+/** Production [DutyDevice]: the duty service runs exactly while the server says the responder is on duty. */
+class ServiceDutyDevice(private val context: Context) : DutyDevice {
+    override fun apply(overview: DutyOverview) = ResponderDutyService.sync(context, overview)
+    override fun applyStatus(status: String) = ResponderDutyService.sync(context, status)
 }
 
 /** JSON string field, treating missing, null and blank values as absent. */

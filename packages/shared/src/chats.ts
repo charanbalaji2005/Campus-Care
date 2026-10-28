@@ -9,32 +9,38 @@ import { objectId } from './schemas';
 export const CHAT_CATEGORIES = [
   'all',
   'announcements',
+  'bookings',
+  'reports',
   'counselling',
+  'support',
+  'community',
+  'security',
+  'direct',
+  'notifications',
   'student_counsellor',
   'student_admin',
   'admin_super_admin',
   'counsellor_admin',
-  'support',
-  'security',
-  'community',
-  'reports',
   'archived',
   'unread',
 ] as const;
 export type ChatCategory = (typeof CHAT_CATEGORIES)[number];
 
 export const CHAT_CATEGORY_LABELS: Record<ChatCategory, string> = {
-  all: 'All Chats',
-  announcements: 'Official Announcements',
+  all: 'All',
+  announcements: 'Official Channels',
+  bookings: 'Bookings & Appointments',
+  reports: 'Reports & Incidents',
   counselling: 'Counselling',
+  support: 'Student Support',
+  community: 'Community Chats',
+  security: 'Security & SOS',
+  direct: 'Direct & Role-Based Chats',
+  notifications: 'Notifications & Delivery',
   student_counsellor: 'Student–Counsellor Chats',
   student_admin: 'Student–Admin Chats',
   admin_super_admin: 'Admin–Super Admin Chats',
   counsellor_admin: 'Counsellor–Admin Chats',
-  support: 'Support Chats',
-  security: 'Security & SOS',
-  community: 'Community Channels',
-  reports: 'Reports',
   archived: 'Archived',
   unread: 'Unread',
 };
@@ -58,7 +64,7 @@ export function directChatPurpose(initiator: Role, other: Role): DirectChatPurpo
   return null;
 }
 
-export const CHAT_ITEM_TYPES = ['channel', 'case', 'ticket', 'announcement'] as const;
+export const CHAT_ITEM_TYPES = ['channel', 'case', 'ticket', 'announcement', 'appointment', 'sos', 'notification'] as const;
 export type ChatItemType = (typeof CHAT_ITEM_TYPES)[number];
 
 export const chatPreferenceSchema = z
