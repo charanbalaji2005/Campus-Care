@@ -190,79 +190,132 @@ fun SessionNotesEditorScreen(appointmentId: String) {
         },
     ) {
         LoadContent(appt, skeleton = { SkeletonList(3) }) { a ->
-            // Student Context Card
-            CcCard(padding = 14.dp) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(a.student?.name ?: "Student", tone = Tone.Violet, size = 48.dp)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                // Student Context Card
+                CcCard(padding = 14.dp) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Avatar(a.student?.name ?: "Student", tone = Tone.Violet, size = 48.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = a.student?.name ?: "Student",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = CcColors.Ink,
+                            )
+                            Text(
+                                text = listOfNotNull(a.student?.studentId, a.student?.department).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = CcColors.InkSoft,
+                            )
+                            Text(
+                                text = "${Fmt.dayTime(a.startAt)} · ${if (a.mode == "online") "Online Video" else "In-Person"}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Medium,
+                                color = CcColors.Forest,
+                            )
+                        }
+                    }
+                }
+
+                // Confidentiality Banner
+                InfoBanner(
+                    message = "Strictly Confidential: These clinical notes are restricted to you. They are never shared with students, faculty, or campus administrators.",
+                    icon = Icons.Rounded.Lock,
+                    tone = Tone.Violet,
+                )
+
+                // Formatting Toolbar & Clinical Notes TextArea
+                CcCard(padding = 12.dp) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Text(
-                            text = a.student?.name ?: "Student",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
+                            text = "Clinical Observations & Session Content",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
                             color = CcColors.Ink,
                         )
-                        Text(
-                            text = listOfNotNull(a.student?.studentId, a.student?.department).joinToString(" · "),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = CcColors.InkSoft,
-                        )
-                        Text(
-                            text = "${Fmt.dayTime(a.startAt)} · ${if (a.mode == "online") "Online Video" else "In-Person"}",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Medium,
-                            color = CcColors.Forest,
-                        )
-                    }
-                }
-            }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            CcButton(
+                                text = "+ SOAP",
+                                onClick = {
+                                    val soapTmpl = """**Subjective (S):**
+- Primary Concern: 
+- Current Symptoms & Triggers: 
+- Student Goals: 
 
-            // Confidentiality Banner
-            InfoBanner(
-                message = "Strictly Confidential: These clinical notes are restricted to you. They are never shared with students, faculty, or campus administrators.",
-                icon = Icons.Rounded.Lock,
-                tone = Tone.Violet,
-            )
+**Objective (O):**
+- Mental Status & Presentation: 
+- Engagement & Communication: 
 
-            // Formatting Toolbar & Clinical Notes TextArea
-            CcCard(padding = 12.dp) {
-                Text(
-                    text = "Clinical Observations & Session Content",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = CcColors.Ink,
-                )
-                Spacer(Modifier.height(8.dp))
+**Assessment (A):**
+- Clinical Impression: 
+- Risk Level: Low (No acute risk factors observed)
 
-                // Toolbar
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(CcColors.Cream)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    IconButton(onClick = { notesText += "**Bold Text**" }) {
-                        Icon(Icons.Rounded.FormatBold, contentDescription = "Bold", tint = CcColors.Ink)
+**Plan (P):**
+- Therapeutic Interventions Used: 
+- Coping Exercises / Homework: 
+- Next Follow-up: 7 days"""
+                                    notesText = if (notesText.isBlank()) soapTmpl else notesText.trimEnd() + "\n\n" + soapTmpl
+                                    snack.show("SOAP Intake Note template inserted.")
+                                },
+                                kind = ButtonKind.Soft,
+                            )
+                            CcButton(
+                                text = "+ Crisis",
+                                onClick = {
+                                    val crisisTmpl = """**CRISIS SAFETY & RISK INTERVENTION RECORD**
+- Identified Triggers & Immediate Distress: 
+- Warning Signs Observed: 
+- Internal Grounding Coping Plan: 
+- Verified Social Distractions & Supports: 
+- Safety Environment & Means Restriction: Safe campus environment confirmed
+- Emergency Escalation Contacts: Health Centre / Control Room on standby
+- Agreed Safety Commitment: Student agreed to follow-up safety plan"""
+                                    notesText = if (notesText.isBlank()) crisisTmpl else notesText.trimEnd() + "\n\n" + crisisTmpl
+                                    snack.show("Crisis Safety Intervention template inserted.")
+                                },
+                                kind = ButtonKind.Soft,
+                            )
+                        }
                     }
-                    IconButton(onClick = { notesText += "_Italic Text_" }) {
-                        Icon(Icons.Rounded.FormatItalic, contentDescription = "Italic", tint = CcColors.Ink)
-                    }
-                    IconButton(onClick = { notesText += "__Underlined Text__" }) {
-                        Icon(Icons.Rounded.FormatUnderlined, contentDescription = "Underline", tint = CcColors.Ink)
-                    }
-                    IconButton(onClick = { notesText += "\n• " }) {
-                        Icon(Icons.Rounded.FormatListBulleted, contentDescription = "Bullets", tint = CcColors.Ink)
-                    }
-                    IconButton(onClick = { notesText += "\n1. " }) {
-                        Icon(Icons.Rounded.FormatListNumbered, contentDescription = "Numbers", tint = CcColors.Ink)
-                    }
-                }
+                    Spacer(Modifier.height(8.dp))
 
-                Spacer(Modifier.height(8.dp))
+                    // Toolbar
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(CcColors.Cream)
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        IconButton(onClick = { notesText += "**Bold Text**" }) {
+                            Icon(Icons.Rounded.FormatBold, contentDescription = "Bold", tint = CcColors.Ink)
+                        }
+                        IconButton(onClick = { notesText += "_Italic Text_" }) {
+                            Icon(Icons.Rounded.FormatItalic, contentDescription = "Italic", tint = CcColors.Ink)
+                        }
+                        IconButton(onClick = { notesText += "__Underlined Text__" }) {
+                            Icon(Icons.Rounded.FormatUnderlined, contentDescription = "Underline", tint = CcColors.Ink)
+                        }
+                        IconButton(onClick = { notesText += "\n• " }) {
+                            Icon(Icons.Rounded.FormatListBulleted, contentDescription = "Bullets", tint = CcColors.Ink)
+                        }
+                        IconButton(onClick = { notesText += "\n1. " }) {
+                            Icon(Icons.Rounded.FormatListNumbered, contentDescription = "Numbers", tint = CcColors.Ink)
+                        }
+                    }
 
-                CcTextField(
+                    Spacer(Modifier.height(8.dp))
+
+                    CcTextField(
                     value = notesText,
                     onValueChange = { notesText = it },
                     label = "Clinical Notes",
@@ -437,6 +490,7 @@ fun SessionNotesEditorScreen(appointmentId: String) {
                         }
                     }
                 }
+            }
             }
         }
     }

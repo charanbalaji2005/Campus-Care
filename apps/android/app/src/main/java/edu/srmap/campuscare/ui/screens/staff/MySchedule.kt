@@ -126,8 +126,12 @@ fun MyScheduleScreen() {
         },
     ) {
         LoadContent(loaded, skeleton = { SkeletonList(4) }) { s ->
-            val d = draft ?: s
-            CcCard {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                val d = draft ?: s
+                CcCard {
                 SwitchRow(
                     if (s.onDuty) "On duty" else "Off duty", s.onDuty,
                     { on -> if (on) setDuty(true) else confirmOff = true },
@@ -257,6 +261,7 @@ fun MyScheduleScreen() {
             }
         }
     }
+}
 
     if (confirmOff) {
         ConfirmDialog(

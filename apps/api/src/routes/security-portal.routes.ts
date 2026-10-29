@@ -11,6 +11,8 @@ import { audit } from '../services/audit.service';
 import { emitToRoom } from '../realtime/socket';
 import { notify } from '../services/notification.service';
 import { closeAlertAssignments } from '../services/dispatch.service';
+import { ChatMessage } from '../models/chat';
+import { resolveOrCreateStaffChannel } from '../services/chat.service';
 
 export const securityPortalRouter = Router();
 securityPortalRouter.use(requireAuth);
@@ -518,26 +520,55 @@ securityPortalRouter.get(
   }),
 );
 
+function formatMessageTime(date?: Date | null): string {
+  if (!date) return 'Just now';
+  const now = new Date();
+  const d = new Date(date);
+  const diffDays = Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) {
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  }
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) {
+    return d.toLocaleDateString('en-US', { weekday: 'short' });
+  }
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 // ==============================================================================
 // 7. Security Messages (Screen 7)
 // ==============================================================================
 securityPortalRouter.get(
   '/messages',
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
+    const user = req.user!;
+    const [ctrlCh, adminCh, raviCh, sitaCh, teamCh] = await Promise.all([
+      resolveOrCreateStaffChannel('msg-ctrl', user),
+      resolveOrCreateStaffChannel('msg-admin', user),
+      resolveOrCreateStaffChannel('msg-ravi', user),
+      resolveOrCreateStaffChannel('msg-sita', user),
+      resolveOrCreateStaffChannel('msg-team', user),
+    ]);
+
+    const channelIds = [ctrlCh._id, adminCh._id, raviCh._id, sitaCh._id, teamCh._id];
+    const latestMsgs = await Promise.all(
+      channelIds.map((cid) => ChatMessage.findOne({ channelId: cid }).sort({ createdAt: -1 }).lean()),
+    );
+
     const controlRoom = [
       {
-        id: 'msg-ctrl',
+        id: String(ctrlCh._id),
         title: 'Control Room',
-        subtitle: 'SOS alert assigned',
-        timeLabel: '10:24 AM',
-        unreadCount: 2,
+        subtitle: latestMsgs[0]?.body ?? 'SOS alert assigned',
+        timeLabel: formatMessageTime(latestMsgs[0]?.createdAt),
+        unreadCount: 0,
         isControlRoom: true,
       },
       {
-        id: 'msg-admin',
+        id: String(adminCh._id),
         title: 'Campus Admin',
-        subtitle: 'Safety drill at 3 PM',
-        timeLabel: 'Yesterday',
+        subtitle: latestMsgs[1]?.body ?? 'Safety drill at 3 PM',
+        timeLabel: formatMessageTime(latestMsgs[1]?.createdAt),
         unreadCount: 0,
         isControlRoom: true,
       },
@@ -545,26 +576,26 @@ securityPortalRouter.get(
 
     const team = [
       {
-        id: 'msg-ravi',
+        id: String(raviCh._id),
         title: 'Ravi Singh',
-        subtitle: 'En route to location',
-        timeLabel: '10:20 AM',
+        subtitle: latestMsgs[2]?.body ?? 'En route to location',
+        timeLabel: formatMessageTime(latestMsgs[2]?.createdAt),
         unreadCount: 0,
         isControlRoom: false,
       },
       {
-        id: 'msg-sita',
+        id: String(sitaCh._id),
         title: 'Sita Thomas',
-        subtitle: 'On site at Library',
-        timeLabel: '10:18 AM',
+        subtitle: latestMsgs[3]?.body ?? 'On site at Library',
+        timeLabel: formatMessageTime(latestMsgs[3]?.createdAt),
         unreadCount: 0,
         isControlRoom: false,
       },
       {
-        id: 'msg-team',
+        id: String(teamCh._id),
         title: 'Officer Team',
-        subtitle: 'Share live updates',
-        timeLabel: '09:55 AM',
+        subtitle: latestMsgs[4]?.body ?? 'Share live updates',
+        timeLabel: formatMessageTime(latestMsgs[4]?.createdAt),
         unreadCount: 0,
         isControlRoom: false,
       },

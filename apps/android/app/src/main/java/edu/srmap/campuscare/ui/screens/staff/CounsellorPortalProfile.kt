@@ -1,17 +1,26 @@
 package edu.srmap.campuscare.ui.screens.staff
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.rounded.EventNote
 import androidx.compose.material.icons.automirrored.rounded.Help
 import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Person
@@ -32,7 +41,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import edu.srmap.campuscare.data.ApiException
 import edu.srmap.campuscare.ui.components.Avatar
@@ -255,26 +268,195 @@ fun CounsellorProfileSettingsScreen() {
         )
     }
 
+    var viewingTemplate by remember { mutableStateOf<String?>(null) }
+    val clipboard = LocalClipboardManager.current
+
+    val soapTemplateText = """**Subjective (S):**
+• Primary Concern: [Student's reported issues and distress triggers]
+• History & Prior Support: [Previous counselling, academic pressure, family factors]
+• Student Goals: [Immediate expectations and desired support outcomes]
+
+**Objective (O):**
+• Mental Status & Presentation: [Appearance, speech, mood, affect, eye contact]
+• Behavioural Observations: [Engagement, anxiety cues, physical symptoms]
+
+**Assessment (A):**
+• Clinical Impression: [Emotional / adjustment / exam stress / grief / social concerns]
+• Severity & Risk Level: Low / Moderate / Elevated (No active self-harm ideation)
+
+**Plan (P):**
+• Interventions Provided: [Active listening, psychoeducation, grounding exercises]
+• Coping Homework: [Mindfulness breathing, sleep routine tracking, thought diary]
+• Follow-up Review: In 7 days"""
+
+    val crisisTemplateText = """**CRISIS SAFETY & RISK INTERVENTION RECORD**
+• Identified Triggers & Immediate Threat: [Crisis escalation triggers, precipitating event]
+• Warning Signs & Affective State: [Acute agitation, hopelessness cues, panic response]
+• Internal Coping Strategies: [5-4-3-2-1 sensory grounding, deep diaphragmatic breathing]
+• Social Supports & Distractions: [Trusted peers, warden, student wellbeing centre]
+• Means Restriction / Environment Safety: [Safe campus environment verified]
+• Emergency Contacts & Escalation: [Control Room, Campus Security, Health Centre on standby]
+• Agreed Safety Commitment: Student agreed to follow-up check-in and safety contract."""
+
     // Note Templates Dialog
     if (showTemplatesDialog) {
         AlertDialog(
             onDismissRequest = { showTemplatesDialog = false },
-            title = { Text("Session Note Templates") },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.AutoMirrored.Rounded.EventNote, contentDescription = null, tint = CcColors.Forest)
+                    Text("Session Note Templates", fontWeight = FontWeight.Bold)
+                }
+            },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Standardized clinical documentation formats:", style = MaterialTheme.typography.bodyMedium)
-                    CcCard(padding = 10.dp) {
-                        Text("SOAP Intake Note", fontWeight = FontWeight.Bold)
-                        Text("Subjective, Objective, Assessment, Plan structured documentation.", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Standardized clinical documentation formats for campus counselling. Tap any template to inspect the structure or copy it:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CcColors.InkSoft,
+                    )
+
+                    CcCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showTemplatesDialog = false
+                                viewingTemplate = "soap"
+                            },
+                        padding = 12.dp,
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("SOAP Intake Note", fontWeight = FontWeight.Bold, color = CcColors.Ink)
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "Subjective, Objective, Assessment, Plan structured clinical documentation.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = CcColors.InkSoft,
+                                )
+                            }
+                            Icon(
+                                Icons.AutoMirrored.Rounded.ArrowForwardIos,
+                                contentDescription = "View SOAP",
+                                tint = CcColors.Forest,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
                     }
-                    CcCard(padding = 10.dp) {
-                        Text("Crisis Safety Intervention", fontWeight = FontWeight.Bold)
-                        Text("Documenting immediate safety risk, coping plan, and support contacts.", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft)
+
+                    CcCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showTemplatesDialog = false
+                                viewingTemplate = "crisis"
+                            },
+                        padding = 12.dp,
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Crisis Safety Intervention", fontWeight = FontWeight.Bold, color = CcColors.Ink)
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "Documenting immediate safety risk, coping plan, means restriction, and emergency contacts.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = CcColors.InkSoft,
+                                )
+                            }
+                            Icon(
+                                Icons.AutoMirrored.Rounded.ArrowForwardIos,
+                                contentDescription = "View Crisis Template",
+                                tint = CcColors.Forest,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
                     }
                 }
             },
             confirmButton = {
                 TextButton(onClick = { showTemplatesDialog = false }) { Text("Close") }
+            },
+        )
+    }
+
+    // Detailed Template Viewer Dialog
+    viewingTemplate?.let { tmplKey ->
+        val isSoap = tmplKey == "soap"
+        val tmplTitle = if (isSoap) "SOAP Intake Note" else "Crisis Safety Intervention"
+        val tmplText = if (isSoap) soapTemplateText else crisisTemplateText
+
+        AlertDialog(
+            onDismissRequest = { viewingTemplate = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(
+                        if (isSoap) Icons.AutoMirrored.Rounded.EventNote else Icons.Rounded.Warning,
+                        contentDescription = null,
+                        tint = if (isSoap) CcColors.Forest else CcColors.Sos,
+                    )
+                    Text(tmplTitle, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = if (isSoap) "Standard 4-tier clinical intake structure:" else "Crisis de-escalation and safety contract format:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = CcColors.InkSoft,
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(CcColors.Cream)
+                            .padding(12.dp),
+                    ) {
+                        Text(
+                            text = tmplText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = CcColors.Ink,
+                            lineHeight = 18.sp,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    CcButton(
+                        text = "Copy Format",
+                        onClick = {
+                            clipboard.setText(AnnotatedString(tmplText))
+                            snack.show("$tmplTitle copied to clipboard.")
+                        },
+                        kind = ButtonKind.Soft,
+                        leadingIcon = Icons.Rounded.ContentCopy,
+                    )
+                    CcButton(
+                        text = "Write Note",
+                        onClick = {
+                            viewingTemplate = null
+                            nav.navigate(Routes.sessionNotesEditor("latest"))
+                        },
+                        kind = ButtonKind.Brand,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewingTemplate = null; showTemplatesDialog = true }) { Text("Back") }
             },
         )
     }

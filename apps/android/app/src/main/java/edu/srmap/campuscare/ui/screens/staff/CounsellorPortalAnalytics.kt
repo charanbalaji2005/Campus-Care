@@ -96,34 +96,39 @@ fun ReportsAnalyticsScreen() {
         )
 
         LoadContent(analytics, skeleton = { SkeletonList(4) }) { data ->
-            // 4 KPI Stat Tiles
-            AnalyticsStatTiles(data)
-
-            // Weekly Sessions Overview (Chart)
-            WeeklySessionsOverviewCard(data)
-
-            // Common Concerns Breakdown
-            CommonConcernsCard(data)
-
-            // Student Satisfaction Card
-            StudentSatisfactionCard()
-
-            // Export Report Action
-            CcButton(
-                text = "Download Monthly Summary Report (PDF)",
-                onClick = {
-                    snack.show("Generating anonymized report with privacy suppression...")
-                },
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                kind = ButtonKind.Brand,
-                leadingIcon = Icons.Rounded.Download,
-            )
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                // 4 KPI Stat Tiles
+                AnalyticsStatTiles(data)
 
-            InfoBanner(
-                message = "Student privacy protection: Small group suppression is applied to all aggregated analytics to prevent individual student identification.",
-                icon = Icons.Rounded.Info,
-                tone = Tone.Teal,
-            )
+                // Weekly Sessions Overview (Chart)
+                WeeklySessionsOverviewCard(data)
+
+                // Common Concerns Breakdown
+                CommonConcernsCard(data)
+
+                // Student Satisfaction Card
+                StudentSatisfactionCard()
+
+                // Export Report Action
+                CcButton(
+                    text = "Download Monthly Summary Report (PDF)",
+                    onClick = {
+                        snack.show("Generating anonymized report with privacy suppression...")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    kind = ButtonKind.Brand,
+                    leadingIcon = Icons.Rounded.Download,
+                )
+
+                InfoBanner(
+                    message = "Student privacy protection: Small group suppression is applied to all aggregated analytics to prevent individual student identification.",
+                    icon = Icons.Rounded.Info,
+                    tone = Tone.Teal,
+                )
+            }
         }
     }
 }

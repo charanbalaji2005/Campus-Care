@@ -11,6 +11,8 @@ import { notify, notifyMany } from '../services/notification.service';
 import { onDutySecurityOfficers } from '../services/duty.service';
 import { CATEGORY_INFO, STATUS_LABELS, type IncidentCategory, type IncidentStatus } from '@campuscare/shared';
 import { randomUUID } from 'node:crypto';
+import { ChatMessage } from '../models/chat';
+import { resolveOrCreateStaffChannel } from '../services/chat.service';
 
 export const committeePortalRouter = Router();
 committeePortalRouter.use(requireAuth);
@@ -361,53 +363,82 @@ committeePortalRouter.get(
   }),
 );
 
+function formatMessageTime(date?: Date | null): string {
+  if (!date) return 'Just now';
+  const now = new Date();
+  const d = new Date(date);
+  const diffDays = Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) {
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  }
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) {
+    return d.toLocaleDateString('en-US', { weekday: 'short' });
+  }
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 // ==============================================================================
 // 7. Committee Messages (Screen 7)
 // ==============================================================================
 committeePortalRouter.get(
   '/messages',
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
+    const user = req.user!;
+    const [repCh, teamCh1, teamCh2, teamCh3, teamCh4] = await Promise.all([
+      resolveOrCreateStaffChannel('rep-msg-1', user),
+      resolveOrCreateStaffChannel('team-msg-1', user),
+      resolveOrCreateStaffChannel('team-msg-2', user),
+      resolveOrCreateStaffChannel('team-msg-3', user),
+      resolveOrCreateStaffChannel('team-msg-4', user),
+    ]);
+
+    const channelIds = [repCh._id, teamCh1._id, teamCh2._id, teamCh3._id, teamCh4._id];
+    const latestMsgs = await Promise.all(
+      channelIds.map((cid) => ChatMessage.findOne({ channelId: cid }).sort({ createdAt: -1 }).lean()),
+    );
+
     const reports = [
       {
-        id: 'rep-msg-1',
+        id: String(repCh._id),
         title: 'Report #2026-0871',
-        subtitle: 'New evidence submitted',
-        timeLabel: '11:20 AM',
-        unreadCount: 1,
+        subtitle: latestMsgs[0]?.body ?? 'New evidence submitted',
+        timeLabel: formatMessageTime(latestMsgs[0]?.createdAt),
+        unreadCount: 0,
         isReport: true,
       },
     ];
 
     const team = [
       {
-        id: 'team-msg-1',
+        id: String(teamCh1._id),
         title: 'Committee Team',
-        subtitle: 'Meeting at 4 PM',
-        timeLabel: '10:45 AM',
+        subtitle: latestMsgs[1]?.body ?? 'Meeting at 4 PM',
+        timeLabel: formatMessageTime(latestMsgs[1]?.createdAt),
         unreadCount: 0,
         isReport: false,
       },
       {
-        id: 'team-msg-2',
+        id: String(teamCh2._id),
         title: 'Dr. Kavya S',
-        subtitle: 'Please review section 3',
-        timeLabel: 'Yesterday',
+        subtitle: latestMsgs[2]?.body ?? 'Please review section 3',
+        timeLabel: formatMessageTime(latestMsgs[2]?.createdAt),
         unreadCount: 0,
         isReport: false,
       },
       {
-        id: 'team-msg-3',
+        id: String(teamCh3._id),
         title: 'Campus Admin',
-        subtitle: 'Policy update on reports',
-        timeLabel: 'Oct 19',
+        subtitle: latestMsgs[3]?.body ?? 'Policy update on reports',
+        timeLabel: formatMessageTime(latestMsgs[3]?.createdAt),
         unreadCount: 0,
         isReport: false,
       },
       {
-        id: 'team-msg-4',
+        id: String(teamCh4._id),
         title: 'Legal Advisor',
-        subtitle: 'Guidelines for documentation',
-        timeLabel: 'Oct 18',
+        subtitle: latestMsgs[4]?.body ?? 'Guidelines for documentation',
+        timeLabel: formatMessageTime(latestMsgs[4]?.createdAt),
         unreadCount: 0,
         isReport: false,
       },

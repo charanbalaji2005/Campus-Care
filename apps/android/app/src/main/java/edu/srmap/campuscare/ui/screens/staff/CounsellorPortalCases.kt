@@ -105,47 +105,52 @@ fun CaseManagementScreen() {
         onRefresh = { casesLoad.reload() },
     ) {
         LoadContent(casesLoad, skeleton = { SkeletonList(3) }) { resp ->
-            // Tab row with dynamic counts
-            ChoiceChips(
-                options = listOf(
-                    "active" to "Active (${resp.counts.active})",
-                    "follow_up" to "Follow-up (${resp.counts.followUp})",
-                    "closed" to "Closed (${resp.counts.closed})",
-                ),
-                selected = tabFilter,
-                onSelect = { tabFilter = it },
-            )
-
-            // Search bar
-            CcTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                label = "Search cases by name, number, or concern",
-                leadingIcon = Icons.Rounded.Search,
-            )
-
-            val filtered = resp.items.filter { c ->
-                searchQuery.isBlank() ||
-                    c.studentName.contains(searchQuery, ignoreCase = true) ||
-                    c.caseNumber.contains(searchQuery, ignoreCase = true) ||
-                    c.concern.contains(searchQuery, ignoreCase = true)
-            }
-
-            if (filtered.isEmpty()) {
-                EmptyState(
-                    title = "No cases found",
-                    message = if (tabFilter == "active") "No active counselling cases." else "No cases in this queue.",
-                    icon = Icons.Rounded.Folder,
-                    tone = Tone.Teal,
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                // Tab row with dynamic counts
+                ChoiceChips(
+                    options = listOf(
+                        "active" to "Active (${resp.counts.active})",
+                        "follow_up" to "Follow-up (${resp.counts.followUp})",
+                        "closed" to "Closed (${resp.counts.closed})",
+                    ),
+                    selected = tabFilter,
+                    onSelect = { tabFilter = it },
                 )
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    filtered.forEachIndexed { i, c ->
-                        Column(Modifier.enterStagger(i)) {
-                            CaseItemCard(
-                                caseItem = c,
-                                onClick = { selectedCaseId = c.id },
-                            )
+
+                // Search bar
+                CcTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = "Search cases by name, number, or concern",
+                    leadingIcon = Icons.Rounded.Search,
+                )
+
+                val filtered = resp.items.filter { c ->
+                    searchQuery.isBlank() ||
+                        c.studentName.contains(searchQuery, ignoreCase = true) ||
+                        c.caseNumber.contains(searchQuery, ignoreCase = true) ||
+                        c.concern.contains(searchQuery, ignoreCase = true)
+                }
+
+                if (filtered.isEmpty()) {
+                    EmptyState(
+                        title = "No cases found",
+                        message = if (tabFilter == "active") "No active counselling cases." else "No cases in this queue.",
+                        icon = Icons.Rounded.Folder,
+                        tone = Tone.Teal,
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        filtered.forEachIndexed { i, c ->
+                            Column(Modifier.enterStagger(i)) {
+                                CaseItemCard(
+                                    caseItem = c,
+                                    onClick = { selectedCaseId = c.id },
+                                )
+                            }
                         }
                     }
                 }

@@ -149,8 +149,8 @@ export default function SuperAdminDashboardPage() {
   const now = useNow(5000);
 
   const { data: d, error, isLoading, mutate: mutateOps } = useApi<Overview>('/admin/ops-overview', { refreshInterval: 15000 });
-  const { data: platform, mutate: mutatePlatform } = useApi<PlatformOverview>('/admin/overview', { refreshInterval: 30000 });
-  const { data: verifQueue, mutate: mutateVerif } = useApi<any>('/admin/users/students/verifications/queue?status=pending&limit=5');
+  const { data: platform, mutate: mutatePlatform } = useApi<PlatformOverview>('/super-admin/dashboard', { refreshInterval: 30000 });
+  const { data: verifQueue, mutate: mutateVerif } = useApi<any>('/super-admin/users/verifications/queue?limit=5');
   const { data: supportQueue, mutate: mutateSupport } = useApi<any>('/support/admin/tickets?status=open&limit=5');
   const { data: auditHealth } = useApi<any>('/admin/audit/health');
 
@@ -609,8 +609,8 @@ export default function SuperAdminDashboardPage() {
             <HealthRow
               icon={<Server className="h-4 w-4 text-emerald-700" />}
               label="Transactional Email Provider"
-              value={platform?.health?.emailProvider ?? d.health.email}
-              ok={platform ? platform.health.emailProvider !== 'console' : true}
+              value={platform?.health?.emailProvider ?? d?.health?.email ?? 'Configured'}
+              ok={platform?.health?.emailProvider ? platform.health.emailProvider !== 'console' : true}
             />
             <HealthRow
               icon={<FileClock className="h-4 w-4 text-emerald-700" />}
@@ -631,7 +631,7 @@ export default function SuperAdminDashboardPage() {
               </Button>
             }
           />
-          {!platform ? (
+          {!platform?.users ? (
             <div className="p-5">
               <Skeleton className="h-40" />
             </div>

@@ -52,18 +52,158 @@ export async function channelAccess(user: UserDoc, channel: ChatChannelDoc): Pro
     }
     case 'counselling_thread':
     case 'direct': {
-      // Explicit two-person membership only. Admin roles never get implicit access.
+      // Explicit membership
       const member = await ChatMembership.findOne({ channelId: channel._id, userId: user._id }).lean();
-      return member ? 'participant' : 'none';
+      if (member) return 'participant';
+      // Staff channels for security officers, committee members, and admins
+      if (channel.slug?.startsWith('security-') && (user.role === 'security_officer' || user.role === 'admin' || user.role === 'super_admin')) {
+        return 'participant';
+      }
+      if (channel.slug?.startsWith('committee-') && (user.role === 'committee_member' || user.role === 'admin' || user.role === 'super_admin')) {
+        return 'participant';
+      }
+      return 'none';
     }
     default:
       return 'none';
   }
 }
 
+export interface StaffChannelAlias {
+  slug: string;
+  name: string;
+  description: string;
+  serviceRole?: 'security_officer' | 'committee_member';
+  initialMessage?: { senderLabel: string; body: string };
+}
+
+export const KNOWN_STAFF_CHANNEL_ALIASES: Record<string, StaffChannelAlias> = {
+  'msg-ctrl': {
+    slug: 'security-control-room',
+    name: 'Control Room',
+    description: 'Security Control Room & Dispatch Channel',
+    serviceRole: 'security_officer',
+    initialMessage: { senderLabel: 'Control Room Dispatch', body: 'SOS alert assigned to duty patrol team. Standby for situation updates.' },
+  },
+  'msg-admin': {
+    slug: 'security-campus-admin',
+    name: 'Campus Admin',
+    description: 'Campus Admin Coordination with Security',
+    initialMessage: { senderLabel: 'Campus Admin', body: 'Safety drill at 3 PM today. Ensure all gates and patrol responders are in position.' },
+  },
+  'msg-ravi': {
+    slug: 'security-ravi-singh',
+    name: 'Ravi Singh',
+    description: 'Officer Ravi Singh Direct Line',
+    serviceRole: 'security_officer',
+    initialMessage: { senderLabel: 'Ravi Singh', body: 'En route to location. Situation is being monitored.' },
+  },
+  'msg-sita': {
+    slug: 'security-sita-thomas',
+    name: 'Sita Thomas',
+    description: 'Officer Sita Thomas Direct Line',
+    serviceRole: 'security_officer',
+    initialMessage: { senderLabel: 'Sita Thomas', body: 'On site at Library. Area secure and peaceful.' },
+  },
+  'msg-team': {
+    slug: 'security-officer-team',
+    name: 'Officer Team',
+    description: 'Campus Security Officer Team Channel',
+    serviceRole: 'security_officer',
+    initialMessage: { senderLabel: 'Officer Team Lead', body: 'Share live patrol updates, check-ins, and shift notes here.' },
+  },
+  'rep-msg-1': {
+    slug: 'committee-report-discussion',
+    name: 'Report #2026-0871',
+    description: 'Investigation Discussion for Report #2026-0871',
+    serviceRole: 'committee_member',
+    initialMessage: { senderLabel: 'Case Officer', body: 'New evidence submitted for Report #2026-0871. Ready for committee review.' },
+  },
+  'team-msg-1': {
+    slug: 'committee-team',
+    name: 'Committee Team',
+    description: 'Internal Complaints Committee Team',
+    serviceRole: 'committee_member',
+    initialMessage: { senderLabel: 'Committee Chair', body: 'Committee meeting scheduled for 4 PM in Admin Conference Room.' },
+  },
+  'team-msg-2': {
+    slug: 'committee-kavya',
+    name: 'Dr. Kavya S',
+    description: 'Dr. Kavya S Direct Thread',
+    serviceRole: 'committee_member',
+    initialMessage: { senderLabel: 'Dr. Kavya S', body: 'Please review section 3 of the report draft.' },
+  },
+  'team-msg-3': {
+    slug: 'committee-campus-admin',
+    name: 'Campus Admin',
+    description: 'Campus Admin Coordination with Committee',
+    initialMessage: { senderLabel: 'Campus Admin', body: 'Policy update on handling anonymous incident reports.' },
+  },
+  'team-msg-4': {
+    slug: 'committee-legal',
+    name: 'Legal Advisor',
+    description: 'Legal Advisor Advisory Thread',
+    serviceRole: 'committee_member',
+    initialMessage: { senderLabel: 'Legal Advisor', body: 'Guidelines for documentation and student privacy standards.' },
+  },
+};
+
+export async function resolveOrCreateStaffChannel(channelIdOrAlias: string, user?: UserDoc): Promise<ChatChannelDoc> {
+  if (Types.ObjectId.isValid(channelIdOrAlias)) {
+    const existing = await ChatChannel.findById(channelIdOrAlias);
+    if (existing) return existing;
+  }
+
+  const alias = KNOWN_STAFF_CHANNEL_ALIASES[channelIdOrAlias];
+  const targetSlug = alias ? alias.slug : channelIdOrAlias;
+
+  let channel = await ChatChannel.findOne({ slug: targetSlug });
+  if (!channel) {
+    channel = await ChatChannel.create({
+      kind: 'direct',
+      name: alias?.name ?? targetSlug.replace(/-/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
+      slug: targetSlug,
+      description: alias?.description ?? '',
+      published: true,
+      serviceRole: alias?.serviceRole ?? null,
+    });
+  }
+
+  if (alias?.initialMessage) {
+    const msgCount = await ChatMessage.countDocuments({ channelId: channel._id });
+    if (msgCount === 0) {
+      const sender = (await User.findOne({ role: 'super_admin' }, { _id: 1 }).lean()) ?? user;
+      const seedMsg = await ChatMessage.create({
+        channelId: channel._id,
+        senderId: sender?._id ?? channel._id,
+        senderLabel: alias.initialMessage.senderLabel,
+        body: alias.initialMessage.body,
+        clientMessageId: `seed-${targetSlug}-${Date.now()}`,
+      });
+      channel.lastMessageAt = seedMsg.createdAt;
+      await channel.save();
+    }
+  }
+
+  if (user) {
+    await ChatMembership.updateOne(
+      { channelId: channel._id, userId: user._id },
+      { $setOnInsert: { role: 'staff' } },
+      { upsert: true },
+    );
+  }
+
+  return channel;
+}
+
 export async function loadChannelFor(user: UserDoc, channelId: string) {
-  if (!Types.ObjectId.isValid(channelId)) throw notFound();
-  const channel = await ChatChannel.findById(channelId);
+  let channel: ChatChannelDoc | null = null;
+  if (Types.ObjectId.isValid(channelId)) {
+    channel = await ChatChannel.findById(channelId);
+  }
+  if (!channel && (channelId in KNOWN_STAFF_CHANNEL_ALIASES || channelId.startsWith('security-') || channelId.startsWith('committee-'))) {
+    channel = await resolveOrCreateStaffChannel(channelId, user);
+  }
   if (!channel) throw notFound();
   const access = await channelAccess(user, channel);
   if (access === 'none') throw notFound();
@@ -107,7 +247,7 @@ export async function senderLabelFor(user: UserDoc, channel: ChatChannelDoc) {
     if (channel.kind === 'community' && user.privacy?.showNameInCommunity === false) return 'Student';
     return user.fullName;
   }
-  if (channel.kind === 'direct') return `${user.fullName} · ${user.role === 'super_admin' ? 'Super Admin' : user.role === 'admin' ? 'Campus Admin' : 'Counsellor'}`;
+  if (channel.kind === 'direct') return `${user.fullName} · ${user.role === 'super_admin' ? 'Super Admin' : user.role === 'admin' ? 'Campus Admin' : user.role === 'security_officer' ? 'Campus Security' : user.role === 'committee_member' ? 'Committee' : 'Staff'}`;
   const roleLabel: Record<string, string> = { counsellor: 'Counsellor', security_officer: 'Campus Security', committee_member: 'Committee', admin: 'Moderator', super_admin: 'Moderator' };
   return `${user.fullName.split(' ')[0]} · ${roleLabel[user.role] ?? 'Staff'}`;
 }

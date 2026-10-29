@@ -71,7 +71,7 @@ export default function ActivityCenterPage() {
     data: verifData,
     isLoading: verifLoading,
     mutate: mutateVerif,
-  } = useApi<any>('/admin/users/students/verifications/queue?status=pending&limit=15', { refreshInterval: 20000 });
+  } = useApi<any>('/super-admin/users/verifications/queue?limit=15', { refreshInterval: 20000 });
 
   // 3. Support Tickets Queue
   const {

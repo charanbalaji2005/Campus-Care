@@ -340,7 +340,7 @@ export function PortalShell({ portal, nav, roles, permission, children, mobileNa
 
   // Live overview counters for dynamic badges
   const { data: opsOverview } = useApi<any>('/admin/ops-overview', { refreshInterval: 15000 });
-  const { data: verifQueue } = useApi<any>('/admin/users/students/verifications/queue?status=pending&limit=1', {
+  const { data: verifQueue } = useApi<any>('/super-admin/users/verifications/queue?limit=1', {
     refreshInterval: 20000,
   });
   const { data: supportStats } = useApi<any>('/support/admin/tickets?status=open&limit=1', { refreshInterval: 20000 });

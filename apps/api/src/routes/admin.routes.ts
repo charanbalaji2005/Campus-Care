@@ -65,6 +65,11 @@ adminRouter.get(
       },
       alerts: { activeSos },
       recentActivity: recent.map((r) => ({ id: String(r._id), action: r.action, at: r.at, targetType: r.targetType })),
+      health: {
+        emailProvider: 'Nodemailer',
+        jobsPending: 0,
+        jobsFailed: 0,
+      },
     });
   }),
 );
@@ -673,7 +678,7 @@ adminRouter.get('/sessions/active-count', requirePermission('users:manage'), asy
 
 // ------------------------------------------------------------------ campus admin verifications
 adminRouter.get(
-  '/verifications/queue',
+  ['/verifications/queue', '/users/verifications/queue', '/users/students/verifications/queue'],
   requirePermission('users:manage'),
   asyncHandler(async (req, res) => {
     const { page, limit, skip } = pageParams(req.query);

@@ -130,18 +130,23 @@ fun CounsellorHomeScreen() {
         MotivationalBanner()
 
         LoadContent(dashboard, skeleton = { SkeletonList(4) }) { data ->
-            // 4 KPI Stat Tiles in 2x2 Grid
-            CounsellorStatGrid(data)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                // 4 KPI Stat Tiles in 2x2 Grid
+                CounsellorStatGrid(data)
 
-            // 8 Quick Actions
-            QuickActionsSection(data)
+                // 8 Quick Actions
+                QuickActionsSection(data)
 
-            // Upcoming Sessions Section
-            UpcomingSessionsSection(data)
+                // Upcoming Sessions Section
+                UpcomingSessionsSection(data)
 
-            // Follow-up Reminders Section
-            if (data.followUpReminders.isNotEmpty()) {
-                FollowUpRemindersSection(data)
+                // Follow-up Reminders Section
+                if (data.followUpReminders.isNotEmpty()) {
+                    FollowUpRemindersSection(data)
+                }
             }
         }
     }

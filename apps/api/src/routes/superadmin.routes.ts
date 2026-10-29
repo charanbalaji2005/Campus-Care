@@ -67,7 +67,7 @@ superAdminRouter.get(
       domains: Object.fromEntries(domains.map((d) => [d._id, d.count])),
       health: {
         database: databaseReady() ? 'ok' : 'down',
-        emailProvider: provider ? (provider.type === 'nodemailer' ? `Nodemailer Â· ${provider.service}` : 'console') : env.EMAIL_PROVIDER === 'nodemailer' ? `Nodemailer Â· ${env.MAIL_SERVICE}` : 'console',
+        emailProvider: provider ? (provider.type === 'nodemailer' ? `Nodemailer · ${provider.service}` : 'console') : env.EMAIL_PROVIDER === 'nodemailer' ? `Nodemailer · ${env.MAIL_SERVICE}` : 'console',
         emailFailures24h: failedEmails,
         jobsPending: pendingJobs,
         jobsFailed: failedJobs,
@@ -583,7 +583,7 @@ superAdminRouter.get('/integrations', requirePermission('settings:manage'), asyn
   const s = await getSettings();
   ok(res, [
     { key: 'mongodb', name: 'MongoDB Atlas', status: databaseReady() ? 'connected' : 'disconnected' },
-    { key: 'email', name: 'Outbound email (Nodemailer)', status: provider ? (provider.type === 'nodemailer' ? `Nodemailer Â· ${provider.service} Â· ${provider.authUser} (console)` : 'console (development)') : env.EMAIL_PROVIDER === 'nodemailer' ? `Nodemailer Â· ${env.MAIL_SERVICE} (environment)` : 'console (development)', needsCredentials: (provider?.type ?? env.EMAIL_PROVIDER) === 'console' },
+    { key: 'email', name: 'Outbound email (Nodemailer)', status: provider ? (provider.type === 'nodemailer' ? `Nodemailer · ${provider.service} · ${provider.authUser} (console)` : 'console (development)') : env.EMAIL_PROVIDER === 'nodemailer' ? `Nodemailer · ${env.MAIL_SERVICE} (environment)` : 'console (development)', needsCredentials: (provider?.type ?? env.EMAIL_PROVIDER) === 'console' },
     { key: 'turnstile', name: 'Cloudflare Turnstile', status: env.TURNSTILE_SECRET ? 'configured' : 'test keys â€” set TURNSTILE_SITE_KEY / TURNSTILE_SECRET', needsCredentials: !env.TURNSTILE_SECRET, enabled: s.turnstile.enabled },
     { key: 'google', name: 'Google OAuth 2.0', status: google?.enabled ? 'enabled' : 'disabled', needsCredentials: !(google?.clientId || env.GOOGLE_CLIENT_ID) },
     { key: 'inbound', name: 'Inbound email webhook', status: s.inboundEmail.enabled ? 'enabled' : 'disabled', needsCredentials: !env.INBOUND_EMAIL_WEBHOOK_SECRET },

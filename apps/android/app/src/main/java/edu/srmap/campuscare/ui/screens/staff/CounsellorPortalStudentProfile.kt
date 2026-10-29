@@ -91,39 +91,44 @@ fun StudentWellbeingProfileScreen(studentId: String) {
         onRefresh = { profile.reload() },
     ) {
         LoadContent(profile, skeleton = { SkeletonList(3) }) { p ->
-            // Header Card
-            StudentProfileHeader(
-                profile = p,
-                onEscalate = { showEscalationDialog = true },
-            )
-
-            // Tabs
-            ChoiceChips(
-                options = listOf(
-                    "overview" to "Overview",
-                    "sessions" to "Sessions (${p.recentSessions.size})",
-                    "notes" to "Notes (${p.notes.size})",
-                    "progress" to "Progress",
-                ),
-                selected = selectedTab,
-                onSelect = { selectedTab = it },
-            )
-
-            when (selectedTab) {
-                "overview" -> ProfileOverviewTab(p)
-                "sessions" -> ProfileSessionsTab(p)
-                "notes" -> ProfileNotesTab(p)
-                "progress" -> ProfileProgressTab(p)
-            }
-
-            if (showEscalationDialog) {
-                EmergencyEscalationDialog(
-                    caseId = p.caseId,
-                    studentName = p.student.name,
-                    studentId = p.student.studentId,
-                    onDismiss = { showEscalationDialog = false },
-                    onSuccess = { profile.reload() },
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                // Header Card
+                StudentProfileHeader(
+                    profile = p,
+                    onEscalate = { showEscalationDialog = true },
                 )
+
+                // Tabs
+                ChoiceChips(
+                    options = listOf(
+                        "overview" to "Overview",
+                        "sessions" to "Sessions (${p.recentSessions.size})",
+                        "notes" to "Notes (${p.notes.size})",
+                        "progress" to "Progress",
+                    ),
+                    selected = selectedTab,
+                    onSelect = { selectedTab = it },
+                )
+
+                when (selectedTab) {
+                    "overview" -> ProfileOverviewTab(p)
+                    "sessions" -> ProfileSessionsTab(p)
+                    "notes" -> ProfileNotesTab(p)
+                    "progress" -> ProfileProgressTab(p)
+                }
+
+                if (showEscalationDialog) {
+                    EmergencyEscalationDialog(
+                        caseId = p.caseId,
+                        studentName = p.student.name,
+                        studentId = p.student.studentId,
+                        onDismiss = { showEscalationDialog = false },
+                        onSuccess = { profile.reload() },
+                    )
+                }
             }
         }
     }
