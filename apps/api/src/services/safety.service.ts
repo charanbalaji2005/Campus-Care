@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import { AlertAssignment, AlertDeliveryEvent, EmergencyAlert, EmergencyRecipient, SafeWalkSession, TrustedContact, type EmergencyAlertDoc } from '../models/safety';
 import { nextSequence } from '../models/incident';
 import { User } from '../models/user';
+import { campusScopeOf, inCampusScope, knownCampus } from './campus-scope.service';
 import { enqueueJob, registerJob, registerPeriodic } from './jobs.service';
 import { notify } from './notification.service';
 import { appLink, sendEmail } from './email/email.service';
@@ -11,8 +12,16 @@ import { getSettings } from './settings.service';
 import { audit } from './audit.service';
 import { logger } from '../lib/logger';
 import { claimDispatch, runAssignment } from './dispatch.service';
+import { onDutyResponderIds, onDutySecurityOfficers } from './duty.service';
 
-registerRoomAuthoriser('responders', async (user) => hasPermission({ role: user.role as Role, permissions: user.permissions }, 'sos:respond'));
+registerRoomAuthoriser('responders', async (user) => {
+  if (user.role === 'super_admin' || (user.permissions && hasPermission({ role: user.role as Role, permissions: user.permissions }, 'sos:dispatch'))) {
+    return true;
+  }
+  if (!hasPermission({ role: user.role as Role, permissions: user.permissions }, 'sos:respond')) return false;
+  const onDutyIds = await onDutyResponderIds();
+  return onDutyIds.includes(String(user._id));
+});
 registerRoomAuthoriser('sos', async (user, alertId) => {
   if (!Types.ObjectId.isValid(alertId)) return false;
   const a = await EmergencyAlert.findById(alertId, { userId: 1 }).lean();
@@ -117,9 +126,13 @@ export async function raiseSos(userId: string, input: RaiseSosInput) {
   const serverCountdown = input.countdownMode === 'server';
   const year = now.getFullYear();
   const seq = await nextSequence(`sos:${year}`);
+  // The student's campus (missing = default campus), so dispatch zones and Campus Admin scope match.
+  const raiser = await User.findById(userId, { campusZone: 1 }).lean();
+  const campusIds = ((settings.registration as { campuses?: { id: string }[] }).campuses ?? []).map((c) => c.id);
   const alert = await EmergencyAlert.create({
     alertNumber: formatSosNumber(year, seq),
     userId,
+    campus: knownCampus(raiser?.campusZone, campusIds),
     idempotencyKey: input.idempotencyKey,
     status: serverCountdown ? 'pending' : 'queued',
     countdownMode: serverCountdown ? 'server' : 'client',
@@ -179,11 +192,17 @@ registerPeriodic('sos-pending-dispatch', 2_000, async () => {
   for (const a of due) await dispatchSos(String(a._id));
 });
 
-/** Configured primary recipients only (control room accounts and email lists), without the automatic officer list. */
+/** Configured primary recipients only (control room accounts and email lists), excluding off-duty responders. */
 async function configuredRecipients() {
   const configured = await EmergencyRecipient.find({ active: true, tier: { $in: ['primary', null] } }).lean();
+  const rawUserIds = configured.filter((r) => r.type === 'user' && r.userId).map((r) => String(r.userId));
+  const onDutyIds = new Set(await onDutyResponderIds());
+  const responderUsers = await User.find({ _id: { $in: rawUserIds }, $or: [{ role: 'security_officer' }, { permissions: 'sos:respond' }] }, { _id: 1 }).lean();
+  const responderSet = new Set(responderUsers.map((u) => String(u._id)));
+  const userIds = rawUserIds.filter((id) => !responderSet.has(id) || onDutyIds.has(id));
+
   return {
-    userIds: [...new Set(configured.filter((r) => r.type === 'user' && r.userId).map((r) => String(r.userId)))],
+    userIds: [...new Set(userIds)],
     emails: [...new Set(configured.filter((r) => r.type === 'email' && r.email).map((r) => r.email!))],
   };
 }
@@ -196,11 +215,28 @@ async function responderRecipients(tier: 'primary' | 'backup' = 'primary') {
       emails: configured.filter((r) => r.type === 'email' && r.email).map((r) => r.email!),
     };
   }
-  const userIds = new Set(configured.filter((r) => r.type === 'user' && r.userId).map((r) => String(r.userId)));
+  const onDutyOfficers = await onDutySecurityOfficers();
+  const onDutyIds = new Set(await onDutyResponderIds());
+  const rawUserIds = configured.filter((r) => r.type === 'user' && r.userId).map((r) => String(r.userId));
+  const responderUsers = await User.find({ _id: { $in: rawUserIds }, $or: [{ role: 'security_officer' }, { permissions: 'sos:respond' }] }, { _id: 1 }).lean();
+  const responderSet = new Set(responderUsers.map((u) => String(u._id)));
+  const userIds = new Set(rawUserIds.filter((id) => !responderSet.has(id) || onDutyIds.has(id)));
   const emails = new Set(configured.filter((r) => r.type === 'email' && r.email).map((r) => r.email!));
-  // Always include active security officers so an empty configuration never means "nobody".
-  const officers = await User.find({ role: 'security_officer', accountStatus: 'active' }, { _id: 1 }).lean();
-  officers.forEach((o) => userIds.add(String(o._id)));
+
+  // Include security officers who are on duty. If nobody is on duty yet (e.g. shift not started or initial boot),
+  // fall back to active security officers so an empty configuration never means "nobody".
+  if (onDutyOfficers.length > 0) {
+    onDutyOfficers.forEach((o) => {
+      userIds.add(String(o._id));
+      if (o.email) emails.add(o.email);
+    });
+  } else {
+    const officers = await User.find({ role: 'security_officer', accountStatus: 'active' }, { _id: 1, email: 1 }).lean();
+    officers.forEach((o) => {
+      userIds.add(String(o._id));
+      if (o.email) emails.add(o.email);
+    });
+  }
   return { userIds: [...userIds], emails: [...emails] };
 }
 
@@ -296,7 +332,7 @@ registerPeriodic('safe-walk-overdue', 30_000, async () => {
         }, `safewalk:${walk._id}:${c._id}`);
       }
       if (settings.safeWalk.notifySecurityOnEscalation) {
-        const officers = await User.find({ role: 'security_officer', accountStatus: 'active' }, { _id: 1 }).lean();
+        const officers = await onDutySecurityOfficers();
         for (const o of officers) {
           await notify({ userId: String(o._id), kind: 'safe_walk', priority: 'critical', title: 'Missed Safe Walk check-in', body: `${student?.fullName ?? 'A student'} has not arrived at ${walk.destination}.`, link: '/security/alerts' });
         }
@@ -357,8 +393,10 @@ export async function runSosEscalation(now = Date.now()): Promise<number> {
       // Re-alert every primary responder too.
       recipients.push(...(await responderRecipients('primary')).userIds);
     } else {
-      const admins = await User.find({ role: { $in: ['admin', 'super_admin'] }, accountStatus: 'active' }, { _id: 1 }).lean();
-      recipients = admins.map((u) => String(u._id));
+      // Escalation policy, level 2: Super Admins and the Campus Admins of the alert's campus (no others).
+      const admins = await User.find({ role: { $in: ['admin', 'super_admin'] }, accountStatus: 'active' }, { _id: 1, role: 1, campusZone: 1, managedCampuses: 1 }).lean();
+      recipients = admins.filter((u) => inCampusScope(campusScopeOf(u), a.campus)).map((u) => String(u._id));
+      await recordSosEvent(a._id, 'escalated_to_administrators', { actorLabel: `${recipients.length} administrator(s) notified (escalation policy)`, studentVisible: false });
     }
     for (const uid of new Set(recipients)) {
       await notify({ userId: uid, kind: 'sos', priority: 'critical', title: `ESCALATED SOS ${a.alertNumber}`, body: `No responder has acknowledged this SOS for ${Math.round(age / 60000)} min.`, link: `/security/alerts/${a._id}` });

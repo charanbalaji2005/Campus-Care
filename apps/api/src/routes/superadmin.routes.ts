@@ -31,10 +31,12 @@ import { databaseReady } from '../db/connect';
 import { disconnectUser, emitBroadcast } from '../realtime/socket';
 import { env, turnstileKeys } from '../config/env';
 import { superAdminUsersRouter } from './superadmin-users.routes';
+import { staffApplicationsRouter } from './staff-applications.routes';
 
 export const superAdminRouter = Router();
 superAdminRouter.use(requireAuth, requirePermission('super_admin:access'), requireMfaPolicy);
 superAdminRouter.use('/users', superAdminUsersRouter);
+superAdminRouter.use('/staff-applications', staffApplicationsRouter);
 
 /** Diff of changed setting paths only, for audit (values of secrets are never stored). */
 function changedPaths(before: unknown, after: unknown, prefix = ''): string[] {

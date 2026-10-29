@@ -108,3 +108,80 @@ const counsellingNoteSchema = new Schema(
 counsellingNoteSchema.index({ appointmentId: 1, createdAt: 1 });
 counsellingNoteSchema.index({ counsellorId: 1, studentId: 1 });
 export const CounsellingNote = model('CounsellingNote', counsellingNoteSchema);
+
+/** Case management separate from general incident reports */
+const counsellingCaseSchema = new Schema(
+  {
+    caseNumber: { type: String, required: true, unique: true },
+    studentId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    counsellorId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    status: { type: String, enum: ['active', 'follow_up', 'closed'], default: 'active', index: true },
+    priority: { type: String, enum: ['low', 'normal', 'high', 'urgent'], default: 'normal' },
+    concern: { type: String, required: true },
+    tags: { type: [String], default: [] },
+    keyObservations: { type: [String], default: [] },
+    supportPlan: { type: [String], default: [] },
+    reviewDate: { type: Date, default: null },
+    closedAt: { type: Date, default: null },
+    closedReason: { type: String, default: null },
+    referrals: [
+      {
+        team: { type: String, required: true },
+        reason: { type: String, required: true },
+        referredAt: { type: Date, default: Date.now },
+        status: { type: String, enum: ['pending', 'accepted', 'completed'], default: 'pending' },
+        _id: false,
+      },
+    ],
+    timeline: [
+      {
+        action: { type: String, required: true },
+        note: { type: String, default: '' },
+        actorId: { type: Schema.Types.ObjectId, ref: 'User' },
+        actorName: { type: String, default: 'Counsellor' },
+        at: { type: Date, default: Date.now },
+        _id: false,
+      },
+    ],
+    escalation: {
+      incidentId: { type: Schema.Types.ObjectId, ref: 'Incident', default: null },
+      incidentRef: { type: String, default: null },
+      urgencyLevel: { type: String, default: null },
+      escalatedAt: { type: Date, default: null },
+      notes: { type: String, default: null },
+    },
+  },
+  { timestamps: true },
+);
+counsellingCaseSchema.index({ counsellorId: 1, status: 1 });
+counsellingCaseSchema.index({ studentId: 1 });
+export const CounsellingCase = model('CounsellingCase', counsellingCaseSchema);
+export type CounsellingCaseDoc = HydratedDocument<InferSchemaType<typeof counsellingCaseSchema>>;
+
+/** Searchable Resources Library for student wellbeing and guidance */
+const counsellingResourceSchema = new Schema(
+  {
+    title: { type: String, required: true },
+    category: {
+      type: String,
+      enum: ['all', 'mental_health', 'academic', 'career', 'mindfulness', 'healthy_habits', 'campus_support'],
+      required: true,
+      index: true,
+    },
+    type: { type: String, enum: ['article', 'video', 'pdf', 'exercise', 'guide'], required: true },
+    readTime: { type: String, default: '5 min read' },
+    fileSize: { type: String, default: null },
+    summary: { type: String, required: true },
+    content: { type: String, default: '' },
+    url: { type: String, default: '' },
+    tags: { type: [String], default: [] },
+    bookmarkedBy: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    published: { type: Boolean, default: true },
+    order: { type: Number, default: 0 },
+  },
+  { timestamps: true },
+);
+counsellingResourceSchema.index({ category: 1, published: 1 });
+export const CounsellingResource = model('CounsellingResource', counsellingResourceSchema);
+export type CounsellingResourceDoc = HydratedDocument<InferSchemaType<typeof counsellingResourceSchema>>;
+

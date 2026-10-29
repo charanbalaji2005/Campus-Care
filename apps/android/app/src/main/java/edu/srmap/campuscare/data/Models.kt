@@ -46,6 +46,9 @@ data class User(
     val dutyZone: String? = null,
     val lastLoginAt: String? = null,
     val createdAt: String? = null,
+    /** Self-registered staff waiting for Super Admin approval: only the application screens work. */
+    val approvalRequired: Boolean = false,
+    val requestedRole: String? = null,
 ) {
     val firstName: String get() = fullName.substringBefore(' ')
     val isStudent: Boolean get() = role == "student"
@@ -150,6 +153,8 @@ data class LoginResponse(
     val needsMfaSetup: Boolean = false,
     val needsStudentId: Boolean = false,
     val created: Boolean = false,
+    /** A staff applicant's restricted session: show the application status, nothing else. */
+    val applicationPending: Boolean = false,
 )
 
 @Serializable
@@ -717,6 +722,253 @@ data class MonthCount(val month: String, val count: Int)
 @Serializable
 data class CounsellingStats(val byStatus: Map<String, Int> = emptyMap(), val byMonth: List<MonthCount> = emptyList(), val today: Int = 0, val pending: Int = 0)
 
+@Serializable
+data class CounsellorSummary(
+    val id: String = "",
+    val name: String = "",
+    val title: String = "Counsellor",
+    val campus: String = "Main Campus",
+    val designation: String = "Verified Counsellor",
+    val verified: Boolean = true,
+)
+
+@Serializable
+data class CounsellorDashboardStats(
+    val todaySessions: Int = 0,
+    val newRequests: Int = 0,
+    val activeStudents: Int = 0,
+    val sessionCompletion: Int = 0,
+)
+
+@Serializable
+data class CounsellorUpcomingSession(
+    val id: String,
+    val studentId: String = "",
+    val studentName: String = "",
+    val studentDepartment: String = "",
+    val startAt: String? = null,
+    val endAt: String? = null,
+    val mode: String = "in_person",
+    val sessionType: String = "Individual Counselling",
+    val status: String = "confirmed",
+    val meetingLink: String? = null,
+)
+
+@Serializable
+data class FollowUpReminder(
+    val appointmentId: String = "",
+    val studentName: String = "",
+    val followUpAt: String? = null,
+)
+
+@Serializable
+data class CounsellorDashboardData(
+    val greeting: String = "Good morning",
+    val counsellor: CounsellorSummary = CounsellorSummary(),
+    val unreadNotifications: Int = 0,
+    val onDuty: Boolean = true,
+    val stats: CounsellorDashboardStats = CounsellorDashboardStats(),
+    val upcomingSessions: List<CounsellorUpcomingSession> = emptyList(),
+    val followUpReminders: List<FollowUpReminder> = emptyList(),
+)
+
+@Serializable
+data class StudentRequestItem(
+    val id: String,
+    val studentId: String = "",
+    val studentName: String = "",
+    val studentYear: String = "",
+    val studentDepartment: String = "",
+    val requestType: String = "Request for Counseling",
+    val sessionType: String = "general",
+    val mode: String = "in_person",
+    val reason: String? = null,
+    val priority: String = "normal",
+    val tags: List<String> = emptyList(),
+    val createdAt: String = "",
+    val startAt: String? = null,
+    val status: String = "requested",
+)
+
+@Serializable
+data class StudentProfileInfo(
+    val id: String = "",
+    val name: String = "",
+    val studentId: String? = null,
+    val department: String? = null,
+    val year: String = "",
+    val campus: String = "Main Campus",
+    val age: Int = 19,
+    val email: String? = null,
+    val maskedEmail: String? = null,
+    val contact: String? = null,
+    val status: String = "Active",
+)
+
+@Serializable
+data class StudentSessionHistory(
+    val id: String = "",
+    val date: String = "",
+    val type: String = "Individual Counselling",
+    val summary: String = "",
+    val mode: String = "online",
+)
+
+@Serializable
+data class StudentNextAppt(
+    val id: String = "",
+    val startAt: String? = null,
+    val mode: String = "Online Session",
+    val meetingLink: String? = null,
+)
+
+@Serializable
+data class StudentWellbeingProfile(
+    val student: StudentProfileInfo = StudentProfileInfo(),
+    val concerns: List<String> = emptyList(),
+    val recentSessions: List<StudentSessionHistory> = emptyList(),
+    val nextAppointment: StudentNextAppt? = null,
+    val notes: List<CounsellingNote> = emptyList(),
+    val goals: List<String> = emptyList(),
+    val caseId: String? = null,
+)
+
+@Serializable
+data class QuickNote(val id: String = "", val body: String = "")
+
+@Serializable
+data class QuickResource(val id: String = "", val title: String = "", val type: String = "article")
+
+@Serializable
+data class OnlineSessionData(
+    val appointmentId: String,
+    val sessionToken: String = "",
+    val roomName: String = "",
+    val status: String = "connected",
+    val durationMinutes: Int = 60,
+    val elapsedSeconds: Int = 0,
+    val student: PersonRef = PersonRef(),
+    val counsellor: PersonRef = PersonRef(),
+    val quickNotes: List<QuickNote> = emptyList(),
+    val resources: List<QuickResource> = emptyList(),
+)
+
+@Serializable
+data class CounsellorCaseItem(
+    val id: String,
+    val caseNumber: String = "",
+    val studentId: String = "",
+    val studentName: String = "",
+    val studentDepartment: String = "",
+    val concern: String = "",
+    val priority: String = "normal",
+    val status: String = "active",
+    val openedAt: String = "",
+    val reviewDate: String? = null,
+)
+
+@Serializable
+data class CaseCounts(val active: Int = 0, val followUp: Int = 0, val closed: Int = 0)
+
+@Serializable
+data class CounsellorCaseListResponse(
+    val items: List<CounsellorCaseItem> = emptyList(),
+    val counts: CaseCounts = CaseCounts(),
+)
+
+@Serializable
+data class CaseReferral(
+    val team: String = "",
+    val reason: String = "",
+    val referredAt: String? = null,
+    val status: String = "pending",
+)
+
+@Serializable
+data class CaseTimelineEvent(
+    val action: String = "",
+    val note: String = "",
+    val actorName: String = "Counsellor",
+    val at: String? = null,
+)
+
+@Serializable
+data class CaseEscalationInfo(
+    val incidentId: String? = null,
+    val incidentRef: String? = null,
+    val urgencyLevel: String? = null,
+    val escalatedAt: String? = null,
+    val notes: String? = null,
+)
+
+@Serializable
+data class CounsellorCaseDetail(
+    val id: String,
+    val caseNumber: String = "",
+    val student: AppointmentStudent = AppointmentStudent(id = "", name = "Student"),
+    val concern: String = "",
+    val status: String = "active",
+    val priority: String = "normal",
+    val tags: List<String> = emptyList(),
+    val keyObservations: List<String> = emptyList(),
+    val supportPlan: List<String> = emptyList(),
+    val reviewDate: String? = null,
+    val closedAt: String? = null,
+    val closedReason: String? = null,
+    val referrals: List<CaseReferral> = emptyList(),
+    val timeline: List<CaseTimelineEvent> = emptyList(),
+    val escalation: CaseEscalationInfo? = null,
+    val openedAt: String? = null,
+)
+
+@Serializable
+data class EmergencyContactInfo(val label: String = "", val phone: String = "")
+
+@Serializable
+data class EmergencyEscalationResult(
+    val ok: Boolean = false,
+    val incidentRef: String? = null,
+    val urgencyLevel: String? = null,
+    val respondersNotified: Int = 0,
+    val deliveryStatus: String = "dispatched",
+    val alreadyEscalated: Boolean = false,
+    val message: String? = null,
+    val fallbackDirectContacts: List<EmergencyContactInfo> = emptyList(),
+)
+
+@Serializable
+data class CounsellingResourceItem(
+    val id: String,
+    val title: String,
+    val category: String = "all",
+    val type: String = "article",
+    val readTime: String = "5 min read",
+    val fileSize: String? = null,
+    val summary: String = "",
+    val url: String? = null,
+    val tags: List<String> = emptyList(),
+    val bookmarked: Boolean = false,
+)
+
+@Serializable
+data class WeeklySessionPoint(val week: String, val completed: Int = 0, val cancelled: Int = 0)
+
+@Serializable
+data class ConcernPercentage(val category: String, val count: Int = 0, val percentage: Int = 0)
+
+@Serializable
+data class CounsellorAnalyticsData(
+    val range: String = "month",
+    val totalSessions: Int = 0,
+    val uniqueStudents: Int = 0,
+    val sessionCompletion: Int = 0,
+    val followUps: Int = 0,
+    val completedSessions: Int = 0,
+    val cancelledSessions: Int = 0,
+    val weeklyOverview: List<WeeklySessionPoint> = emptyList(),
+    val commonConcerns: List<ConcernPercentage> = emptyList(),
+)
+
 // ------------------------------------------------------------------ safety
 @Serializable
 data class SosTimelineEntry(val type: String, val at: String? = null, val actorLabel: String? = null, val note: String? = null)
@@ -1197,4 +1449,484 @@ data class EvidenceSummary(
     val initialRecommendation: String? = null,
     val initialReviewNotes: String? = null,
     val createdAt: String? = null,
+)
+
+// ------------------------------------------------------------------ staff registration (CampusCare College)
+@Serializable
+data class StaffRoleOption(val id: String, val title: String = "", val description: String = "")
+
+@Serializable
+data class CampusOption(val id: String, val name: String = "")
+
+@Serializable
+data class LabelledOption(val id: String, val label: String = "")
+
+@Serializable
+data class CommitteeOption(val id: String, val name: String = "", val type: String = "", val eligibility: String = "staff", val confidential: Boolean = false)
+
+/** What the staff application form may offer, decided by the server (roles, campus records, open committees). */
+@Serializable
+data class StaffRegistrationOptions(
+    val open: Boolean = false,
+    val roles: List<StaffRoleOption> = emptyList(),
+    val campuses: List<CampusOption> = emptyList(),
+    val committees: List<CommitteeOption> = emptyList(),
+    val specializations: List<LabelledOption> = emptyList(),
+    val sessionModes: List<LabelledOption> = emptyList(),
+    val shiftPreferences: List<LabelledOption> = emptyList(),
+    val requireAdminAuthorizationReference: Boolean = true,
+    val passwordMinLength: Int = 10,
+)
+
+/** queued | failed: whether the verification email could be handed to the mail service (never "verified"). */
+@Serializable
+data class EmailDeliveryNote(val status: String = "queued", val message: String? = null)
+
+@Serializable
+data class StaffRegisterResponse(
+    val applicationId: String = "",
+    val status: String = "",
+    val requiresVerification: Boolean = true,
+    val email: String = "",
+    val maskedEmail: String? = null,
+    val verificationMethod: String? = null,
+    val emailDelivery: EmailDeliveryNote? = null,
+    val verificationTicket: String? = null,
+    /** Google registration: a restricted session for the application status screen. */
+    val sessionToken: String? = null,
+    val user: User? = null,
+    val applicationPending: Boolean = false,
+)
+
+@Serializable
+data class GoogleRegistrationTicket(val googleTicket: String = "", val email: String = "", val fullName: String = "")
+
+/** The separate states of a staff application; none of them is inferred from another. */
+@Serializable
+data class ApplicationStatuses(
+    val registration: String = "pending_review",
+    val registrationLabel: String = "",
+    val emailVerification: String = "pending",
+    val identityVerification: String = "pending",
+    val roleApproval: String = "pending",
+    val accountActivation: String = "pending_verification",
+)
+
+@Serializable
+data class EvidenceCount(val count: Int = 0, val latestStatus: String? = null)
+
+@Serializable
+data class CounsellorApplication(
+    val specializations: List<String> = emptyList(),
+    val languages: List<String> = emptyList(),
+    val qualifications: String? = null,
+    val bio: String? = null,
+    val experienceYears: Int? = null,
+    val sessionModes: List<String> = emptyList(),
+)
+
+@Serializable
+data class AdminApplication(val authorizationReference: String? = null)
+
+@Serializable
+data class CommitteeApplication(val committeeId: String = "", val committeeName: String? = null, val position: String = "member", val identifierType: String = "staff", val reason: String? = null, val experience: String? = null)
+
+@Serializable
+data class SecurityApplication(val serviceProvider: String? = null, val shiftPreference: String = "no_preference", val qualifications: String? = null, val authorizationReference: String? = null)
+
+@Serializable
+data class StaffApplicationView(
+    val id: String = "",
+    val requestedRole: String = "",
+    val campus: String = "",
+    val department: String = "",
+    val designation: String = "",
+    val staffId: String = "",
+    val registrationMethod: String = "password",
+    val counsellor: CounsellorApplication? = null,
+    val admin: AdminApplication? = null,
+    val committee: CommitteeApplication? = null,
+    val security: SecurityApplication? = null,
+    val infoRequest: String? = null,
+    val decisionReason: String? = null,
+    val statuses: ApplicationStatuses = ApplicationStatuses(),
+    val evidence: EvidenceCount = EvidenceCount(),
+    val submittedAt: String? = null,
+)
+
+@Serializable
+data class MyStaffApplication(val application: StaffApplicationView, val user: User? = null, val applicationPending: Boolean = false)
+
+// ------------------------------------------------------------------ security portal models
+@Serializable
+data class SecurityRecentAlert(
+    val id: String,
+    val alertNumber: String,
+    val studentName: String = "",
+    val studentDept: String = "",
+    val locationLabel: String = "",
+    val distanceKm: Double? = null,
+    val description: String = "",
+    val severity: String = "high",
+    val createdAt: String? = null,
+    val status: String = "sent",
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val assignedToMe: Boolean = false,
+    val requiresAck: Boolean = false,
+)
+
+@Serializable
+data class SecurityDashboardData(
+    val officerName: String = "Officer Kumar",
+    val campus: String = "Main Campus",
+    val roleTitle: String = "Security Officer • Main Campus",
+    val dutyStatus: String = "on_duty",
+    val activeSosCount: Int = 1,
+    val todayAlertsCount: Int = 3,
+    val inProgressCount: Int = 1,
+    val resolvedCount: Int = 5,
+    val recentAlerts: List<SecurityRecentAlert> = emptyList(),
+)
+
+@Serializable
+data class SecuritySosAlertItem(
+    val id: String,
+    val alertNumber: String,
+    val studentName: String = "",
+    val studentDept: String = "",
+    val studentPhone: String = "",
+    val locationLabel: String = "",
+    val distanceKm: Double = 0.4,
+    val description: String = "",
+    val severity: String = "high",
+    val createdAt: String? = null,
+    val status: String = "sent",
+    val latitude: Double = 16.4636,
+    val longitude: Double = 80.5074,
+    val assignedToMe: Boolean = false,
+)
+
+@Serializable
+data class SecurityAlertsResponse(
+    val tab: String = "active",
+    val activeCount: Int = 0,
+    val resolvedCount: Int = 0,
+    val items: List<SecuritySosAlertItem> = emptyList(),
+)
+
+@Serializable
+data class SecurityMapSosPin(
+    val id: String,
+    val alertNumber: String,
+    val studentName: String = "",
+    val severity: String = "high",
+    val locationLabel: String = "",
+    val latitude: Double = 16.4636,
+    val longitude: Double = 80.5074,
+)
+
+@Serializable
+data class SecurityMapOfficerPin(
+    val id: String,
+    val name: String,
+    val status: String = "on_duty",
+    val statusLabel: String = "On duty",
+    val latitude: Double = 16.4628,
+    val longitude: Double = 80.5070,
+)
+
+@Serializable
+data class SecurityMapLandmark(
+    val name: String,
+    val label: String,
+    val latitude: Double,
+    val longitude: Double,
+)
+
+@Serializable
+data class SecurityCampusOption(
+    val id: String,
+    val name: String,
+)
+
+@Serializable
+data class SecurityMapData(
+    val selectedCampus: String = "main",
+    val campuses: List<SecurityCampusOption> = emptyList(),
+    val sosPins: List<SecurityMapSosPin> = emptyList(),
+    val officerPins: List<SecurityMapOfficerPin> = emptyList(),
+    val landmarks: List<SecurityMapLandmark> = emptyList(),
+)
+
+@Serializable
+data class AssignedOfficerItem(
+    val name: String,
+    val status: String,
+    val isMe: Boolean = false,
+)
+
+@Serializable
+data class SecuritySosTimelineItem(
+    val type: String,
+    val at: String? = null,
+    val label: String,
+)
+
+@Serializable
+data class SecuritySosDetailStudent(
+    val name: String = "",
+    val department: String = "",
+    val phone: String = "",
+)
+
+@Serializable
+data class SecuritySosDetailData(
+    val id: String,
+    val alertNumber: String,
+    val status: String,
+    val statusLabel: String = "In Progress",
+    val createdAt: String? = null,
+    val priority: String = "high",
+    val student: SecuritySosDetailStudent = SecuritySosDetailStudent(),
+    val locationLabel: String = "",
+    val latitude: Double = 16.4636,
+    val longitude: Double = 80.5074,
+    val description: String = "",
+    val assignedOfficers: List<AssignedOfficerItem> = emptyList(),
+    val timeline: List<SecuritySosTimelineItem> = emptyList(),
+)
+
+@Serializable
+data class PatrolCheckpointItem(
+    val id: String = "",
+    val name: String,
+    val timeLabel: String = "",
+    val status: String = "pending",
+    val locationLabel: String = "",
+)
+
+@Serializable
+data class PatrolRouteData(
+    val id: String = "",
+    val name: String = "Main Campus Patrol",
+    val shiftTime: String = "09:00 AM - 05:00 PM",
+    val status: String = "in_progress",
+    val progressPercent: Int = 0,
+    val checkpoints: List<PatrolCheckpointItem> = emptyList(),
+)
+
+@Serializable
+data class PatrolCheckInResult(
+    val ok: Boolean = true,
+    val progressPercent: Int = 0,
+    val checkedInName: String? = null,
+)
+
+@Serializable
+data class SecurityTeamMemberItem(
+    val id: String,
+    val name: String,
+    val campus: String = "Main Campus",
+    val phone: String = "",
+    val status: String = "on_duty",
+    val statusLabel: String = "On duty",
+    val isMe: Boolean = false,
+)
+
+@Serializable
+data class SecurityTeamResponse(
+    val onDutyCount: Int = 0,
+    val offDutyCount: Int = 0,
+    val members: List<SecurityTeamMemberItem> = emptyList(),
+)
+
+@Serializable
+data class SecurityMessageThread(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val timeLabel: String,
+    val unreadCount: Int = 0,
+    val isControlRoom: Boolean = false,
+)
+
+@Serializable
+data class SecurityMessagesResponse(
+    val controlRoom: List<SecurityMessageThread> = emptyList(),
+    val team: List<SecurityMessageThread> = emptyList(),
+)
+
+// ------------------------------------------------------------------ committee portal models
+@Serializable
+data class CommitteeRecentReport(
+    val id: String,
+    val caseNumber: String,
+    val category: String,
+    val categoryLabel: String = "",
+    val title: String,
+    val description: String = "",
+    val createdAt: String? = null,
+    val status: String,
+    val statusLabel: String = "New",
+    val priority: String = "normal",
+    val location: String = "Library Block",
+)
+
+@Serializable
+data class CommitteeDashboardData(
+    val memberName: String = "Dr. Priya Nair",
+    val campus: String = "Main Campus",
+    val roleTitle: String = "Committee Member • Main Campus",
+    val newCount: Int = 8,
+    val underReviewCount: Int = 12,
+    val inProgressCount: Int = 6,
+    val resolvedCount: Int = 24,
+    val requireActionCount: Int = 3,
+    val resolutionRate: Int = 92,
+    val recentReports: List<CommitteeRecentReport> = emptyList(),
+)
+
+@Serializable
+data class CommitteeReportItem(
+    val id: String,
+    val caseNumber: String,
+    val category: String,
+    val categoryLabel: String = "",
+    val title: String,
+    val description: String = "",
+    val location: String = "Library Block",
+    val createdAt: String? = null,
+    val status: String,
+    val statusBadge: String = "New",
+    val priority: String = "normal",
+)
+
+@Serializable
+data class CommitteeReportsResponse(
+    val tab: String = "new",
+    val totalCount: Int = 0,
+    val items: List<CommitteeReportItem> = emptyList(),
+)
+
+@Serializable
+data class CommitteeEvidenceItem(
+    val id: String,
+    val name: String,
+    val sizeBytes: Long? = null,
+    val mimeType: String? = null,
+    val url: String = "",
+)
+
+@Serializable
+data class CommitteeTimelineItem(
+    val type: String,
+    val body: String = "",
+    val at: String? = null,
+    val actorRole: String? = null,
+)
+
+@Serializable
+data class CommitteeReportStudent(
+    val name: String = "",
+    val department: String = "",
+    val studentId: String = "",
+    val email: String = "",
+    val phone: String = "",
+)
+
+@Serializable
+data class CommitteeReportDetail(
+    val id: String,
+    val caseNumber: String,
+    val category: String,
+    val categoryLabel: String = "",
+    val title: String,
+    val description: String = "",
+    val location: String = "Library Block",
+    val incidentDate: String? = null,
+    val createdAt: String? = null,
+    val status: String,
+    val statusBadge: String = "NEW",
+    val priority: String = "high",
+    val student: CommitteeReportStudent = CommitteeReportStudent(),
+    val evidence: List<CommitteeEvidenceItem> = emptyList(),
+    val timeline: List<CommitteeTimelineItem> = emptyList(),
+)
+
+@Serializable
+data class CommitteeStudentReporter(
+    val name: String = "",
+    val department: String = "",
+    val academicYear: String = "",
+    val campus: String = "",
+    val studentId: String = "",
+    val age: Int = 19,
+    val email: String = "",
+    val phone: String = "",
+    val previousReportsCount: Int = 0,
+)
+
+@Serializable
+data class CommitteeStudentRespondent(
+    val name: String = "",
+    val department: String = "",
+    val role: String = "",
+    val status: String = "",
+)
+
+@Serializable
+data class CommitteeStudentsInvolvedResponse(
+    val reporter: CommitteeStudentReporter = CommitteeStudentReporter(),
+    val respondent: CommitteeStudentRespondent = CommitteeStudentRespondent(),
+)
+
+@Serializable
+data class CommitteeReportsByTypeItem(
+    val category: String,
+    val count: Int = 0,
+    val color: String = "#7C3AED",
+)
+
+@Serializable
+data class CommitteeStatusOverviewItem(
+    val status: String,
+    val count: Int = 0,
+    val percentage: Int = 0,
+    val color: String = "#059669",
+)
+
+@Serializable
+data class CommitteeAnalyticsData(
+    val range: String = "month",
+    val totalReports: Int = 32,
+    val newReports: Int = 8,
+    val resolvedReports: Int = 24,
+    val reportsByType: List<CommitteeReportsByTypeItem> = emptyList(),
+    val statusOverview: List<CommitteeStatusOverviewItem> = emptyList(),
+    val resolutionRate: Int = 75,
+)
+
+@Serializable
+data class CommitteeMessageThread(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val timeLabel: String,
+    val unreadCount: Int = 0,
+    val isReport: Boolean = false,
+)
+
+@Serializable
+data class CommitteeMessagesResponse(
+    val reports: List<CommitteeMessageThread> = emptyList(),
+    val team: List<CommitteeMessageThread> = emptyList(),
+)
+
+@Serializable
+data class CommitteeEscalationResult(
+    val ok: Boolean = true,
+    val incidentRef: String = "",
+    val alertId: String = "",
+    val respondersNotified: Int = 0,
 )

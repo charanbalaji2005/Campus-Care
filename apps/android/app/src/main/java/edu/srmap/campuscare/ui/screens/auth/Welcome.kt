@@ -149,6 +149,7 @@ fun SplashScreen() {
                         app.session.clear(edu.srmap.campuscare.data.SessionEvent.WrongApp)
                         Routes.Login
                     }
+                    me.user.approvalRequired -> Routes.StaffApplication
                     me.user.role == "super_admin" -> Routes.CounsellorHome
                     me.mfaRequired && !me.session.mfaVerified && me.user.mfaEnabled -> Routes.Mfa
                     me.user.role == "student" && me.user.studentId.isNullOrBlank() -> Routes.CompleteProfile

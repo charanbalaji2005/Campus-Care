@@ -7,6 +7,17 @@ import {
 } from '../services/auth.service';
 import { getSettings } from '../services/settings.service';
 import { audit } from '../services/audit.service';
+import { isPendingApplicant } from '../services/auth.service';
+
+/** The only endpoints a staff applicant's restricted session can use before final approval. */
+const APPLICANT_ENDPOINTS = new Set([
+  'GET /api/v1/auth/me',
+  'POST /api/v1/auth/logout',
+  'POST /api/v1/auth/verification-evidence',
+  'GET /api/v1/auth/verification-evidence/status',
+  'GET /api/v1/auth/staff-registration/me',
+  'PATCH /api/v1/auth/staff-registration/me',
+]);
 
 /** Loads the session (if any) for every request. Never trusts a role sent by the browser. */
 export async function loadSession(req: Request, res: Response, next: NextFunction) {
@@ -64,9 +75,13 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
 
   if (req.user.accountStatus !== 'active') {
-    const isVerificationEndpoint = req.path.includes('/verification-evidence') || req.path.includes('/me') || req.path.includes('/auth/status');
-    if (!isVerificationEndpoint) {
-      return next(new AppError(403, 'account_inactive', 'Your account is not active. Complete verification to continue.'));
+    // Only a staff applicant awaiting approval keeps a (restricted) session, and only for these exact
+    // endpoints. Anything else, including every role permission, waits for final approval.
+    const path = `${req.method} ${(req.originalUrl || '').split('?')[0]!.replace(/\/+$/, '').replace(/^\/api\/auth\//, '/api/v1/auth/')}`;
+    if (!(isPendingApplicant(req.user) && APPLICANT_ENDPOINTS.has(path))) {
+      return next(new AppError(403, req.user.approvalRequired ? 'approval_pending' : 'account_inactive', req.user.approvalRequired
+        ? 'Your staff application is waiting for verification. You can upload identity documents and check its status.'
+        : 'Your account is not active. Verify your email or contact support.'));
     }
   }
 

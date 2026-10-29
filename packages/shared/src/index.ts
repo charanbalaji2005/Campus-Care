@@ -9,3 +9,4 @@ export * from './community';
 export * from './location';
 export * from './chats';
 export * from './wellness';
+export * from './staff-registration';

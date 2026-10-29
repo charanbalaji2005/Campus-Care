@@ -21,8 +21,9 @@ import { logger } from '../lib/logger';
 import { getSettings } from '../services/settings.service';
 import { audit } from '../services/audit.service';
 import { notify } from '../services/notification.service';
-import { appLink, sendEmail } from '../services/email/email.service';
 import { emitToRoom } from '../realtime/socket';
+import { onDutyResponderIds, onDutySecurityOfficers } from '../services/duty.service';
+import { appLink, sendEmail } from '../services/email/email.service';
 
 export const safetyRouter = Router();
 
@@ -321,6 +322,16 @@ safetyRouter.get(
   '/responder/alerts',
   requirePermission('sos:respond'),
   asyncHandler(async (req, res) => {
+    // Off-duty responders do not receive active dispatches
+    if (req.query.all !== 'true') {
+      const isDispatcher = req.user!.role === 'super_admin' || (req.user!.permissions?.includes('sos:dispatch') ?? false);
+      if (!isDispatcher) {
+        const onDutyIds = new Set(await onDutyResponderIds());
+        if (!onDutyIds.has(String(req.user!._id))) {
+          return ok(res, []);
+        }
+      }
+    }
     // Pending alerts are still in the student's countdown: responders never see them.
     const active = req.query.all === 'true' ? { status: { $ne: 'pending' } } : { status: { $in: [...SOS_ACTIVE_STATUSES] } };
     const list = await EmergencyAlert.find(active).sort({ createdAt: -1 }).limit(100).lean();
@@ -638,7 +649,7 @@ safetyRouter.post(
     if (!alert) throw notFound();
     await SafetyCheckIn.findOneAndUpdate({ alertId: alert._id, userId: req.user!._id }, { $set: { status: input.status, note: input.note ?? null } }, { upsert: true });
     if (input.status === 'need_help') {
-      const officers = await User.find({ role: 'security_officer', accountStatus: 'active' }, { _id: 1 }).lean();
+      const officers = await onDutySecurityOfficers();
       for (const o of officers) await notify({ userId: String(o._id), kind: 'check_in', priority: 'critical', title: 'Student needs help', body: `${req.user!.fullName} responded "need help" to "${alert.title}".`, link: '/security/alerts' });
     }
     await audit({ action: 'campus_alert.check_in', req, targetType: 'campus_alert', targetId: String(alert._id), meta: { status: input.status } });

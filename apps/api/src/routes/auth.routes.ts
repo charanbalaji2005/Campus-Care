@@ -22,11 +22,23 @@ import {
   startTotpEnrollment, verifyTotpEnrollment,
 } from '../services/mfa.service';
 import { audit, ipHashOf } from '../services/audit.service';
-import { buildGoogleAuthUrl, exchangeGoogleCode, getGoogleConfig, sealState, unsealState, verifyGoogleIdToken } from '../services/google.service';
+import { buildGoogleAuthUrl, exchangeGoogleCode, getGoogleConfig, googleOwnsEmail, sealState, unsealState, verifyGoogleIdToken } from '../services/google.service';
 import { getSettings, publicSettings } from '../services/settings.service';
 import { emailReadiness, sendEmail } from '../services/email/email.service';
 import { requireAuth, requireRecentAuth } from '../middleware/auth';
-import { authLimiter, emailLimiter, mfaLimiter, requireTurnstile, upload } from '../middleware/security';
+import { authLimiter, emailLimiter, mfaLimiter, requireTurnstile } from '../middleware/security';
+import multer from 'multer';
+import { sniffMime } from '../lib/sniff';
+import { canTransitionVerification, type StudentVerificationStatus } from '@campuscare/shared';
+import { isPendingApplicant } from '../services/auth.service';
+import { expireTemporarySuspensions } from '../services/account-lifecycle.service';
+import { staffRegistrationRouter } from './staff-registration.routes';
+import { issueGoogleRegistrationTicket } from '../services/staff-registration.service';
+
+/** Identity evidence: one image or PDF, at most 10 MB, kept in memory only until it is stored privately. */
+const EVIDENCE_MAX_BYTES = 10 * 1024 * 1024;
+const evidenceUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: EVIDENCE_MAX_BYTES, files: 1, fields: 10 } });
+const EVIDENCE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 import type { UserDoc } from '../models/user';
 import { env } from '../config/env';
 
@@ -63,13 +75,17 @@ async function completeSignIn(req: Request, res: Response, user: UserDoc, opts: 
   assertAppForUser(req, user);
   const session = await createSession(req, res, user, { remember: opts.remember ?? undefined, method: opts.method, mfaVerified: opts.mfaVerified });
   await audit({ action: 'auth.login', actorId: String(user._id), actorRole: user.role, req, meta: { client: req.isMobileClient ? 'android' : 'web', app: req.clientApp ?? null, method: opts.method, mfa: opts.mfaVerified } });
-  const needsMfaSetup = !user.mfaEnabled && (await mfaRequiredFor(user));
+  // A staff applicant waiting for approval gets a restricted session: the API accepts it only for
+  // submitting identity evidence, checking the application and signing out (middleware/auth.ts).
+  const applicationPending = isPendingApplicant(user);
+  const needsMfaSetup = !applicationPending && !user.mfaEnabled && (await mfaRequiredFor(user));
   const pubUser = publicUser(user);
   if (req.isMobileClient && user.role === 'super_admin') pubUser.role = 'counsellor';
   return {
     user: pubUser,
-    redirectTo: needsMfaSetup ? '/super-admin/authenticator?setup=required' : homePathFor(pubUser.role as Role),
+    redirectTo: applicationPending ? '/application-status' : needsMfaSetup ? '/super-admin/authenticator?setup=required' : homePathFor(pubUser.role as Role),
     needsMfaSetup,
+    applicationPending,
     ...(session.plainToken ? { sessionToken: session.plainToken, expiresAt: session.expiresAt } : {}),
   };
 }
@@ -134,72 +150,16 @@ authRouter.post(
 );
 
 
-// ------------------------------------------------------------------ staff registration
-const registerStaffSchema = z.object({
-  fullName: z.string().trim().min(2).max(120),
-  email: z.string().trim().toLowerCase().email().max(254),
-  password: z.string().min(8).max(128),
-  requestedRole: z.enum(['counsellor', 'security_officer', 'admin', 'committee_member', 'moderator']),
-  staffId: z.string().trim().min(2).max(40),
-  department: z.string().trim().min(2).max(100),
-  designation: z.string().trim().min(2).max(100).optional(),
-  campus: z.string().trim().min(2).max(50).default('main'),
-  phone: z.string().trim().max(30).optional(),
-  verificationMethod: z.enum(['link', 'otp']).default('link'),
-});
-
-authRouter.post(
-  '/register-staff',
-  authLimiter,
-  requireTurnstile('register'),
-  asyncHandler(async (req, res) => {
-    const s = await getSettings();
-    const input = parse(registerStaffSchema, req.body);
-    if (input.password.length < s.security.passwordMinLength) {
-      throw new AppError(422, 'validation_failed', 'Password too short.', { fields: { password: `Use at least ${s.security.passwordMinLength} characters` } });
-    }
-    if (!(await isDomainAllowed(input.email, 'staff'))) {
-      throw new AppError(422, 'validation_failed', 'Use your official university email address.', { fields: { email: 'Staff registration is limited to approved university email domains.' } });
-    }
-    const dupEmail = await User.exists({ email: input.email });
-    const dupStaff = await User.exists({ staffId: input.staffId.toUpperCase() });
-    if (dupEmail || dupStaff) {
-      await audit({ action: 'auth.register_staff_duplicate', req, outcome: 'denied' });
-      throw new AppError(409, 'account_exists', 'An account with these details already exists. Try signing in or resetting your password.', {
-        fields: { ...(dupEmail ? { email: 'Already registered' } : {}), ...(dupStaff ? { staffId: 'Already registered' } : {}) },
-      });
-    }
-    const user = await User.create({
-      fullName: input.fullName,
-      email: input.email,
-      passwordHash: await hashPassword(input.password),
-      role: input.requestedRole,
-      accountStatus: 'pending_verification',
-      emailVerified: false,
-      staffId: input.staffId.toUpperCase(),
-      department: input.department,
-      designation: input.designation ?? null,
-      campusZone: input.campus,
-      phone: input.phone || null,
-      verificationStatus: 'pending',
-    });
-    const verificationMethod = await issueEmailVerification(user, input.verificationMethod);
-    await audit({ action: 'auth.staff_registered', actorId: String(user._id), actorRole: input.requestedRole, targetType: 'user', targetId: String(user._id), req, meta: { requestedRole: input.requestedRole, verificationMethod } });
-    ok(res, {
-      requiresVerification: true,
-      email: user.email,
-      maskedEmail: maskEmail(user.email),
-      verificationMethod,
-      verificationTicket: issueVerificationTicket(String(user._id)),
-    }, 201);
-  }),
-);
+// ------------------------------------------------------------------ staff registration (CampusCare College)
+// Role-specific applications, Google registration and the applicant's own status: routes/staff-registration.routes.ts
+authRouter.use(staffRegistrationRouter);
 
 // ------------------------------------------------------------------ identity verification evidence
 authRouter.post(
   '/verification-evidence',
   requireAuth,
-  upload.single('file'),
+  authLimiter,
+  evidenceUpload.single('file'),
   asyncHandler(async (req, res) => {
     const file = req.file;
     let buffer: Buffer;
@@ -217,18 +177,36 @@ authRouter.post(
     } else {
       throw new AppError(400, 'bad_request', 'Choose a verification document or photo to upload.');
     }
-    if (size > 10 * 1024 * 1024) throw new AppError(413, 'payload_too_large', 'The verification image must be under 10 MB.');
-    if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(mime)) {
+    if (size > EVIDENCE_MAX_BYTES) throw new AppError(413, 'payload_too_large', 'The verification image must be under 10 MB.');
+    // The declared type is not trusted: the file's own bytes decide.
+    const sniffed = sniffMime(buffer);
+    if (!sniffed || !EVIDENCE_TYPES.includes(sniffed)) {
       throw new AppError(415, 'unsupported_media_type', 'Please upload a JPEG, PNG, WEBP photo or PDF document.');
+    }
+    mime = sniffed;
+    const consent = req.body?.consent;
+    if (!(consent === true || consent === 'true')) {
+      throw new AppError(422, 'consent_required', 'Confirm that you agree to institutional review of this image before uploading it.');
     }
 
     const user = req.user!;
+    const current = (user.verificationStatus ?? 'pending') as StudentVerificationStatus;
+    // Further documents may be added while the application is open; a decided one must be reopened by a reviewer.
+    if (current !== 'submitted' && current !== 'under_review' && !canTransitionVerification(current, 'submitted')) {
+      throw new AppError(409, 'verification_closed', current === 'approved'
+        ? 'Your identity is already verified.'
+        : 'This application is not accepting new documents. Contact the university support office.');
+    }
+    if ((await VerificationEvidence.countDocuments({ userId: user._id, createdAt: { $gt: new Date(Date.now() - 86400_000) } })) >= 6) {
+      throw new AppError(429, 'too_many_uploads', 'You have uploaded the maximum number of documents today. Try again tomorrow.');
+    }
     const evidenceType = ['id_card', 'selfie', 'document'].includes(req.body.evidenceType) ? req.body.evidenceType : 'id_card';
-    const applicantName = req.body.applicantName || user.fullName;
-    const identifier = (req.body.identifier || user.studentId || user.staffId || '').toUpperCase();
-    const requestedRole = req.body.requestedRole || user.role;
-    const department = req.body.department || user.department || null;
-    const campus = req.body.campus || user.campusZone || 'main';
+    // Applicant details come from the account record, never from the request (no role or campus spoofing).
+    const applicantName = user.fullName;
+    const identifier = (user.staffId || user.studentId || '').toUpperCase() || 'NOT PROVIDED';
+    const requestedRole = user.requestedRole || user.role;
+    const department = user.department || null;
+    const campus = user.campusZone || 'main';
 
     const evidence = await VerificationEvidence.create({
       userId: user._id,
@@ -246,7 +224,7 @@ authRouter.post(
       consentTimestamp: new Date(),
     });
 
-    user.verificationStatus = 'pending';
+    if (canTransitionVerification(current, 'submitted')) user.verificationStatus = 'submitted';
     await user.save();
 
     await audit({
@@ -437,8 +415,16 @@ authRouter.post(
       }
       return fail();
     }
-    if (user.accountStatus === 'suspended') return fail('account_suspended', 'This account has been suspended. Contact the university support office.');
-    if (user.accountStatus === 'pending_verification' || !user.emailVerified) {
+    if (user.accountStatus === 'suspended' && user.suspendedUntil && user.suspendedUntil <= new Date()) {
+      await expireTemporarySuspensions();
+      const fresh = await User.findById(user._id, { accountStatus: 1, suspendedUntil: 1 }).lean();
+      if (fresh) { user.accountStatus = fresh.accountStatus; user.suspendedUntil = fresh.suspendedUntil ?? null; }
+    }
+    if (user.accountStatus === 'suspended') {
+      const until = user.suspendedUntil ? ` until ${user.suspendedUntil.toISOString()}` : '';
+      return fail('account_suspended', `This account has been suspended${until}. Contact the university support office.`);
+    }
+    if ((user.accountStatus === 'pending_verification' && !isPendingApplicant(user)) || !user.emailVerified) {
       // The password was right, so this person may choose how to verify and see whether the email went out.
       throw new AppError(403, 'email_not_verified', 'Verify your email before signing in. We can send you a new code or link.', {
         verificationTicket: issueVerificationTicket(String(user._id)), maskedEmail: maskEmail(user.email),
@@ -1000,9 +986,17 @@ authRouter.get(
 );
 
 /**
- * Native Google sign-in for the Android app. The app obtains a Google ID token with Credential
- * Manager and posts it here; the same account rules as the web flow apply:
- * stable `sub` identity, verified email, @srmap.edu.in only, never auto-linking by email.
+ * Native Google sign-in shared by CampusCare Student and CampusCare College. Each app obtains a Google
+ * ID token with Credential Manager (audience = the shared web client) and posts it here. The app header
+ * and `intent` only say what the person tried to do; the server decides from the verified identity and
+ * the account itself:
+ *   - identity: Google's stable `sub`, a verified @srmap.edu.in address; an existing account is joined by
+ *     email only when Google manages that address (Workspace `hd`), never on an email match alone;
+ *   - Student app: an eligible student account signs in; `sign_up` (or an older build) may create one under
+ *     the student registration policy; staff accounts are refused, never converted;
+ *   - College app: an existing staff account signs in (pending applicants get the restricted session);
+ *     no account → a sealed ticket for a staff *application*, never an account or a role;
+ *   - an account with MFA (Super Admin, admins) gets only an MFA challenge, exactly like a password sign-in.
  */
 authRouter.post(
   '/google/mobile',
@@ -1028,34 +1022,83 @@ authRouter.post(
     const linked = await ExternalIdentity.findOne({ provider: 'google', subject: identity.subject });
     let user = linked ? await User.findById(linked.userId) : null;
     let created = false;
+    /** Set when this sign-in will attach the Google identity to an existing account (after every check passes). */
+    let linkTo: UserDoc | null = null;
     if (!user) {
       let existing = await User.findOne({ email: identity.email });
-      if (!existing && (identity.email === 'neelampallicharanbalaji14@gmail.com' || identity.email === 'charanbalaji_neelampalli@srmap.edu.in')) {
+      const alias = !existing && (identity.email === 'neelampallicharanbalaji14@gmail.com' || identity.email === 'charanbalaji_neelampalli@srmap.edu.in');
+      if (alias) {
         existing = await User.findOne({ email: { $in: ['charanbalaji_neelampalli@srmap.edu.in', 'neelampallicharanbalaji14@gmail.com'] } });
       }
       if (existing) {
-        await ExternalIdentity.findOneAndUpdate(
-          { provider: 'google', subject: identity.subject },
-          { $set: { userId: existing._id, email: identity.email } },
-          { upsert: true },
-        );
+        if (!alias && !googleOwnsEmail(identity)) {
+          await audit({ action: 'auth.google_link_refused', actorId: String(existing._id), req, outcome: 'denied', meta: { client: 'android', reason: 'email_not_google_managed' } });
+          throw new AppError(409, 'google_link_required', 'An account already uses this email address. Sign in with your password, then link Google from your account security settings.');
+        }
         user = existing;
+        linkTo = existing;
       } else {
         if (req.clientApp === 'college') {
-          throw new AppError(403, 'no_staff_account', 'No college staff account uses this Google address. Staff accounts are created by your campus administrator.');
+          // No account: the person may apply for a staff role with this verified Google identity. The sealed
+          // ticket only proves the identity; the application still needs review before any access.
+          throw new AppError(403, 'no_staff_account', 'No CampusCare College account uses this Google address. You can register as college staff with it.', {
+            staffRegistrationTicket: issueGoogleRegistrationTicket(identity), email: identity.email, fullName: identity.name,
+          });
+        }
+        // Only CampusCare Student creates accounts (an older Student build sends no app header). The website
+        // is the Super Admin console and never signs anyone up.
+        if (!req.isMobileClient) throw new AppError(403, 'use_app', 'Students sign up in the CampusCare Student app.');
+        if (input.intent === 'sign_in') {
+          // The caller just proved they own this Google account, so saying it has no account reveals nothing new.
+          throw new AppError(404, 'no_student_account', 'No CampusCare Student account uses this Google account yet. Choose "Sign up with Google" to create one.');
         }
         const s = await getSettings();
         if (!s.registration.studentRegistrationOpen) throw new AppError(403, 'registration_closed', 'Student registration is currently closed.');
+        if (!(await isDomainAllowed(identity.email, 'students'))) throw new AppError(403, 'domain_not_allowed', 'Student sign-up needs your @srmap.edu.in student Google account.');
+        // Google proved control of this address, which the student registration policy accepts as email verification.
         user = await User.create({ fullName: identity.name || 'Student', email: identity.email, emailVerified: true, emailVerifiedAt: new Date(), role: 'student', accountStatus: 'active' });
         await ExternalIdentity.create({ userId: user._id, provider: 'google', subject: identity.subject, email: identity.email });
-        await audit({ action: 'auth.registered_google', actorId: String(user._id), actorRole: 'student', req, meta: { client: 'android' } });
+        await audit({ action: 'auth.registered_google', actorId: String(user._id), actorRole: 'student', req, meta: { client: 'android', app: req.clientApp ?? null } });
         created = true;
       }
     }
-    if (user.accountStatus === 'suspended') throw new AppError(403, 'account_suspended', 'This account has been suspended.');
-    if (user.accountStatus !== 'active') throw new AppError(403, 'account_inactive', 'This account is not active yet.');
+
+    // The account's own state decides, in the same order as a password sign-in.
+    if (user.accountStatus === 'suspended' && user.suspendedUntil && user.suspendedUntil <= new Date()) {
+      await expireTemporarySuspensions();
+      user = (await User.findById(user._id)) ?? user;
+    }
+    if (user.accountStatus === 'suspended') throw new AppError(403, 'account_suspended', 'This account has been suspended. Contact the university support office.');
+    // Students use CampusCare Student and staff use CampusCare College; a role is never changed to fit the app.
     assertAppForUser(req, user);
-    const session = await createSession(req, res, user, { method: 'google', mfaVerified: false });
+    if (user.accountStatus === 'invited') throw new AppError(403, 'invite_pending', 'Accept your invitation email to activate this account.');
+    if (!user.emailVerified) {
+      // Linking Google does not verify an existing account's email; the account's own verification still applies.
+      throw new AppError(403, 'email_not_verified', 'Verify your email before signing in. We can send you a new code or link.', {
+        verificationTicket: issueVerificationTicket(String(user._id)), maskedEmail: maskEmail(user.email),
+      });
+    }
+    // A staff applicant waiting for approval gets the same restricted session as with a password.
+    const applicationPending = isPendingApplicant(user);
+    if (user.accountStatus !== 'active' && !applicationPending) throw new AppError(403, 'account_inactive', 'This account is not active. Contact the university support office.');
+
+    if (linkTo) {
+      await ExternalIdentity.findOneAndUpdate(
+        { provider: 'google', subject: identity.subject },
+        { $set: { userId: linkTo._id, email: identity.email } },
+        { upsert: true },
+      );
+      await audit({ action: 'auth.google_linked', actorId: String(linkTo._id), actorRole: linkTo.role, req, targetType: 'user', targetId: String(linkTo._id), meta: { client: 'android', via: 'workspace_email' } });
+    }
+
+    if (user.mfaEnabled) {
+      // Google is the first factor only: no session until the authenticator code (POST /auth/mfa/challenge).
+      const ch = await createMfaChallenge(user, { method: 'google', client: 'android', remember: Boolean(input.rememberMe ?? true), ipHash: ipHashOf(req) });
+      await audit({ action: 'auth.mfa_challenge_issued', actorId: String(user._id), actorRole: user.role, req, meta: { method: 'google' } });
+      return ok(res, { mfaRequired: true, challengeToken: ch.token, challengeExpiresAt: ch.expiresAt, methods: ['totp', 'recovery_code'], created });
+    }
+
+    const session = await createSession(req, res, user, { method: 'google', mfaVerified: false, remember: Boolean(input.rememberMe ?? true) });
     await audit({ action: 'auth.login', actorId: String(user._id), actorRole: user.role, req, meta: { method: 'google', client: 'android', app: req.clientApp ?? null } });
     const pubUser = publicUser(user);
     if (user.role === 'super_admin') {
@@ -1064,9 +1107,10 @@ authRouter.post(
     ok(res, {
       user: pubUser,
       created,
-      // Privileged accounts with MFA must still pass the second factor (POST /auth/mfa/verify).
-      mfaRequired: PRIVILEGED_ROLES.includes(user.role as Role) && user.mfaEnabled,
+      mfaRequired: false,
+      needsMfaSetup: !applicationPending && (await mfaRequiredFor(user)),
       needsStudentId: user.role === 'student' && !user.studentId,
+      applicationPending,
       ...(session.plainToken ? { sessionToken: session.plainToken, expiresAt: session.expiresAt } : {}),
     });
   }),

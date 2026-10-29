@@ -66,6 +66,7 @@ object GoogleSignInMessages {
  * Native "Sign in with Google" via Credential Manager, used by both CampusCare Student and
  * CampusCare College. The ID token is requested for the WEB client ID (the audience the server
  * trusts) and sent to POST /auth/google/mobile, which verifies it and applies the app's account rules.
+ * Both apps stay in this native flow: neither falls back to a website to pick a Google account.
  *
  * Google only returns a token when this app's package name and signing certificate SHA-1 are
  * registered as an Android OAuth client in the same Google Cloud project as that web client —
@@ -119,10 +120,38 @@ object GoogleSignIn {
             GoogleSignInMessages.failure(reason, e.message, pkg, domain)
         }
     }
+}
 
-    /**
-     * Whether a failed native attempt may fall back to the browser OAuth flow. Only CampusCare Student
-     * keeps that older fallback; CampusCare College always stays in the app and explains the failure.
-     */
-    fun browserFallbackAllowed(audience: AppAudience) = audience == AppAudience.Student
+/** What the person chose; sent to the server, which still decides from the account itself. */
+enum class GoogleIntent(val wire: String) { SignIn("sign_in"), SignUp("sign_up") }
+
+/** What a screen does when the server refuses a Google sign-in. */
+sealed interface GoogleRefusal {
+    val message: String
+    /** College app, no account: apply for a staff role with the sealed ticket (a request, never access). */
+    data class ApplyAsStaff(val ticket: String, val email: String?, val fullName: String?, override val message: String) : GoogleRefusal
+    /** Student app, no account yet and the person chose sign-in: offer Google sign-up. */
+    data class OfferStudentSignUp(override val message: String) : GoogleRefusal
+    /** The account exists but its email is not verified; the ticket lets them get a code or link. */
+    data class VerifyEmail(override val message: String, val ticket: String?) : GoogleRefusal
+    /** Network or server trouble: trying again can help. */
+    data class Retry(override val message: String) : GoogleRefusal
+    /** Anything else (wrong app, pending, suspended, link required …): the server's message as is. */
+    data class Show(override val message: String) : GoogleRefusal
+}
+
+object GoogleRefusals {
+    /** Pure, so it is unit-tested. [details] are the primitive values of the API error's `details`. */
+    fun from(audience: AppAudience, status: Int, code: String, message: String?, details: Map<String, String>): GoogleRefusal {
+        val text = message?.takeIf { it.isNotBlank() } ?: "Google sign-in didn't work. Please try again."
+        val ticket = details["staffRegistrationTicket"]
+        return when {
+            status == 0 || status >= 500 -> GoogleRefusal.Retry(message?.takeIf { it.isNotBlank() } ?: "Couldn't reach CampusCare. Please try again.")
+            audience == AppAudience.College && code == "no_staff_account" && !ticket.isNullOrBlank() ->
+                GoogleRefusal.ApplyAsStaff(ticket, details["email"], details["fullName"], text)
+            audience == AppAudience.Student && code == "no_student_account" -> GoogleRefusal.OfferStudentSignUp(text)
+            code == "email_not_verified" -> GoogleRefusal.VerifyEmail(text, details["verificationTicket"]?.takeIf { it.isNotBlank() })
+            else -> GoogleRefusal.Show(text)
+        }
+    }
 }

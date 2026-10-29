@@ -60,6 +60,8 @@ const schema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_ANDROID_CLIENT_ID: z.string().optional(),
+  /** Comma-separated Android OAuth client IDs (one per app package + signing key). When set, native ID tokens must name one as `azp`. */
+  GOOGLE_ANDROID_CLIENT_IDS: z.string().optional().default(''),
   GOOGLE_PROJECT_ID: z.string().optional(),
 
   /** console = development only (writes to DEV_MAIL_DIR). nodemailer = send through a mail service account. */

@@ -88,6 +88,26 @@ export function unsealState(value: string | undefined): OAuthStatePayload | null
   }
 }
 
+/**
+ * Android OAuth clients (CampusCare Student and CampusCare College, debug and release keys) allowed as `azp`.
+ * Empty = not enforced. The older single GOOGLE_ANDROID_CLIENT_ID never turns enforcement on by itself,
+ * because one client can only cover one of the two apps.
+ */
+export function androidClientIds(): string[] {
+  const listed = env.GOOGLE_ANDROID_CLIENT_IDS.split(',').map((v) => v.trim()).filter(Boolean);
+  return listed.length ? Array.from(new Set([...listed, env.GOOGLE_ANDROID_CLIENT_ID?.trim() ?? ''].filter(Boolean))) : [];
+}
+
+/**
+ * Whether Google itself is authoritative for this address: a verified email in the Google Workspace
+ * domain it belongs to (`hd` claim). Only then may a Google sign-in attach to an existing account
+ * found by email; otherwise the person must link Google from a signed-in session.
+ */
+export function googleOwnsEmail(identity: GoogleIdentity): boolean {
+  const domain = identity.email.split('@')[1]?.toLowerCase();
+  return identity.emailVerified && Boolean(domain) && identity.hostedDomain?.toLowerCase() === domain;
+}
+
 export interface GoogleIdentity {
   subject: string;
   email: string;
@@ -130,6 +150,9 @@ export async function verifyGoogleIdToken(cfg: GoogleConfig, idToken: string, ex
   if (!p) throw new Error('Invalid ID token');
   if (p.iss !== 'https://accounts.google.com' && p.iss !== 'accounts.google.com') throw new Error('Unexpected issuer');
   if (expectedNonce && p.nonce !== expectedNonce) throw new Error('Nonce mismatch');
+  // Both apps share the web client as audience; each app's own Android client shows up as `azp`.
+  const androidClients = androidClientIds();
+  if (androidClients.length && !(p.azp && (androidClients.includes(p.azp) || p.azp === cfg.clientId))) throw new Error('Unexpected authorized party');
   if (!p.sub || !p.email) throw new Error('Missing identity claims');
   return {
     subject: p.sub,

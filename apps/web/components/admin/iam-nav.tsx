@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Siren,
+  UserPlus,
   Users,
 } from 'lucide-react';
 import { useApi } from '@/lib/hooks';
@@ -37,6 +38,7 @@ const NAV_TABS = [
   { href: '/super-admin/users/officers', label: 'Safety Officers', icon: Siren, key: 'security_officer' },
   { href: '/super-admin/users/super-admins', label: 'Super Admins', icon: ShieldAlert, key: 'super_admin' },
   { href: '/super-admin/users/verifications', label: 'Verification Queue', icon: CheckCheck, key: 'verifications' },
+  { href: '/super-admin/users/staff-requests', label: 'Staff Registration Requests', icon: UserPlus, key: 'staff-requests' },
   { href: '/super-admin/users/sessions', label: 'Login Sessions', icon: KeyRound, key: 'sessions' },
 ];
 

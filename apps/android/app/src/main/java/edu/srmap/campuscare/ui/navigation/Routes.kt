@@ -21,6 +21,10 @@ object Routes {
     const val CompleteProfile = "complete-profile"
     const val UpdateRequired = "update-required"
     const val OfflineEmergency = "offline-emergency"
+    /** CampusCare College staff registration: role choice, the role's form, and the applicant's status. */
+    const val StaffRegister = "staff/register?ticket={ticket}&email={email}&name={name}"
+    const val StaffRegisterForm = "staff/register/{role}?ticket={ticket}&email={email}&name={name}"
+    const val StaffApplication = "staff/application"
 
     // student
     const val Home = "s/home"
@@ -79,6 +83,15 @@ object Routes {
     // counsellor
     const val CounsellorHome = "c/home"
     const val CounsellorAppointments = "c/appointments"
+    const val CounsellorRequests = "c/requests"
+    const val CounsellorStudentProfile = "c/student/{id}"
+    const val OnlineSession = "c/session/{id}"
+    const val SessionNotesEditor = "c/appointment/{id}/notes"
+    const val CounsellorCases = "c/cases"
+    const val ResourcesLibrary = "c/resources"
+    const val ReportsAnalytics = "c/analytics"
+    const val CounsellorMessages = "c/messages"
+    const val CounsellorProfileSettings = "c/profile-settings"
     const val Appointment = "c/appointment/{id}"
     const val Availability = "c/availability"
     const val MySchedule = "c/schedule"
@@ -89,9 +102,26 @@ object Routes {
     const val ChannelCompose = "c/channel/compose?edit={edit}"
 
     // committee
+    const val CommitteeHome = "com/home"
+    const val CommitteeReports = "com/reports"
+    const val CommitteeReportDetail = "com/reports/{id}"
+    const val CommitteeInvestigation = "com/investigation/{id}"
+    const val CommitteeStudents = "com/students"
+    const val CommitteeStudentsInvolved = "com/students/{id}"
+    const val CommitteeAnalytics = "com/analytics"
+    const val CommitteeMessages = "com/messages"
+    const val CommitteeProfile = "com/profile"
     const val CommitteeCases = "k/cases"
 
     // security responders
+    const val SecurityHome = "sec/home"
+    const val SecurityAlerts = "sec/alerts"
+    const val SecurityMap = "sec/map"
+    const val SecurityResponse = "sec/response/{id}"
+    const val SecurityPatrol = "sec/patrol"
+    const val SecurityTeam = "sec/team"
+    const val SecurityMessages = "sec/messages"
+    const val SecurityProfile = "sec/profile"
     const val ResponderAlerts = "r/alerts"
     const val ResponderAlert = "r/alert/{id}"
     const val ResponderLocations = "r/locations"
@@ -104,9 +134,29 @@ object Routes {
     const val AdminAnnouncements = "a/announcements"
     const val AdminStaff = "a/staff"
     const val Moderation = "m/home"
+    // Campus Admin portal (oversight of the four staff workflows, scoped to the admin's campuses)
+    const val CampusAdminHome = "ca/home"
+    const val CampusAdminMap = "ca/map"
+    const val CampusAdminSos = "ca/sos"
+    const val CampusAdminSosDetail = "ca/sos/{id}"
+    const val CampusAdminReports = "ca/reports"
+    const val CampusAdminCounselling = "ca/counselling"
+    const val CampusAdminStudents = "ca/students"
+    const val CampusAdminStudent = "ca/students/{id}"
+    const val CampusAdminSecurity = "ca/security"
+    const val CampusAdminCommittees = "ca/committees"
+    const val CampusAdminAnalytics = "ca/analytics"
+    const val CampusAdminAnnouncements = "ca/announcements"
+    const val CampusAdminMessages = "ca/messages"
+    const val CampusAdminProfile = "ca/profile"
+    const val CampusAdminMore = "ca/more"
     const val CommunityModeration = "m/community"
 
     fun sosStatus(id: String) = "s/sos/$id"
+    private fun googleQuery(ticket: String?, email: String?, name: String?) =
+        if (ticket.isNullOrBlank()) "" else "?ticket=${Uri.encode(ticket)}&email=${Uri.encode(email.orEmpty())}&name=${Uri.encode(name.orEmpty())}"
+    fun staffRegister(ticket: String? = null, email: String? = null, name: String? = null) = "staff/register" + googleQuery(ticket, email, name)
+    fun staffRegisterForm(role: String, ticket: String? = null, email: String? = null, name: String? = null) = "staff/register/$role" + googleQuery(ticket, email, name)
     fun report(category: String? = null) = "s/report" + (category?.let { "?category=$it" } ?: "")
     fun reportDetail(id: String, tab: String? = null) = "s/report/$id" + (tab?.let { "?tab=$it" } ?: "")
     fun bookSession(counsellor: String? = null) = "s/counselling/book" + (counsellor?.let { "?counsellor=$it" } ?: "")
@@ -127,7 +177,16 @@ object Routes {
     fun channelCompose(edit: String? = null) = "c/channel/compose?edit=${Uri.encode(edit ?: "")}"
     fun case(id: String) = "case/$id"
     fun appointment(id: String) = "c/appointment/$id"
+    fun counsellorStudentProfile(id: String) = "c/student/$id"
+    fun onlineSession(id: String) = "c/session/$id"
+    fun sessionNotesEditor(id: String) = "c/appointment/$id/notes"
+    fun securityResponse(id: String) = "sec/response/$id"
+    fun committeeReportDetail(id: String) = "com/reports/$id"
+    fun committeeInvestigation(id: String) = "com/investigation/$id"
+    fun committeeStudents(id: String? = null) = if (id != null) "com/students/$id" else "com/students"
     fun responderAlert(id: String) = "r/alert/$id"
+    fun campusAdminSos(id: String) = "ca/sos/$id"
+    fun campusAdminStudent(id: String) = "ca/students/$id"
     /** [via] = "code" when the token came from a correct reset code rather than an emailed link. */
     fun reset(token: String, via: String = "link") = "reset?token=${Uri.encode(token)}&via=$via"
     /**
@@ -150,11 +209,18 @@ object Routes {
 
     /** Screens only CampusCare College registers (each still checks the role, and the API checks permissions). */
     val StaffOnly: List<String> = listOf(
-        CounsellorHome, CounsellorAppointments, Appointment, Availability, MySchedule, CounsellorPublicProfile, CounsellorStudents,
+        CounsellorHome, CounsellorAppointments, CounsellorRequests, CounsellorStudentProfile, OnlineSession,
+        SessionNotesEditor, CounsellorCases, ResourcesLibrary, ReportsAnalytics, CounsellorMessages, CounsellorProfileSettings,
+        Appointment, Availability, MySchedule, CounsellorPublicProfile, CounsellorStudents,
         Inbox, ChannelDashboard, ChannelCompose, Case,
-        CommitteeCases,
+        CommitteeHome, CommitteeReports, CommitteeReportDetail, CommitteeInvestigation, CommitteeStudents, CommitteeStudentsInvolved, CommitteeAnalytics, CommitteeMessages, CommitteeProfile, CommitteeCases,
+        SecurityHome, SecurityAlerts, SecurityMap, SecurityResponse, SecurityPatrol, SecurityTeam, SecurityMessages, SecurityProfile,
         ResponderAlerts, ResponderAlert, ResponderLocations, ResponderCases,
         AdminHome, AdminTriage, AdminAlerts, AdminAnnouncements, AdminStaff, Moderation, CommunityModeration,
+        CampusAdminHome, CampusAdminMap, CampusAdminSos, CampusAdminSosDetail, CampusAdminReports, CampusAdminCounselling,
+        CampusAdminStudents, CampusAdminStudent, CampusAdminSecurity, CampusAdminCommittees, CampusAdminAnalytics,
+        CampusAdminAnnouncements, CampusAdminMessages, CampusAdminProfile, CampusAdminMore,
+        StaffRegister, StaffRegisterForm, StaffApplication,
     )
 
     /** Screens that belong to the other app; this one registers them as an "open the other app" page. */
@@ -165,9 +231,9 @@ object Routes {
     fun homeFor(role: String): String = if (!AppAudience.current.allows(role)) Login else when (role) {
         "student" -> Home
         "counsellor" -> CounsellorHome
-        "committee_member" -> CommitteeCases
-        "security_officer" -> ResponderAlerts
-        "admin" -> AdminHome
+        "committee_member" -> CommitteeHome
+        "security_officer" -> SecurityHome
+        "admin" -> CampusAdminHome
         "moderator" -> Moderation
         "super_admin" -> CounsellorHome
         else -> Login
@@ -186,6 +252,7 @@ object Routes {
         val fourth = seg.getOrNull(3)
         return when {
             first == "verify-email" -> uri.getQueryParameter("token")?.let { verify(it) }
+            first == "application-status" -> StaffApplication
             first == "reset-password" -> uri.getQueryParameter("token")?.let { reset(it) }
             first == "accept-invite" -> uri.getQueryParameter("token")?.let { invite(it) }
             first == "student" && second == "my-reports" && third != null -> reportDetail(third, if (uri.fragment == "chat") "chat" else null)
@@ -206,10 +273,12 @@ object Routes {
             first == "student" && second == "community" && third == "events" && fourth != null -> communityEvent(fourth)
             first == "student" && second == "community" -> Community
             first == "support" && second == "threads" && third != null -> chat(third)
-            first == "committee" && second == "cases" && third != null -> case(third)
-            first == "committee" -> if (role == "admin") AdminTriage else CommitteeCases
-            first == "security" && second == "alerts" && third != null -> responderAlert(third)
-            first == "security" -> ResponderAlerts
+            first == "committee" && second == "cases" && third != null -> committeeReportDetail(third)
+            first == "committee" && second == "reports" && third != null -> committeeReportDetail(third)
+            first == "committee" -> if (role == "admin") CampusAdminReports else CommitteeHome
+            first == "admin" && role == "admin" -> CampusAdminHome
+            first == "security" && second == "alerts" && third != null -> securityResponse(third)
+            first == "security" -> SecurityHome
             first == "consultancy" && second == "appointments" -> uri.getQueryParameter("focus")?.let { appointment(it) } ?: CounsellorAppointments
             first == "consultancy" && second == "channel" -> ChannelDashboard
             first == "consultancy" -> CounsellorHome

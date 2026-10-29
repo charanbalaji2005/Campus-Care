@@ -1,7 +1,8 @@
 package edu.srmap.campuscare
 
 import edu.srmap.campuscare.util.GoogleFailure
-import edu.srmap.campuscare.util.GoogleSignIn
+import edu.srmap.campuscare.util.GoogleRefusal
+import edu.srmap.campuscare.util.GoogleRefusals
 import edu.srmap.campuscare.util.GoogleSignInMessages
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -12,9 +13,38 @@ class GoogleSignInTest {
     private val college = "in.edu.srmap.campuscare.college"
 
     @Test
-    fun `the College app never falls back to a website but Student keeps its fallback`() {
-        assertFalse(GoogleSignIn.browserFallbackAllowed(AppAudience.College))
-        assertTrue(GoogleSignIn.browserFallbackAllowed(AppAudience.Student))
+    fun `College with no account offers a staff application, never in the Student app`() {
+        val details = mapOf("staffRegistrationTicket" to "gr1.abc.def", "email" to "new@srmap.edu.in", "fullName" to "New Person")
+        val apply = GoogleRefusals.from(AppAudience.College, 403, "no_staff_account", "No account", details)
+        assertTrue(apply is GoogleRefusal.ApplyAsStaff)
+        assertEquals("gr1.abc.def", (apply as GoogleRefusal.ApplyAsStaff).ticket)
+        assertEquals("new@srmap.edu.in", apply.email)
+        // No ticket, or the wrong app: just the message.
+        assertTrue(GoogleRefusals.from(AppAudience.College, 403, "no_staff_account", "No account", emptyMap()) is GoogleRefusal.Show)
+        assertTrue(GoogleRefusals.from(AppAudience.Student, 403, "no_staff_account", "No account", details) is GoogleRefusal.Show)
+    }
+
+    @Test
+    fun `Student sign-in with no account offers Google sign-up only in the Student app`() {
+        assertTrue(GoogleRefusals.from(AppAudience.Student, 404, "no_student_account", "No account yet", emptyMap()) is GoogleRefusal.OfferStudentSignUp)
+        assertTrue(GoogleRefusals.from(AppAudience.College, 404, "no_student_account", "No account yet", emptyMap()) is GoogleRefusal.Show)
+    }
+
+    @Test
+    fun `wrong app, pending and link-required refusals show the server's message`() {
+        for (code in listOf("wrong_app", "approval_pending", "account_suspended", "google_link_required", "registration_closed")) {
+            val r = GoogleRefusals.from(AppAudience.Student, 403, code, "Server says $code", emptyMap())
+            assertTrue(code, r is GoogleRefusal.Show)
+            assertEquals("Server says $code", r.message)
+        }
+    }
+
+    @Test
+    fun `unverified email keeps the verification ticket and network trouble is retryable`() {
+        val v = GoogleRefusals.from(AppAudience.Student, 403, "email_not_verified", "Verify first", mapOf("verificationTicket" to "vt1"))
+        assertEquals("vt1", (v as GoogleRefusal.VerifyEmail).ticket)
+        assertTrue(GoogleRefusals.from(AppAudience.College, 0, "network", null, emptyMap()) is GoogleRefusal.Retry)
+        assertTrue(GoogleRefusals.from(AppAudience.College, 503, "google_unavailable", "Down", emptyMap()) is GoogleRefusal.Retry)
     }
 
     @Test

@@ -20,6 +20,8 @@ class Api(val client: ApiClient) {
     val admin = AdminApi(client)
     val mobile = MobileApi(client)
     val duty = DutyApi(client)
+    val securityPortal = SecurityPortalApi(client)
+    val committeePortal = CommitteePortalApi(client)
 }
 
 class MobileApi(private val c: ApiClient) {
@@ -37,9 +39,20 @@ class AuthApi(private val c: ApiClient) {
     suspend fun mfaChallenge(challengeToken: String, code: String): LoginResponse =
         c.post("/auth/mfa/challenge", mapOf("challengeToken" to challengeToken, "code" to code))
 
-    suspend fun google(idToken: String, nonce: String?, rememberMe: Boolean = true): LoginResponse = c.post("/auth/google/mobile", mapOf("idToken" to idToken, "nonce" to nonce, "rememberMe" to rememberMe))
+    /** [intent] is "sign_in" or "sign_up"; the server still decides from the account and the app. */
+    suspend fun google(idToken: String, nonce: String?, rememberMe: Boolean = true, intent: String? = null): LoginResponse =
+        c.post("/auth/google/mobile", mapOf("idToken" to idToken, "nonce" to nonce, "rememberMe" to rememberMe, "intent" to intent))
 
     suspend fun register(body: Map<String, Any?>): RegisterResponse = c.post("/auth/register", body)
+
+    // CampusCare College staff applications: the server decides the roles offered and grants nothing on submit.
+    suspend fun staffRegistrationOptions(): StaffRegistrationOptions = c.get("/auth/staff-registration/options")
+    suspend fun registerStaff(body: Map<String, Any?>): StaffRegisterResponse = c.post("/auth/register-staff", body)
+    /** Exchanges a native Google ID token (no account yet) for a short-lived ticket used by the application form. */
+    suspend fun staffRegistrationGoogle(idToken: String, nonce: String?): GoogleRegistrationTicket =
+        c.post("/auth/staff-registration/google", mapOf("idToken" to idToken, "nonce" to nonce))
+    suspend fun myStaffApplication(): MyStaffApplication = c.get("/auth/staff-registration/me")
+    suspend fun updateMyStaffApplication(body: Map<String, Any?>): MyStaffApplication = c.patch("/auth/staff-registration/me", body)
     suspend fun uploadVerificationEvidence(
         bytes: ByteArray,
         name: String,
@@ -51,7 +64,8 @@ class AuthApi(private val c: ApiClient) {
         campus: String?,
     ): Ignored = c.upload(
         "/auth/verification-evidence", bytes, name, mime,
-        mapOf("evidenceType" to evidenceType, "identifier" to identifier, "requestedRole" to requestedRole, "department" to (department ?: ""), "campus" to (campus ?: "main")),
+        // The person ticked the consent box before this call; the server refuses uploads without it.
+        mapOf("evidenceType" to evidenceType, "identifier" to identifier, "requestedRole" to requestedRole, "department" to (department ?: ""), "campus" to (campus ?: "main"), "consent" to "true"),
     )
 
     suspend fun identityVerificationStatus(): IdentityVerificationStatusResponse = c.get("/auth/verification-evidence/status")
@@ -222,7 +236,7 @@ class CounsellingApi(private val c: ApiClient) {
     suspend fun update(id: String, status: String? = null, reason: String? = null, startAt: String? = null, meetingLink: String? = null): Appointment =
         c.patch("/counselling/appointments/$id", mapOf("status" to status, "reason" to reason, "startAt" to startAt, "meetingLink" to meetingLink).filterValues { it != null })
     suspend fun notes(id: String): List<CounsellingNote> = c.get("/counselling/appointments/$id/notes")
-    suspend fun addNote(id: String, body: String, supportPlan: String?, followUpAt: String?): CounsellingNote =
+    suspend fun addNote(id: String, body: String, supportPlan: String? = null, followUpAt: String? = null): CounsellingNote =
         c.post("/counselling/appointments/$id/notes", mapOf("body" to body, "supportPlan" to supportPlan, "followUpAt" to followUpAt).filterValues { it != null })
     suspend fun availability(): Availability = c.get("/counselling/availability")
     suspend fun saveAvailability(a: Availability): Ignored = c.put(
@@ -236,6 +250,51 @@ class CounsellingApi(private val c: ApiClient) {
     )
     suspend fun myStudents(): List<CounsellorStudent> = c.get("/counselling/my-students")
     suspend fun stats(): CounsellingStats = c.get("/counselling/stats")
+    suspend fun dashboard(): CounsellorDashboardData = c.get("/counselling/dashboard")
+    suspend fun requests(status: String = "pending"): List<StudentRequestItem> = c.get("/counselling/requests?status=$status")
+    suspend fun studentWellbeing(studentId: String): StudentWellbeingProfile = c.get("/counselling/students/$studentId/wellbeing")
+    suspend fun session(appointmentId: String): OnlineSessionData = c.get("/counselling/appointments/$appointmentId/session")
+    suspend fun endSession(appointmentId: String, outcome: String? = null, notes: String? = null, supportPlan: String? = null): StatusResponse =
+        c.post("/counselling/appointments/$appointmentId/session/end", mapOf("outcome" to outcome, "notes" to notes, "supportPlan" to supportPlan).filterValues { it != null })
+    suspend fun cases(status: String = "active", q: String? = null): CounsellorCaseListResponse {
+        val params = listOfNotNull(
+            "status=$status",
+            q?.takeIf { it.isNotBlank() }?.let { "q=${enc(it)}" }
+        ).joinToString("&")
+        return c.get("/counselling/cases?$params")
+    }
+    suspend fun caseDetail(id: String): CounsellorCaseDetail = c.get("/counselling/cases/$id")
+    suspend fun updateCase(
+        id: String,
+        status: String? = null,
+        observations: List<String>? = null,
+        supportPlan: List<String>? = null,
+        reviewDate: String? = null,
+        closedReason: String? = null
+    ): StatusResponse = c.patch(
+        "/counselling/cases/$id",
+        mapOf(
+            "status" to status,
+            "observations" to observations,
+            "supportPlan" to supportPlan,
+            "reviewDate" to reviewDate,
+            "closedReason" to closedReason
+        ).filterValues { it != null }
+    )
+    suspend fun referCase(id: String, toTeam: String, reason: String): StatusResponse =
+        c.post("/counselling/cases/$id/refer", mapOf("toTeam" to toTeam, "reason" to reason))
+    suspend fun escalateCase(id: String, urgency: String, notes: String): EmergencyEscalationResult =
+        c.post("/counselling/cases/$id/escalate", mapOf("urgencyLevel" to urgency, "notes" to notes, "idempotencyKey" to newIdempotencyKey()))
+    suspend fun resources(category: String = "all", q: String? = null, bookmarked: Boolean = false): List<CounsellingResourceItem> {
+        val params = listOfNotNull(
+            "category=$category",
+            q?.takeIf { it.isNotBlank() }?.let { "q=${enc(it)}" },
+            if (bookmarked) "bookmarked=true" else null
+        ).joinToString("&")
+        return c.get("/counselling/resources?$params")
+    }
+    suspend fun bookmarkResource(id: String): StatusResponse = c.post("/counselling/resources/$id/bookmark")
+    suspend fun analytics(range: String = "month"): CounsellorAnalyticsData = c.get("/counselling/portal-analytics?range=$range")
 }
 
 class SafetyApi(private val c: ApiClient) {
@@ -472,3 +531,63 @@ class CampusMapApi(private val c: ApiClient) {
     suspend fun myReports(): List<MapReportItem> =
         c.get("/campus-map/reports/mine")
 }
+
+class SecurityPortalApi(private val c: ApiClient) {
+    suspend fun dashboard(): SecurityDashboardData = c.get("/safety/security/dashboard")
+    suspend fun alerts(tab: String = "active", q: String? = null): SecurityAlertsResponse {
+        val params = listOfNotNull(
+            "tab=$tab",
+            q?.takeIf { it.isNotBlank() }?.let { "q=${enc(it)}" }
+        ).joinToString("&")
+        return c.get("/safety/security/alerts?$params")
+    }
+    suspend fun map(campus: String? = null): SecurityMapData =
+        c.get("/safety/security/map" + (campus?.let { "?campus=$it" } ?: ""))
+    suspend fun alertDetail(id: String): SecuritySosDetailData =
+        c.get("/safety/security/alerts/$id")
+    suspend fun updateStatus(id: String, status: String, notes: String? = null, outcome: String? = null): StatusResponse =
+        c.post("/safety/security/alerts/$id/status", mapOf("status" to status, "notes" to notes, "outcome" to outcome).filterValues { it != null })
+    suspend fun patrolCurrent(): PatrolRouteData = c.get("/safety/security/patrol/current")
+    suspend fun patrolCheckIn(): PatrolCheckInResult = c.post("/safety/security/patrol/check-in")
+    suspend fun team(): SecurityTeamResponse = c.get("/safety/security/team")
+    suspend fun messages(): SecurityMessagesResponse = c.get("/safety/security/messages")
+}
+
+class CommitteePortalApi(private val c: ApiClient) {
+    suspend fun dashboard(): CommitteeDashboardData = c.get("/incidents/committee/dashboard")
+    suspend fun reports(tab: String = "new", q: String? = null): CommitteeReportsResponse {
+        val params = listOfNotNull(
+            "tab=$tab",
+            q?.takeIf { it.isNotBlank() }?.let { "q=${enc(it)}" }
+        ).joinToString("&")
+        return c.get("/incidents/committee/reports?$params")
+    }
+    suspend fun reportDetail(id: String): CommitteeReportDetail =
+        c.get("/incidents/committee/reports/$id")
+    suspend fun updateInvestigation(
+        id: String,
+        assignedTo: String? = null,
+        dueDate: String? = null,
+        notes: String? = null,
+        status: String? = null,
+        findings: String? = null
+    ): StatusResponse = c.patch(
+        "/incidents/committee/reports/$id/investigation",
+        mapOf(
+            "assignedTo" to assignedTo,
+            "dueDate" to dueDate,
+            "notes" to notes,
+            "status" to status,
+            "findings" to findings
+        ).filterValues { it != null }
+    )
+    suspend fun studentsInvolved(id: String): CommitteeStudentsInvolvedResponse =
+        c.get("/incidents/committee/reports/$id/students")
+    suspend fun analytics(range: String = "month"): CommitteeAnalyticsData =
+        c.get("/incidents/committee/analytics?range=$range")
+    suspend fun messages(): CommitteeMessagesResponse =
+        c.get("/incidents/committee/messages")
+    suspend fun escalate(id: String, urgency: String = "critical", notes: String? = null): CommitteeEscalationResult =
+        c.post("/incidents/committee/reports/$id/escalate", mapOf("urgency" to urgency, "notes" to notes).filterValues { it != null })
+}
+

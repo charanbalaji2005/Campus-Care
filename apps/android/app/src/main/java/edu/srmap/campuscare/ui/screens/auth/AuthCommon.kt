@@ -152,6 +152,8 @@ suspend fun completeSignIn(app: AppContainer, nav: NavHostController, resp: Logi
         throw ApiException(403, "wrong_app", AppAudience.wrongAppMessage(role))
     }
     val target = when {
+        // A staff applicant's restricted session only reaches the application screen.
+        resp.applicationPending || (me?.user ?: user).approvalRequired -> Routes.StaffApplication
         resp.mfaRequired -> Routes.Mfa
         resp.needsMfaSetup -> Routes.Security
         resp.needsStudentId || (role == "student" && (me?.user ?: user).studentId.isNullOrBlank()) -> Routes.CompleteProfile

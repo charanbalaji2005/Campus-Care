@@ -18,6 +18,9 @@ import { audit } from '../services/audit.service';
 import { appLink, sendEmail } from '../services/email/email.service';
 import { isDomainAllowed, issueEmailVerification, requestPasswordReset, revokeAllSessions } from '../services/auth.service';
 import { mfaStatus, removeTotp } from '../services/mfa.service';
+import { standDownAccount } from '../services/account-lifecycle.service';
+import { emailProofActivates, markStaffApplicationEmailVerified, revokeSession } from '../services/auth.service';
+import { canTransitionVerification } from '@campuscare/shared';
 import { ensureCounsellingChannel } from '../services/feed.service';
 import { disconnectUser } from '../realtime/socket';
 
@@ -516,35 +519,24 @@ superAdminUsersRouter.post(
       if (!input.reason || input.reason.trim().length < 3) {
         throw new AppError(422, 'reason_required', 'A valid reason is required for account suspension.');
       }
+      if (input.reviewDate && input.reviewDate.getTime() <= now.getTime() + 60_000) {
+        throw new AppError(422, 'validation_failed', 'A temporary suspension must end in the future.', { fields: { reviewDate: 'Choose a future date and time' } });
+      }
       target.accountStatus = 'suspended';
       target.suspendedReason = input.reason;
       target.suspendedAt = now;
       target.suspendedBy = req.user!._id;
+      // A set end time makes it temporary; the suspension-expiry job reinstates the account then.
       target.suspendedUntil = input.reviewDate ?? null;
-
-      // Revoke sessions and real-time connections
-      await revokeAllSessions(String(target._id));
-      await disconnectUser(String(target._id));
-
-      // Handover emergency duties if responder
-      if (target.role === 'security_officer' || target.responderEligible) {
-        const avail = await ResponderAvailability.findOne({ userId: target._id });
-        if (avail && avail.status !== 'off_duty') {
-          const fromStatus = avail.status;
-          avail.status = 'off_duty';
-          avail.statusBeforeStale = null;
-          avail.staleSince = null;
-          await avail.save();
-          await DutyStatusEvent.create({
-            userId: target._id,
-            from: fromStatus,
-            to: 'off_duty',
-            actor: 'supervisor',
-            actorId: req.user!._id,
-            reason: `Account suspended: ${input.reason}`,
-          });
-        }
-      }
+      await target.save();
+      // Sessions end now; a responder's open SOS alerts move to another eligible responder.
+      await standDownAccount(target, { actorId: String(req.user!._id), reason: `suspended: ${input.reason}`, req });
+      await sendEmail('security_alert', target.email, {
+        name: target.fullName,
+        message: target.suspendedUntil
+          ? `Your account has been suspended until ${target.suspendedUntil.toISOString()}. Contact the university support office if you have questions.`
+          : 'Your account has been suspended. Contact the university support office if you have questions.',
+      }).catch(() => undefined);
     } else if (input.action === 'deactivate') {
       if (!input.reason || input.reason.trim().length < 3) {
         throw new AppError(422, 'reason_required', 'A reason is required to deactivate an account.');
@@ -553,9 +545,8 @@ superAdminUsersRouter.post(
       target.deactivatedAt = now;
       target.deactivatedBy = req.user!._id;
       target.suspendedReason = input.reason;
-
-      await revokeAllSessions(String(target._id));
-      await disconnectUser(String(target._id));
+      await target.save();
+      await standDownAccount(target, { actorId: String(req.user!._id), reason: `deactivated: ${input.reason}`, req });
     } else if (input.action === 'archive') {
       if (!input.reason || input.reason.trim().length < 3) {
         throw new AppError(422, 'reason_required', 'A reason is required to archive an account.');
@@ -564,11 +555,10 @@ superAdminUsersRouter.post(
       target.archivedAt = now;
       target.archivedBy = req.user!._id;
       target.suspendedReason = input.reason;
-
-      await revokeAllSessions(String(target._id));
-      await disconnectUser(String(target._id));
+      await target.save();
+      await standDownAccount(target, { actorId: String(req.user!._id), reason: `archived: ${input.reason}`, req });
     } else if (input.action === 'reactivate') {
-      target.accountStatus = target.emailVerified ? 'active' : 'pending_verification';
+      target.accountStatus = target.emailVerified && emailProofActivates(target) ? 'active' : 'pending_verification';
       target.suspendedReason = null;
       target.suspendedAt = null;
       target.suspendedBy = null;
@@ -580,12 +570,14 @@ superAdminUsersRouter.post(
     } else if (input.action === 'verify_email') {
       target.emailVerified = true;
       target.emailVerifiedAt = now;
-      if (target.accountStatus === 'pending_verification') {
+      // Email proof is not institutional approval: a staff applicant stays pending until approved.
+      if (target.accountStatus === 'pending_verification' && emailProofActivates(target)) {
         target.accountStatus = 'active';
       }
     }
 
     await target.save();
+    if (input.action === 'verify_email') await markStaffApplicationEmailVerified(target._id);
 
     await audit({
       action: `user.${input.action}`,
@@ -966,7 +958,7 @@ superAdminUsersRouter.post(
           await revokeAllSessions(String(target._id));
           await disconnectUser(String(target._id));
         } else if (input.action === 'reactivate') {
-          target.accountStatus = target.emailVerified ? 'active' : 'pending_verification';
+          target.accountStatus = target.emailVerified && emailProofActivates(target) ? 'active' : 'pending_verification';
           target.suspendedReason = null;
           target.suspendedAt = null;
           target.suspendedBy = null;
@@ -990,8 +982,9 @@ superAdminUsersRouter.post(
         } else if (input.action === 'verify_email') {
           target.emailVerified = true;
           target.emailVerifiedAt = new Date();
-          if (target.accountStatus === 'pending_verification') target.accountStatus = 'active';
+          if (target.accountStatus === 'pending_verification' && emailProofActivates(target)) target.accountStatus = 'active';
           await target.save();
+          await markStaffApplicationEmailVerified(target._id);
         } else if (input.action === 'revoke_sessions') {
           await revokeAllSessions(String(target._id));
           await disconnectUser(String(target._id));
@@ -1053,7 +1046,8 @@ superAdminUsersRouter.post(
     target.verificationReason = input.reason ?? null;
     target.verificationNotes = input.notes ?? null;
 
-    if (input.status === 'approved' && target.accountStatus === 'pending_verification') {
+    // A staff applicant is activated only by approving the staff application, never by identity review.
+    if (input.status === 'approved' && target.accountStatus === 'pending_verification' && !target.approvalRequired) {
       target.accountStatus = 'active';
     }
 
@@ -1165,10 +1159,13 @@ superAdminUsersRouter.get(
     const evId = checkObjectId(req.params.id);
     const ev = await VerificationEvidence.findById(evId).select('+data');
     if (!ev || !ev.data) throw notFound('Verification evidence file not found.');
+    // Every view of identity evidence is recorded (who, which file; never the image itself).
+    await audit({ action: 'verification.evidence_viewed', req, targetType: 'verification_evidence', targetId: String(ev._id), meta: { userId: String(ev.userId), evidenceType: ev.evidenceType } });
     res.setHeader('Content-Type', ev.mime || 'image/jpeg');
     res.setHeader('Content-Length', ev.data.length);
     res.setHeader('Cache-Control', 'private, no-store');
-    res.setHeader('Content-Disposition', `inline; filename="verification-${ev.evidenceType}-${ev._id}.jpg"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `inline; filename="verification-${ev.evidenceType}-${ev._id}"`);
     return res.end(ev.data);
   }),
 );
@@ -1186,7 +1183,17 @@ superAdminUsersRouter.post(
     if (!target) throw notFound('Applicant account not found.');
 
     const input = parse(studentVerificationDecisionSchema, req.body);
-    const beforeStatus = target.verificationStatus ?? 'pending';
+    const beforeStatus = (target.verificationStatus ?? 'pending') as StudentVerificationStatus;
+    if (input.status === 'submitted' || input.status === 'pending') {
+      throw new AppError(422, 'validation_failed', 'Only the applicant can submit evidence.');
+    }
+    if (!canTransitionVerification(beforeStatus, input.status)) {
+      throw new AppError(409, 'invalid_transition', `This application is "${beforeStatus.replace('_', ' ')}" and cannot be changed to "${input.status.replace('_', ' ')}".`);
+    }
+    // Reopening a decided case, or rejecting / asking for more, needs a recorded reason.
+    if ((['approved', 'rejected', 'revoked'].includes(beforeStatus) || ['rejected', 'needs_info'].includes(input.status)) && !(input.reason || input.notes)) {
+      throw new AppError(422, 'reason_required', 'Record a reason for this decision.');
+    }
 
     if (input.status === 'approved') ev.status = 'verified';
     else if (input.status === 'needs_info') ev.status = 'more_info_required';
@@ -1205,8 +1212,15 @@ superAdminUsersRouter.post(
     target.verificationReason = input.reason ?? null;
     target.verificationNotes = input.notes ?? null;
 
-    if (input.status === 'approved') {
-      if (target.emailVerified) {
+    if (input.status === 'approved' && target.approvalRequired) {
+      // A staff applicant's identity is now verified. That is not role approval: the account stays
+      // inactive until a Super Admin approves the staff application (POST /super-admin/staff-applications/:id/decision).
+      await sendEmail('security_alert', target.email, {
+        name: target.fullName,
+        message: 'Your identity documents have been verified. Your staff application is still waiting for final approval.',
+      }).catch(() => {});
+    } else if (input.status === 'approved') {
+      if (target.emailVerified && target.accountStatus === 'pending_verification') {
         target.accountStatus = 'active';
       }
       if (target.role === 'counsellor') {
@@ -1218,8 +1232,8 @@ superAdminUsersRouter.post(
         message: 'Your institutional identity verification has been reviewed and approved. Your account is now active.',
       }).catch(() => {});
     } else if (input.status === 'rejected') {
-      target.accountStatus = 'suspended';
-      target.suspendedReason = input.notes || input.reason || 'Verification rejected by administrator';
+      // Rejection is its own state, not a suspension. An applicant stays inactive (approvalRequired);
+      // an already active account keeps its status unless an administrator suspends it separately.
       await sendEmail('security_alert', target.email, {
         name: target.fullName,
         message: `Your institutional identity verification was rejected. Reason: ${input.notes || input.reason || 'Unable to verify credentials'}.`,
@@ -1351,6 +1365,8 @@ superAdminUsersRouter.get(
         userId: String(s.userId),
         user: uMap.get(String(s.userId)) ?? null,
         client: s.client,
+        app: s.app ?? null,
+        method: s.method,
         deviceName: s.deviceName,
         userAgent: s.userAgent,
         ipHash: s.ipHash,
@@ -1375,16 +1391,18 @@ superAdminUsersRouter.delete(
     const sid = checkObjectId(req.params.sessionId);
     const session = await Session.findById(sid);
     if (!session) throw notFound('Session not found.');
+    if (session.revokedAt) throw new AppError(409, 'already_revoked', 'This session was already revoked.');
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 300) : null;
 
-    session.revokedAt = new Date();
-    await session.save();
+    await revokeSession(session);
 
     await audit({
       action: 'session.revoked',
       req,
       targetType: 'session',
       targetId: String(session._id),
-      meta: { userId: String(session.userId) },
+      reason,
+      meta: { userId: String(session.userId), client: session.client, app: session.app ?? null },
     });
 
     ok(res, { message: 'Session revoked successfully.' });

@@ -12,6 +12,7 @@ import { accountLink, appLink, maskEmail, sendEmail } from './email/email.servic
 import { disconnectUser } from '../realtime/socket';
 import { DeviceRegistration } from '../models/mobile';
 import { MfaChallenge } from '../models/mfa';
+import { StaffApplication } from '../models/staff-application';
 import { startTotpEnrollment, verifyTotpEnrollment, verifyTotpForUser } from './mfa.service';
 
 export const SESSION_COOKIE = 'cc_session';
@@ -373,6 +374,31 @@ export async function issueEmailVerification(user: UserDoc, method: EmailChallen
   return 'link';
 }
 
+/**
+ * Whether proving the email address may switch a pending account to active. It never does for a
+ * self-registered staff applicant: email verification is not institutional approval, so the account
+ * stays pending until a reviewer approves it (see /super-admin/users/verifications).
+ */
+export function emailProofActivates(user: { approvalRequired?: boolean | null }): boolean {
+  return !user.approvalRequired;
+}
+
+/**
+ * Email proof moves a staff application from "pending email verification" to "pending institutional
+ * review". It changes nothing else: the role and any access still wait for a Super Admin's approval.
+ */
+export async function markStaffApplicationEmailVerified(userId: unknown): Promise<void> {
+  await StaffApplication.updateOne(
+    { userId, status: 'pending_email_verification' },
+    { $set: { status: 'pending_review' }, $push: { history: { at: new Date(), action: 'email_verified', from: 'pending_email_verification', to: 'pending_review' } } },
+  );
+}
+
+/** A self-registered staff applicant who proved their email and is waiting for institutional approval. */
+export function isPendingApplicant(user: { approvalRequired?: boolean | null; emailVerified?: boolean | null; accountStatus?: string | null }): boolean {
+  return Boolean(user.approvalRequired && user.emailVerified && user.accountStatus === 'pending_verification');
+}
+
 function verificationEligible(user: UserDoc | null): user is UserDoc {
   return Boolean(user && !user.emailVerified && (user.accountStatus === 'pending_verification' || user.accountStatus === 'active'));
 }
@@ -411,10 +437,11 @@ export async function verifyEmailWithOtp(email: string, code: string): Promise<{
   // Conditional update: a concurrent link verification cannot make this run twice.
   const updated = await User.findOneAndUpdate(
     { _id: user._id, email: check.email, emailVerified: { $ne: true } },
-    { $set: { emailVerified: true, emailVerifiedAt: new Date(), ...(user.accountStatus === 'pending_verification' ? { accountStatus: 'active' } : {}) } },
+    { $set: { emailVerified: true, emailVerifiedAt: new Date(), ...(user.accountStatus === 'pending_verification' && emailProofActivates(user) ? { accountStatus: 'active' } : {}) } },
     { new: true },
   );
   await endOutstandingChallenges(user._id, 'verify_email', 'used');
+  if (updated) await markStaffApplicationEmailVerified(user._id);
   return { result: updated ? 'verified' : 'already_verified', user: updated ?? user };
 }
 
@@ -452,9 +479,10 @@ export async function consumeEmailVerification(token: string): Promise<{ result:
   if (user.emailVerified) return { result: 'already_verified', user };
   user.emailVerified = true;
   user.emailVerifiedAt = new Date();
-  if (user.accountStatus === 'pending_verification') user.accountStatus = 'active';
+  if (user.accountStatus === 'pending_verification' && emailProofActivates(user)) user.accountStatus = 'active';
   await user.save();
   await endOutstandingChallenges(user._id, 'verify_email', 'used');
+  await markStaffApplicationEmailVerified(user._id);
   return { result: 'verified', user };
 }
 
@@ -559,9 +587,10 @@ export async function consumePasswordReset(token: string, newHash: string): Prom
     if (!user.emailVerified) {
       user.emailVerified = true;
       user.emailVerifiedAt = new Date();
-      if (user.accountStatus === 'pending_verification') user.accountStatus = 'active';
+      if (user.accountStatus === 'pending_verification' && emailProofActivates(user)) user.accountStatus = 'active';
     }
     await user.save();
+    if (user.emailVerified) await markStaffApplicationEmailVerified(user._id);
   } catch (err) {
     await PasswordResetToken.updateOne({ _id: doc._id, consumedAt: claimedAt }, { $set: { consumedAt: null } }).catch(() => undefined);
     throw err;

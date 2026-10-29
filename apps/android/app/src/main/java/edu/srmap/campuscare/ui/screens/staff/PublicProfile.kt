@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -133,51 +134,53 @@ fun CounsellorPublicProfileScreen() {
         },
     ) {
         LoadContent(load, skeleton = { SkeletonList(3) }) { view ->
-            val p = view.profile
-            if (!p.listed) {
-                InfoBanner(
-                    "Students can't find or book you in the directory right now.${p.listingReason?.let { " Reason: $it" } ?: ""} Contact a Super Admin if this is unexpected.",
-                    title = "Not listed", icon = Icons.Rounded.VisibilityOff, tone = Tone.Amber,
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                val p = view.profile
+                if (!p.listed) {
+                    InfoBanner(
+                        "Students can't find or book you in the directory right now.${p.listingReason?.let { " Reason: $it" } ?: ""} Contact a Super Admin if this is unexpected.",
+                        title = "Not listed", icon = Icons.Rounded.VisibilityOff, tone = Tone.Amber,
+                    )
+                }
+                if (!p.photoVisible) InfoBanner("Your photo is hidden on your public profile; students see your initials.", icon = Icons.Rounded.VisibilityOff, tone = Tone.Neutral)
+                InfoBanner("Your email, phone, employee ID, student records and session notes are never shown on your public profile.", icon = Icons.Rounded.Lock, tone = Tone.Violet)
+
+                SectionHeader("How students see you")
+                CcCard {
+                    KeyValue("Feedback", RatingText.summary(view.preview?.rating))
+                    if (view.preview?.rating?.isAvailable != true) Text(RatingText.threshold(view.feedbackMinimum), style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft)
+                    Text("You can't edit ratings or feedback. Students' identities are never shown to you.", style = MaterialTheme.typography.labelSmall, color = CcColors.InkFaint, modifier = Modifier.padding(top = 4.dp))
+                }
+
+                SectionHeader("Professional details")
+                CcTextField(title, { title = it }, label = "Title shown to students", maxLength = 80, hint = "For example: Senior Counsellor")
+                CcTextField(bio, { bio = it }, label = "About you", singleLine = false, minLines = 4, maxLength = 1000, hint = "Your approach and what you can help with. No personal contact details.")
+                Text("Areas of focus", style = MaterialTheme.typography.titleSmall, color = CcColors.Ink)
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SPECIALIZATION_LABELS.forEach { (k, v) -> Pill(v, k in specs) { specs = if (k in specs) specs - k else specs + k } }
+                }
+                CcTextField(languages, { languages = it }, label = "Languages", hint = "Separate with commas, e.g. English, Telugu")
+                Text("Session modes", style = MaterialTheme.typography.titleSmall, color = CcColors.Ink)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MODES.forEach { (k, v) -> Pill(v, k in modes) { modes = if (k in modes) modes - k else modes + k } }
+                }
+                if (modes.isEmpty()) Text("Choose at least one session mode.", style = MaterialTheme.typography.labelSmall, color = CcColors.Sos)
+
+                SectionHeader("Qualifications")
+                when {
+                    p.pendingCredentials != null -> InfoBanner(
+                        "Submitted ${p.pendingCredentials.submittedAt?.let { Fmt.ago(it) } ?: ""} and waiting for approval. Students keep seeing your last approved details until then.",
+                        icon = Icons.Rounded.HourglassTop, tone = Tone.Amber,
+                    )
+                    p.credentialsApprovedAt != null -> Text("Approved ${Fmt.ago(p.credentialsApprovedAt)}. Changes need approval again.", style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft)
+                    else -> Text("Shown to students only after a Super Admin verifies them.", style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft)
+                }
+                CcTextField(quals, { quals = it }, label = "Qualifications (one per line)", singleLine = false, minLines = 3, maxLength = 1200, hint = "Up to 10, e.g. M.Phil. Clinical Psychology")
+                CcTextField(
+                    years, { years = it.filter(Char::isDigit).take(2) }, label = "Years of experience (optional)",
+                    keyboardType = KeyboardType.Number, hint = if (yearsInvalid) "Enter 0–60" else null,
                 )
             }
-            if (!p.photoVisible) InfoBanner("Your photo is hidden on your public profile; students see your initials.", icon = Icons.Rounded.VisibilityOff, tone = Tone.Neutral)
-            InfoBanner("Your email, phone, employee ID, student records and session notes are never shown on your public profile.", icon = Icons.Rounded.Lock, tone = Tone.Violet)
-
-            SectionHeader("How students see you")
-            CcCard {
-                KeyValue("Feedback", RatingText.summary(view.preview?.rating))
-                if (view.preview?.rating?.isAvailable != true) Text(RatingText.threshold(view.feedbackMinimum), style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft)
-                Text("You can't edit ratings or feedback. Students' identities are never shown to you.", style = MaterialTheme.typography.labelSmall, color = CcColors.InkFaint, modifier = Modifier.padding(top = 4.dp))
-            }
-
-            SectionHeader("Professional details")
-            CcTextField(title, { title = it }, label = "Title shown to students", maxLength = 80, hint = "For example: Senior Counsellor")
-            CcTextField(bio, { bio = it }, label = "About you", singleLine = false, minLines = 4, maxLength = 1000, hint = "Your approach and what you can help with. No personal contact details.")
-            Text("Areas of focus", style = MaterialTheme.typography.titleSmall, color = CcColors.Ink)
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SPECIALIZATION_LABELS.forEach { (k, v) -> Pill(v, k in specs) { specs = if (k in specs) specs - k else specs + k } }
-            }
-            CcTextField(languages, { languages = it }, label = "Languages", hint = "Separate with commas, e.g. English, Telugu")
-            Text("Session modes", style = MaterialTheme.typography.titleSmall, color = CcColors.Ink)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MODES.forEach { (k, v) -> Pill(v, k in modes) { modes = if (k in modes) modes - k else modes + k } }
-            }
-            if (modes.isEmpty()) Text("Choose at least one session mode.", style = MaterialTheme.typography.labelSmall, color = CcColors.Sos)
-
-            SectionHeader("Qualifications")
-            when {
-                p.pendingCredentials != null -> InfoBanner(
-                    "Submitted ${p.pendingCredentials.submittedAt?.let { Fmt.ago(it) } ?: ""} and waiting for approval. Students keep seeing your last approved details until then.",
-                    icon = Icons.Rounded.HourglassTop, tone = Tone.Amber,
-                )
-                p.credentialsApprovedAt != null -> Text("Approved ${Fmt.ago(p.credentialsApprovedAt)}. Changes need approval again.", style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft)
-                else -> Text("Shown to students only after a Super Admin verifies them.", style = MaterialTheme.typography.labelSmall, color = CcColors.InkSoft)
-            }
-            CcTextField(quals, { quals = it }, label = "Qualifications (one per line)", singleLine = false, minLines = 3, maxLength = 1200, hint = "Up to 10, e.g. M.Phil. Clinical Psychology")
-            CcTextField(
-                years, { years = it.filter(Char::isDigit).take(2) }, label = "Years of experience (optional)",
-                keyboardType = KeyboardType.Number, hint = if (yearsInvalid) "Enter 0–60" else null,
-            )
         }
     }
 }

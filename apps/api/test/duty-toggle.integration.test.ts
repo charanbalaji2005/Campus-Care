@@ -16,7 +16,7 @@ type Agent = ReturnType<typeof request.agent>;
 d('Responder duty toggle (integration)', () => {
   let mongo: { stop: () => Promise<boolean>; getUri: () => string };
   let app: import('express').Express;
-  let M: typeof import('../src/models/user') & typeof import('../src/models/safety') & typeof import('../src/models/duty') & typeof import('../src/models/platform');
+  let M: typeof import('../src/models/user') & typeof import('../src/models/safety') & typeof import('../src/models/duty') & typeof import('../src/models/platform') & typeof import('../src/models/content');
   let settings: typeof import('../src/services/settings.service');
   let hash: string;
   const ids: Record<string, string> = {};
@@ -55,7 +55,7 @@ d('Responder duty toggle (integration)', () => {
     await connectDatabase(mongo.getUri());
     const { createApp } = await import('../src/app');
     app = createApp();
-    M = { ...(await import('../src/models/user')), ...(await import('../src/models/safety')), ...(await import('../src/models/duty')), ...(await import('../src/models/platform')) };
+    M = { ...(await import('../src/models/user')), ...(await import('../src/models/safety')), ...(await import('../src/models/duty')), ...(await import('../src/models/platform')), ...(await import('../src/models/content')) };
     settings = await import('../src/services/settings.service');
     for (const name of mongoose.modelNames()) await mongoose.model(name).syncIndexes();
     rootId = '000000000000000000000000';
@@ -127,9 +127,14 @@ d('Responder duty toggle (integration)', () => {
     expect(await M.AuditLog.countDocuments({ action: 'duty.status_changed', targetId: ids.guard })).toBe(2);
     expect((await officer.post('/api/v1/responders/me/heartbeat').send({})).body.error.code).toBe('not_on_duty');
 
+    const notifsBefore = await M.Notification.countDocuments({ userId: ids.guard });
     const alertId = await raise();
     expect(await M.AlertAssignment.countDocuments({ alertId, responderId: ids.guard })).toBe(0);
     expect((await M.EmergencyAlert.findById(alertId).lean())!.assignmentState).toBe('unassigned');
+    const activeResp = await officer.get('/api/v1/safety/responder/alerts');
+    expect(activeResp.status).toBe(200);
+    expect(activeResp.body.data).toEqual([]);
+    expect(await M.Notification.countDocuments({ userId: ids.guard })).toBe(notifsBefore);
     await closeAll();
   });
 

@@ -27,12 +27,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Place
+import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -68,12 +73,48 @@ import edu.srmap.campuscare.ui.theme.LocalReducedMotion
 private data class Tab(val route: String, val label: String, val icon: ImageVector, val badgeCount: Int = 0)
 
 private fun incidentRouteFor(role: String): String = when (role) {
-    "committee_member" -> Routes.CommitteeCases
+    "committee_member" -> Routes.CommitteeHome
     "admin" -> Routes.AdminTriage
     else -> Routes.ResponderCases
 }
 
 private fun tabsFor(role: String): List<Tab> {
+    if (role == "counsellor") {
+        return listOf(
+            Tab(Routes.CounsellorHome, "Home", Icons.Rounded.Home),
+            Tab(Routes.CounsellorStudents, "Students", Icons.Rounded.Groups),
+            Tab(Routes.CounsellorAppointments, "Schedule", Icons.Rounded.CalendarMonth),
+            Tab(Routes.CounsellorMessages, "Messages", Icons.Rounded.Forum),
+            Tab(Routes.CounsellorProfileSettings, "Profile", Icons.Rounded.Person),
+        )
+    }
+    if (role == "security_officer") {
+        return listOf(
+            Tab(Routes.SecurityHome, "Home", Icons.Rounded.Home),
+            Tab(Routes.SecurityAlerts, "Alerts", Icons.Rounded.NotificationsActive),
+            Tab(Routes.SecurityMap, "Map", Icons.Rounded.Place),
+            Tab(Routes.SecurityMessages, "Messages", Icons.Rounded.Forum),
+            Tab(Routes.SecurityProfile, "Profile", Icons.Rounded.Person),
+        )
+    }
+    if (role == "admin") {
+        return listOf(
+            Tab(Routes.CampusAdminHome, "Home", Icons.Rounded.Home),
+            Tab(Routes.CampusAdminSecurity, "Security", Icons.Rounded.Shield),
+            Tab(Routes.CampusAdminCounselling, "Counselling", Icons.Rounded.Psychology),
+            Tab(Routes.CampusAdminReports, "Reports", Icons.Rounded.Description),
+            Tab(Routes.CampusAdminMore, "More", Icons.Rounded.MoreHoriz),
+        )
+    }
+    if (role == "committee_member") {
+        return listOf(
+            Tab(Routes.CommitteeHome, "Home", Icons.Rounded.Home),
+            Tab(Routes.CommitteeReports, "Reports", Icons.Rounded.Description),
+            Tab(Routes.CommitteeStudents, "Students", Icons.Rounded.Groups),
+            Tab(Routes.CommitteeMessages, "Messages", Icons.Rounded.Forum),
+            Tab(Routes.CommitteeProfile, "Profile", Icons.Rounded.Person),
+        )
+    }
     val isCollege = AppAudience.current == AppAudience.College || role != "student"
     return if (!isCollege) {
         listOf(
@@ -92,25 +133,19 @@ private fun tabsFor(role: String): List<Tab> {
     }
 }
 
-private fun sosRouteFor(role: String): String = when (role) {
-    "student" -> Routes.Sos
-    "security_officer" -> Routes.ResponderAlerts
-    "admin" -> Routes.AdminAlerts
-    else -> Routes.ResponderAlerts
-}
-
 /**
- * Bottom navigation bar with 5 positions:
- * Position 1: Home
- * Position 2: Counsellors (Student) / Incidents (College)
- * Position 3: Raised circular red SOS button with glow halo
- * Position 4: Messages (with badge)
- * Position 5: Profile
+ * Bottom navigation bar:
+ * - Student portal: 5 positions with raised circular red SOS button in the center
+ * - Counsellor portal: 5 persistent destinations (Home, Students, Schedule, Messages, Profile) - NO SOS button
+ * - Security Officer portal: 5 persistent destinations (Home, Alerts, Map, Messages, Profile) - NO SOS button
+ * - Committee Member portal: 5 persistent destinations (Home, Reports, Students, Messages, Profile) - NO SOS button
+ * - Other staff portals (admin, moderator): 4 standard positions evenly spaced
  */
 @Composable
 fun RoleBottomBar(role: String, current: String, onSelect: (String) -> Unit) {
     val tabs = tabsFor(role)
     val nav = LocalNav.current
+    val showSos = role == "student" && AppAudience.current != AppAudience.College
 
     Box(
         Modifier
@@ -134,58 +169,93 @@ fun RoleBottomBar(role: String, current: String, onSelect: (String) -> Unit) {
             horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Tab 1 (Home)
-            if (tabs.isNotEmpty()) {
-                TabItem(
-                    tab = tabs[0],
-                    selected = current == tabs[0].route || (tabs[0].route == Routes.Home && current in setOf(Routes.CounsellorHome, Routes.AdminHome)),
-                    onClick = { onSelect(tabs[0].route) },
-                    modifier = Modifier.weight(1f),
-                )
-            }
+            if (showSos) {
+                // Student 5-slot layout with center SOS
+                if (tabs.isNotEmpty()) {
+                    TabItem(
+                        tab = tabs[0],
+                        selected = current == tabs[0].route,
+                        onClick = { onSelect(tabs[0].route) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (tabs.size > 1) {
+                    TabItem(
+                        tab = tabs[1],
+                        selected = current == tabs[1].route || current in setOf(Routes.FindCounsellor, Routes.BookSession),
+                        onClick = { onSelect(tabs[1].route) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Spacer(Modifier.width(76.dp))
+                if (tabs.size > 2) {
+                    TabItem(
+                        tab = tabs[2],
+                        selected = current == tabs[2].route || current.startsWith("chat"),
+                        onClick = { onSelect(tabs[2].route) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (tabs.size > 3) {
+                    TabItem(
+                        tab = tabs[3],
+                        selected = current == tabs[3].route,
+                        onClick = { onSelect(tabs[3].route) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            } else {
+                // Staff layout (counsellor 5, security 5, committee 5, or other staff 4 destinations)
+                tabs.forEach { tab ->
+                    val isSelected = when (tab.route) {
+                        Routes.CounsellorHome -> current in setOf(Routes.CounsellorHome, Routes.Home)
+                        Routes.CounsellorStudents -> current in setOf(Routes.CounsellorStudents, Routes.CounsellorStudentProfile) || current.startsWith("c/student")
+                        Routes.CounsellorAppointments -> current in setOf(Routes.CounsellorAppointments, Routes.Availability, Routes.MySchedule, Routes.CounsellorRequests) || current.startsWith("c/appointment")
+                        Routes.CounsellorMessages -> current in setOf(Routes.CounsellorMessages, Routes.Inbox, Routes.CounsellorChats, Routes.Chats) || current.startsWith("chat")
+                        Routes.CounsellorProfileSettings -> current in setOf(Routes.CounsellorProfileSettings, Routes.Profile, Routes.EditProfile, Routes.Privacy, Routes.NotificationPrefs, Routes.Security)
 
-            // Tab 2 (Counsellors / Incidents)
-            if (tabs.size > 1) {
-                TabItem(
-                    tab = tabs[1],
-                    selected = current == tabs[1].route || current in setOf(Routes.FindCounsellor, Routes.BookSession, Routes.ResponderCases, Routes.CommitteeCases, Routes.AdminTriage),
-                    onClick = { onSelect(tabs[1].route) },
-                    modifier = Modifier.weight(1f),
-                )
-            }
+                        Routes.SecurityHome -> current == Routes.SecurityHome
+                        Routes.SecurityAlerts -> current == Routes.SecurityAlerts || current.startsWith("sec/response")
+                        Routes.SecurityMap -> current == Routes.SecurityMap
+                        Routes.SecurityMessages -> current == Routes.SecurityMessages
+                        Routes.SecurityProfile -> current in setOf(Routes.SecurityProfile, Routes.Profile, Routes.EditProfile, Routes.Privacy, Routes.NotificationPrefs, Routes.Security)
 
-            // Center slot reserved for the raised SOS button (width: 76.dp)
-            Spacer(Modifier.width(76.dp))
+                        Routes.CommitteeHome -> current == Routes.CommitteeHome
+                        Routes.CommitteeReports -> current in setOf(Routes.CommitteeReports, Routes.CommitteeCases) || current.startsWith("com/reports") || current.startsWith("com/investigation")
+                        Routes.CommitteeStudents -> current.startsWith("com/students")
+                        Routes.CommitteeMessages -> current == Routes.CommitteeMessages
+                        Routes.CommitteeProfile -> current in setOf(Routes.CommitteeProfile, Routes.Profile, Routes.EditProfile, Routes.Privacy, Routes.NotificationPrefs, Routes.Security)
 
-            // Tab 4 (Messages)
-            if (tabs.size > 2) {
-                TabItem(
-                    tab = tabs[2],
-                    selected = current == tabs[2].route || current.startsWith("chat"),
-                    onClick = { onSelect(tabs[2].route) },
-                    modifier = Modifier.weight(1f),
-                )
-            }
+                        Routes.CampusAdminHome -> current in setOf(Routes.CampusAdminHome, Routes.AdminHome)
+                        Routes.CampusAdminSecurity -> current in setOf(Routes.CampusAdminSecurity, Routes.CampusAdminSos) || current.startsWith("ca/sos")
+                        Routes.CampusAdminCounselling -> current == Routes.CampusAdminCounselling
+                        Routes.CampusAdminReports -> current == Routes.CampusAdminReports
+                        Routes.CampusAdminMore -> current in setOf(Routes.CampusAdminMore, Routes.CampusAdminStudents, Routes.CampusAdminCommittees, Routes.CampusAdminAnalytics, Routes.CampusAdminAnnouncements, Routes.CampusAdminMessages, Routes.CampusAdminProfile, Routes.CampusAdminMap) || current.startsWith("ca/students")
 
-            // Tab 5 (Profile)
-            if (tabs.size > 3) {
-                TabItem(
-                    tab = tabs[3],
-                    selected = current == tabs[3].route,
-                    onClick = { onSelect(tabs[3].route) },
-                    modifier = Modifier.weight(1f),
-                )
+                        Routes.Home -> current in setOf(Routes.Home, Routes.AdminHome)
+                        Routes.Profile -> current in setOf(Routes.Profile, Routes.EditProfile, Routes.Privacy, Routes.NotificationPrefs, Routes.Security)
+                        Routes.Chats -> current == Routes.Chats || current.startsWith("chat")
+                        else -> current == tab.route || (tab.route == incidentRouteFor(role) && current in setOf(Routes.ResponderCases, Routes.CommitteeCases, Routes.AdminTriage))
+                    }
+                    TabItem(
+                        tab = tab,
+                        selected = isSelected,
+                        onClick = { onSelect(tab.route) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
 
-        // Center raised SOS button (prominent circular red button elevated with halo)
-        SosCenterButton(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = (-20).dp),
-        ) {
-            val target = sosRouteFor(role)
-            nav.navigate(target) { launchSingleTop = true }
+        // Center raised SOS button (prominent circular red button elevated with halo) - student portal only
+        if (showSos) {
+            SosCenterButton(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = (-20).dp),
+            ) {
+                nav.navigate(Routes.Sos) { launchSingleTop = true }
+            }
         }
     }
 }

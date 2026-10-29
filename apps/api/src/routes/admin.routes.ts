@@ -14,6 +14,11 @@ import { Announcement, Contact, TrainingModule, TrainingProgress } from '../mode
 import { CampusAlert, EmergencyAlert, SafetyCheckIn } from '../models/safety';
 import { AuditLog } from '../models/platform';
 import { requireAuth, requireMfaPolicy, requirePermission } from '../middleware/auth';
+import { campusScopeOf, inCampusScope, userCampusFilter } from '../services/campus-scope.service';
+import { standDownAccount } from '../services/account-lifecycle.service';
+import { emailProofActivates } from '../services/auth.service';
+import { canTransitionVerification, type StudentVerificationStatus } from '@campuscare/shared';
+import type { UserDoc } from '../models/user';
 import { audit, verifyAuditChain, getAuditMetrics, getRecordHistory } from '../services/audit.service';
 import { getDbWatcherHealth } from '../services/db-watcher.service';
 import { appLink, sendEmail } from '../services/email/email.service';
@@ -133,8 +138,11 @@ adminRouter.get(
       const q = escapeRegex(String(req.query.q).slice(0, 60));
       filter.$or = [{ fullName: { $regex: q, $options: 'i' } }, { email: { $regex: q, $options: 'i' } }, { studentId: { $regex: q, $options: 'i' } }];
     }
-    // Ordinary admins cannot see or manage super admin accounts.
-    if (req.user!.role !== 'super_admin') { filter.role = filter.role && filter.role !== 'super_admin' ? filter.role : { $ne: 'super_admin' }; if (req.user!.campusZone) { filter.campusZone = req.user!.campusZone; } }
+    // Ordinary admins cannot see or manage super admin accounts, and see only their own campuses.
+    if (req.user!.role !== 'super_admin') {
+      filter.role = filter.role && filter.role !== 'super_admin' ? filter.role : { $ne: 'super_admin' };
+      filter.$and = [userCampusFilter(campusScopeOf(req.user!))]; // $and: the search's own $or stays intact
+    }
     const [items, total] = await Promise.all([User.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit), User.countDocuments(filter)]);
     ok(res, { items: items.map((u) => ({ ...publicUser(u), createdAt: u.createdAt, lastLoginAt: u.lastLoginAt, suspendedReason: u.suspendedReason })), total, page, limit });
   }),
@@ -161,12 +169,15 @@ adminRouter.post(
   }),
 );
 
-async function loadManageableUser(actorRole: Role, id: string) {
+async function loadManageableUser(actor: UserDoc, id: string) {
   if (!Types.ObjectId.isValid(id)) throw notFound();
   const target = await User.findById(id);
   if (!target) throw notFound();
+  const actorRole = actor.role as Role;
   if (target.role === 'super_admin' && actorRole !== 'super_admin') throw notFound();
   if (actorRole === 'admin' && target.role === 'admin') throw new AppError(403, 'forbidden', 'Administrators cannot manage other administrators.');
+  // Another campus's accounts do not exist as far as a Campus Admin is concerned.
+  if (!inCampusScope(campusScopeOf(actor), target.campusZone)) throw notFound();
   return target;
 }
 
@@ -175,16 +186,16 @@ adminRouter.post(
   requirePermission('users:manage'),
   asyncHandler(async (req, res) => {
     const input = parse(userStatusSchema, req.body);
-    const target = await loadManageableUser(req.user!.role as Role, req.params.id);
+    const target = await loadManageableUser(req.user!, req.params.id);
     if (String(target._id) === String(req.user!._id)) throw new AppError(422, 'self', 'You cannot change your own account status.');
     if (input.action === 'suspend') {
       target.accountStatus = 'suspended';
       target.suspendedReason = input.reason;
       await target.save();
-      await revokeAllSessions(String(target._id));
-      await disconnectUser(String(target._id));
+      // Sessions end now; a responder's open SOS alerts are handed to another eligible responder.
+      await standDownAccount(target, { actorId: String(req.user!._id), reason: `suspended by campus admin: ${input.reason ?? 'no reason given'}`, req });
     } else {
-      target.accountStatus = target.emailVerified ? 'active' : 'pending_verification';
+      target.accountStatus = target.emailVerified && emailProofActivates(target) ? 'active' : 'pending_verification';
       target.suspendedReason = null;
       await target.save();
     }
@@ -197,7 +208,7 @@ adminRouter.post(
   '/users/:id/resend-invite',
   requirePermission('users:manage'),
   asyncHandler(async (req, res) => {
-    const target = await loadManageableUser(req.user!.role as Role, req.params.id);
+    const target = await loadManageableUser(req.user!, req.params.id);
     if (target.accountStatus !== 'invited') throw new AppError(409, 'not_invited', 'This account is already active.');
     await InviteToken.updateMany({ userId: target._id, consumedAt: null }, { $set: { consumedAt: new Date() } });
     const token = randomToken(32);
@@ -212,7 +223,7 @@ adminRouter.post(
   '/users/:id/recovery',
   requirePermission('users:manage'),
   asyncHandler(async (req, res) => {
-    const target = await loadManageableUser(req.user!.role as Role, req.params.id);
+    const target = await loadManageableUser(req.user!, req.params.id);
     const { requestPasswordReset } = await import('../services/auth.service');
     await requestPasswordReset(target.email);
     await revokeAllSessions(String(target._id));
@@ -225,8 +236,9 @@ adminRouter.get(
   '/users/export',
   requirePermission('users:manage'),
   asyncHandler(async (req, res) => {
-    const users = await User.find({ role: req.user!.role === 'super_admin' ? { $exists: true } : { $ne: 'super_admin' } }).limit(10000).lean();
-    await audit({ action: 'user.exported', req, meta: { count: users.length } });
+    const scope = campusScopeOf(req.user!);
+    const users = await User.find({ role: req.user!.role === 'super_admin' ? { $exists: true } : { $ne: 'super_admin' }, ...userCampusFilter(scope) }).limit(10000).lean();
+    await audit({ action: 'user.exported', req, meta: { count: users.length, campuses: scope ?? 'all' } });
     const rows = [['name', 'email', 'role', 'status', 'studentId', 'department', 'createdAt']].concat(
       users.map((u) => [u.fullName, u.email, u.role, u.accountStatus, u.studentId ?? '', u.department ?? '', u.createdAt.toISOString()]),
     );
@@ -325,6 +337,14 @@ adminRouter.get(
 );
 
 // ------------------------------------------------------------------ announcements, campus alerts, training, contacts
+/** Campus Admins may change only announcements for campuses they manage (not "all campuses" ones). */
+async function assertAnnouncementInScope(model: unknown, user: UserDoc, id: string) {
+  if (model !== Announcement) return;
+  const scope = campusScopeOf(user);
+  if (scope === null || !Types.ObjectId.isValid(id)) return;
+  const a = await Announcement.findById(id, { campus: 1 }).lean();
+  if (a && (a.campus === 'all' || !inCampusScope(scope, a.campus))) throw new AppError(403, 'campus_out_of_scope', 'This announcement belongs to another campus or to every campus.');
+}
 function crud<T extends { create: Function }>(path: string, permission: Parameters<typeof requirePermission>[0], model: any, schema: any, label: string) {
   adminRouter.get(`/${path}`, requirePermission(permission), asyncHandler(async (_req, res) => {
     const list = await model.find({}).sort({ createdAt: -1 }).limit(500).lean();
@@ -332,18 +352,23 @@ function crud<T extends { create: Function }>(path: string, permission: Paramete
   }));
   adminRouter.post(`/${path}`, requirePermission(permission), asyncHandler(async (req, res) => {
     const input = parse(schema, req.body);
-    const doc = await model.create({ ...input, ...(model === Announcement || model === TrainingModule ? { authorId: req.user!._id } : {}) });
+    // A Campus Admin's announcement is for their own campus, never every campus.
+    const scope = campusScopeOf(req.user!);
+    const campusOnly = model === Announcement && scope !== null ? { campus: scope[0] } : {};
+    const doc = await model.create({ ...input, ...campusOnly, ...(model === Announcement || model === TrainingModule ? { authorId: req.user!._id } : {}) });
     await audit({ action: `${label}.created`, req, targetType: label, targetId: String(doc._id) });
     ok(res, doc, 201);
   }));
   adminRouter.patch(`/${path}/:id`, requirePermission(permission), asyncHandler(async (req, res) => {
     const input = parse(schema.partial ? schema.partial() : schema, req.body);
+    await assertAnnouncementInScope(model, req.user!, req.params.id);
     const doc = await model.findByIdAndUpdate(req.params.id, { $set: input }, { new: true });
     if (!doc) throw notFound();
     await audit({ action: `${label}.updated`, req, targetType: label, targetId: String(doc._id) });
     ok(res, doc);
   }));
   adminRouter.delete(`/${path}/:id`, requirePermission(permission), asyncHandler(async (req, res) => {
+    await assertAnnouncementInScope(model, req.user!, req.params.id);
     const doc = await model.findByIdAndDelete(req.params.id);
     if (!doc) throw notFound();
     await audit({ action: `${label}.deleted`, req, targetType: label, targetId: req.params.id });
@@ -652,17 +677,19 @@ adminRouter.get(
   requirePermission('users:manage'),
   asyncHandler(async (req, res) => {
     const { page, limit, skip } = pageParams(req.query);
-    const campus = req.user!.campusZone || req.user!.managedCampuses?.[0] || 'main';
+    const scope = campusScopeOf(req.user!);
+    const campus = scope?.join(', ') ?? 'all';
     const filter: Record<string, unknown> = {
-      campusZone: campus,
-      verificationStatus: { $in: ['pending', 'under_review', 'needs_info'] },
+      ...userCampusFilter(scope),
+      role: { $ne: 'super_admin' },
+      verificationStatus: { $in: ['pending', 'submitted', 'under_review', 'needs_info'] },
     };
-    if (req.query.role && req.query.role !== 'all') {
-      filter.role = req.query.role;
+    if (req.query.role && req.query.role !== 'all' && req.query.role !== 'super_admin') {
+      filter.role = String(req.query.role);
     }
     if (req.query.q) {
       const q = escapeRegex(String(req.query.q).slice(0, 60));
-      filter.$or = [{ fullName: { $regex: q, $options: 'i' } }, { email: { $regex: q, $options: 'i' } }, { studentId: { $regex: q, $options: 'i' } }, { staffId: { $regex: q, $options: 'i' } }];
+      filter.$and = [{ $or: [{ fullName: { $regex: q, $options: 'i' } }, { email: { $regex: q, $options: 'i' } }, { studentId: { $regex: q, $options: 'i' } }, { staffId: { $regex: q, $options: 'i' } }] }];
     }
     const [items, total] = await Promise.all([
       User.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
@@ -703,11 +730,15 @@ adminRouter.post(
   '/verifications/evidence/:id/initial-review',
   requirePermission('users:manage'),
   asyncHandler(async (req, res) => {
+    if (!Types.ObjectId.isValid(req.params.id)) throw notFound('Verification evidence not found.');
     const ev = await VerificationEvidence.findById(req.params.id);
     if (!ev) throw notFound('Verification evidence not found.');
-    const campus = req.user!.campusZone || req.user!.managedCampuses?.[0] || 'main';
-    if (req.user!.role !== 'super_admin' && ev.campus !== campus) {
+    if (!inCampusScope(campusScopeOf(req.user!), ev.campus)) {
       throw new AppError(403, 'forbidden', 'You can only review applications for your assigned campus.');
+    }
+    if (String(ev.userId) === String(req.user!._id)) throw new AppError(403, 'forbidden', 'You cannot review your own application.');
+    if (!['pending', 'under_review', 'more_info_required'].includes(ev.status)) {
+      throw new AppError(409, 'already_decided', 'This application already has a final decision. Only a Super Admin can reopen it.');
     }
     const input = parse(z.object({
       recommendation: z.enum(['recommend_approval', 'recommend_rejection', 'needs_info']),
@@ -719,7 +750,13 @@ adminRouter.post(
     ev.initialRecommendation = input.recommendation;
     ev.status = 'under_review';
     await ev.save();
-    await User.updateOne({ _id: ev.userId }, { $set: { verificationStatus: 'under_review', verificationNotes: `[Campus Admin Note]: ${input.notes}` } });
+    // Initial review only moves the case to "under review"; the final decision stays with the Super Admin.
+    const applicant = await User.findById(ev.userId, { verificationStatus: 1 }).lean();
+    const from = (applicant?.verificationStatus ?? 'pending') as StudentVerificationStatus;
+    await User.updateOne({ _id: ev.userId }, { $set: {
+      ...(canTransitionVerification(from, 'under_review') ? { verificationStatus: 'under_review' } : {}),
+      verificationNotes: `[Campus Admin Note]: ${input.notes}`,
+    } });
     await audit({
       action: 'verification.campus_initial_review',
       req,
@@ -735,12 +772,15 @@ adminRouter.get(
   '/verifications/evidence/:id/file',
   requirePermission('users:manage'),
   asyncHandler(async (req, res) => {
+    if (!Types.ObjectId.isValid(req.params.id)) throw notFound('Verification evidence file not found.');
     const ev = await VerificationEvidence.findById(req.params.id).select('+data');
     if (!ev || !ev.data) throw notFound('Verification evidence file not found.');
-    const campus = req.user!.campusZone || req.user!.managedCampuses?.[0] || 'main';
-    if (req.user!.role !== 'super_admin' && ev.campus !== campus) {
+    if (!inCampusScope(campusScopeOf(req.user!), ev.campus)) {
+      await audit({ action: 'verification.evidence_access_denied', req, outcome: 'denied', targetType: 'verification_evidence', targetId: String(ev._id) });
       throw new AppError(403, 'forbidden', 'You can only access files for your assigned campus.');
     }
+    await audit({ action: 'verification.evidence_viewed', req, targetType: 'verification_evidence', targetId: String(ev._id), meta: { userId: String(ev.userId), campus: ev.campus } });
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Type', ev.mime || 'image/jpeg');
     res.setHeader('Content-Length', ev.data.length);
     res.setHeader('Cache-Control', 'private, no-store');

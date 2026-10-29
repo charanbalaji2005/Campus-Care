@@ -18,6 +18,7 @@ import { chatsRouter } from './routes/chats.routes';
 import { safetyRouter } from './routes/safety.routes';
 import { contentRouter } from './routes/content.routes';
 import { adminRouter } from './routes/admin.routes';
+import { campusAdminPortalRouter } from './routes/campus-admin-portal.routes';
 import { superAdminRouter } from './routes/superadmin.routes';
 import { supportRouter } from './routes/support.routes';
 import { webhooksRouter } from './routes/webhooks.routes';
@@ -31,6 +32,8 @@ import { counsellingChatRouter } from './routes/counselling-chat.routes';
 import { wellnessRouter } from './routes/wellness.routes';
 import { opsRouter } from './routes/ops.routes';
 import { campusMapRouter } from './routes/campus-map.routes';
+import { securityPortalRouter } from './routes/security-portal.routes';
+import { committeePortalRouter } from './routes/committee-portal.routes';
 import { getSettings } from './services/settings.service';
 import { AppError } from './lib/http';
 // Side-effect imports register background jobs and socket room authorisers.
@@ -111,16 +114,19 @@ export function createApp() {
   app.use('/api/v1/community', feedRouter);
   app.use('/api/v1/community', communityRouter);
   app.use('/api/v1/counselling', counsellingChatRouter);
+  app.use('/api/v1/incidents/committee', committeePortalRouter);
   app.use('/api/v1/incidents', incidentsRouter);
   app.use('/api/v1/counselling', counsellingRouter);
   app.use('/api/v1/counselling', wellnessRouter);
   app.use('/api/v1/counselling', counsellorProfileRouter);
   app.use('/api/v1/chat', chatRouter);
   app.use('/api/v1/chats', chatsRouter);
+  app.use('/api/v1/safety/security', securityPortalRouter);
   app.use('/api/v1/safety', safetyRouter);
   // Mounted before /admin so operations routes keep their own guards (a duty supervisor need not hold admin:access).
   app.use('/api/v1', opsRouter);
   app.use('/api/v1', contentRouter);
+  app.use('/api/v1/admin/portal', campusAdminPortalRouter);
   app.use('/api/v1/admin', adminRouter);
   app.use(['/api/v1/super-admin', '/api/v1/superadmin'], superAdminRouter);
   app.use('/api/v1/support', supportRouter);

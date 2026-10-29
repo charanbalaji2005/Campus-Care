@@ -112,9 +112,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 /** Destinations that show the role's bottom navigation bar. */
 private val TOP_LEVEL = setOf(
     Routes.Home, Routes.Counselling, Routes.Support, Routes.Chats, Routes.Reports, Routes.Profile, Routes.Notifications,
-    Routes.CounsellorHome, Routes.CounsellorAppointments, Routes.Inbox,
+    Routes.CounsellorHome, Routes.CounsellorAppointments, Routes.CounsellorStudents, Routes.CounsellorMessages, Routes.CounsellorProfileSettings, Routes.Inbox,
+    Routes.SecurityHome, Routes.SecurityAlerts, Routes.SecurityMap, Routes.SecurityMessages, Routes.SecurityProfile,
+    Routes.CommitteeHome, Routes.CommitteeReports, Routes.CommitteeStudents, Routes.CommitteeMessages, Routes.CommitteeProfile,
     Routes.CommitteeCases, Routes.ResponderAlerts, Routes.ResponderLocations, Routes.ResponderCases,
     Routes.AdminHome, Routes.AdminTriage, Routes.Moderation,
+    Routes.CampusAdminHome, Routes.CampusAdminSecurity, Routes.CampusAdminCounselling, Routes.CampusAdminReports, Routes.CampusAdminMore,
+    Routes.CampusAdminStudents, Routes.CampusAdminMessages, Routes.CampusAdminProfile,
 )
 
 @Composable
@@ -195,7 +199,7 @@ fun AppRoot(container: AppContainer, pendingLink: String?, onLinkHandled: () -> 
             val token = uri.getQueryParameter("token")
             when (uri.getQueryParameter("error")) {
                 null -> Unit
-                "no_staff_account" -> snack.show("No college staff account uses this Google address. Staff accounts are created by your campus administrator.", long = true)
+                "no_staff_account" -> snack.show("No college staff account uses this Google address. Tap Register as College Staff to apply.", long = true)
                 "wrong_app" -> snack.show("This account belongs to ${AppAudience.current.other.appName}. Sign in there instead.", long = true)
                 else -> snack.show("Sign-in failed. Please try again.")
             }

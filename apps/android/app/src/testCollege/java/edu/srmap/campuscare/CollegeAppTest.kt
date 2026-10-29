@@ -17,9 +17,9 @@ class CollegeAppTest {
     fun eachStaffRoleGetsItsOwnHomeAndStudentsAreSentToSignIn() {
         assertEquals(Routes.Login, Routes.homeFor("student"))
         assertEquals(Routes.CounsellorHome, Routes.homeFor("counsellor"))
-        assertEquals(Routes.CommitteeCases, Routes.homeFor("committee_member"))
-        assertEquals(Routes.ResponderAlerts, Routes.homeFor("security_officer"))
-        assertEquals(Routes.AdminHome, Routes.homeFor("admin"))
+        assertEquals(Routes.CommitteeHome, Routes.homeFor("committee_member"))
+        assertEquals(Routes.SecurityHome, Routes.homeFor("security_officer"))
+        assertEquals(Routes.CampusAdminHome, Routes.homeFor("admin"))
         assertEquals(Routes.Moderation, Routes.homeFor("moderator"))
     }
 

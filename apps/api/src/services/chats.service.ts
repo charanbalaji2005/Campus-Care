@@ -16,6 +16,7 @@ import { SupportTicket } from '../models/support';
 import { EmergencyAlert } from '../models/safety';
 import { EmailDelivery } from '../models/platform';
 import { User, type UserDoc } from '../models/user';
+import { DEFAULT_CAMPUS, campusScopeOf, userCampusFilter } from './campus-scope.service';
 import { emitBroadcast, isUserOnline } from '../realtime/socket';
 import { audit } from './audit.service';
 import { channelAccess } from './chat.service';
@@ -295,7 +296,13 @@ async function sosAlertItems(user: UserDoc, category: ChatCategory): Promise<Con
   if (!wants(category, 'security')) return [];
   if (!can(user, 'sos:dispatch') && user.role !== 'security_officer' && !isAdmin(user)) return [];
 
-  const alerts = await EmergencyAlert.find({}).sort({ createdAt: -1 }).limit(category === 'security' ? 50 : 20).lean();
+  // Responders and dispatchers see SOS detail; an administrator without those permissions sees only
+  // their own campuses' alerts as locked status rows (no student identity, note or location).
+  const detailed = can(user, 'sos:respond') || can(user, 'sos:dispatch');
+  const campusScope = detailed ? null : campusScopeOf(user);
+  const campusFilter = campusScope === null ? {} : campusScope.includes(DEFAULT_CAMPUS)
+    ? { $or: [{ campus: { $in: campusScope } }, { campus: null }] } : { campus: { $in: campusScope } };
+  const alerts = await EmergencyAlert.find({ status: { $ne: 'pending' }, ...campusFilter }).sort({ createdAt: -1 }).limit(category === 'security' ? 50 : 20).lean();
   const students = await User.find({ _id: { $in: alerts.map((a) => a.userId) } }, { fullName: 1, phone: 1 }).lean();
   const studentMap = new Map(students.map((s) => [String(s._id), s]));
   const prefs = await preferencesFor(user._id, alerts.map((a) => String(a._id)));
@@ -305,6 +312,15 @@ async function sosAlertItems(user: UserDoc, category: ChatCategory): Promise<Con
     const student = studentMap.get(String(a.userId));
     const active = ['active', 'queued', 'pending'].includes(a.status);
     const loc = a.latitude && a.longitude ? `Lat: ${a.latitude.toFixed(4)}, Lng: ${a.longitude.toFixed(4)}` : 'Location unavailable';
+    if (!detailed) {
+      return {
+        type: 'sos', id: String(a._id), category: 'security', kind: 'sos_alert',
+        title: a.alertNumber || 'SOS Alert', subtitle: `Status: ${a.status.replace(/_/g, ' ')}`, preview: null,
+        lastActivityAt: (a.updatedAt as Date) ?? (a.createdAt as Date) ?? null, unread: 0, online: null, status: a.status,
+        priority: active ? 'urgent' : null, locked: true, lockedReason: 'Handled by Campus Security. Open SOS oversight for status.',
+        needsResponse: false, threadId: null, pinned: Boolean(pref?.pinned), archived: Boolean(pref?.archived), muted: false, markedUnread: false,
+      } satisfies ConversationItem;
+    }
 
     return {
       type: 'sos',
@@ -678,7 +694,8 @@ export function announcementAudienceFilter(user: UserDoc) {
       { $or: [{ status: 'published' }, { status: { $exists: false }, published: true }] },
       { $or: [{ expiresAt: null }, { expiresAt: { $exists: false } }, { expiresAt: { $gt: now } }] },
       { $or: [{ targetRoles: { $in: ['all', user.role] } }, { targetRoles: { $exists: false } }] },
-      { $or: [{ campus: 'all' }, { campus: { $exists: false } }, ...(user.campusZone ? [{ campus: user.campusZone }] : [])] },
+      // Accounts without a campus belong to the default campus (same rule as campus-scope.service).
+      { $or: [{ campus: 'all' }, { campus: { $exists: false } }, { campus: user.campusZone || DEFAULT_CAMPUS }] },
     ],
   };
 }
@@ -705,7 +722,7 @@ export function fanOutAnnouncement(a: { _id: unknown; title: string; priority?: 
   const roles = a.targetRoles?.length && !a.targetRoles.includes('all') ? a.targetRoles : null;
   const filter: Record<string, unknown> = { accountStatus: 'active', _id: { $ne: a.authorId } };
   if (roles) filter.role = { $in: roles };
-  if (a.campus && a.campus !== 'all') filter.campusZone = a.campus;
+  if (a.campus && a.campus !== 'all') Object.assign(filter, userCampusFilter([a.campus]));
   void (async () => {
     const cursor = User.find(filter, { _id: 1 }).lean().cursor();
     let batch: string[] = [];

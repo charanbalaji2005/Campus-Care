@@ -9,7 +9,7 @@ import { User, type UserDoc } from '../models/user';
 import { getSettings } from './settings.service';
 import { audit } from './audit.service';
 import { notifyMany } from './notification.service';
-import { emitToRoom, emitToUser, registerRoomAuthoriser } from '../realtime/socket';
+import { emitToRoom, emitToUser, evictFromRoom, registerRoomAuthoriser } from '../realtime/socket';
 import { registerPeriodic } from './jobs.service';
 import { logger } from '../lib/logger';
 
@@ -24,6 +24,28 @@ import { logger } from '../lib/logger';
 
 const subject = (u: { role: string; permissions?: string[] }) => ({ role: u.role as Role, permissions: u.permissions ?? [] });
 export const isResponder = (u: { role: string; permissions?: string[] }) => hasPermission(subject(u), 'sos:respond');
+
+/**
+ * IDs of security officers / responders who are currently on active duty (on_duty, busy, responding).
+ * Responders who are off_duty, unavailable, or on_break are excluded.
+ */
+export async function onDutyResponderIds(): Promise<string[]> {
+  const onDutyAvail = await ResponderAvailability.find(
+    { status: { $in: ['on_duty', 'busy', 'responding'] } },
+    { userId: 1 },
+  ).lean();
+  return onDutyAvail.map((a) => String(a.userId));
+}
+
+/** Security officers who are currently on active duty with an active user account. */
+export async function onDutySecurityOfficers(): Promise<Array<{ _id: Types.ObjectId; email: string; fullName: string }>> {
+  const ids = await onDutyResponderIds();
+  if (!ids.length) return [];
+  return User.find(
+    { _id: { $in: ids }, role: 'security_officer', accountStatus: 'active' },
+    { _id: 1, email: 1, fullName: 1 },
+  ).lean() as unknown as Array<{ _id: Types.ObjectId; email: string; fullName: string }>;
+}
 
 registerRoomAuthoriser('duty', async (user) => hasPermission(subject(user), 'duty:view') || hasPermission(subject(user), 'duty:manage'));
 
@@ -152,6 +174,9 @@ export async function changeDutyStatus(userId: string, to: DutyStatus, change: D
       meta: { from, to, actor: change.actor, force: Boolean(change.force), shiftId: change.shiftId ? String(change.shiftId) : null },
     });
     broadcast(updated, s.duty.staleThresholdSeconds);
+    if (leaving) {
+      evictFromRoom(String(userId), 'responders:all').catch(() => undefined);
+    }
     if (leaving && (current.activeAssignmentCount ?? 0) > 0) {
       for (const h of hooks.removed) await h(userId, change.reason ?? `Responder went ${to.replace('_', ' ')}`).catch((err) => logger.error({ err: (err as Error).message }, 'duty hook failed'));
     }

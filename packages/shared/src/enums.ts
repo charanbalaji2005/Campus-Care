@@ -175,6 +175,7 @@ export const ACCOUNT_STATUS_LABELS: Record<AccountStatus, string> = {
  */
 export const STUDENT_VERIFICATION_STATUSES = [
   'pending',
+  'submitted',
   'under_review',
   'approved',
   'rejected',
@@ -186,6 +187,7 @@ export type StudentVerificationStatus = (typeof STUDENT_VERIFICATION_STATUSES)[n
 
 export const STUDENT_VERIFICATION_LABELS: Record<StudentVerificationStatus, string> = {
   pending: 'Pending Verification',
+  submitted: 'Evidence Submitted',
   under_review: 'Under Review',
   approved: 'Verified & Approved',
   rejected: 'Rejected',
@@ -193,6 +195,27 @@ export const STUDENT_VERIFICATION_LABELS: Record<StudentVerificationStatus, stri
   expired: 'Enrollment Expired',
   revoked: 'Verification Revoked',
 };
+
+/**
+ * Allowed identity-verification transitions (institutional review, never email verification).
+ * - The applicant moves pending/needs_info/rejected -> submitted by uploading evidence.
+ * - Reviewers move submitted -> under_review, and submitted/under_review -> approved/rejected/needs_info.
+ * - A decided case is only reopened on purpose (approved/rejected -> under_review, with a reason).
+ */
+const VERIFICATION_TRANSITIONS: Record<StudentVerificationStatus, StudentVerificationStatus[]> = {
+  pending: ['submitted', 'under_review', 'approved', 'rejected', 'needs_info'],
+  submitted: ['under_review', 'approved', 'rejected', 'needs_info'],
+  under_review: ['approved', 'rejected', 'needs_info'],
+  needs_info: ['submitted', 'under_review', 'rejected'],
+  approved: ['under_review', 'revoked', 'expired'],
+  rejected: ['submitted', 'under_review'],
+  expired: ['submitted', 'under_review'],
+  revoked: ['under_review'],
+};
+
+export function canTransitionVerification(from: StudentVerificationStatus, to: StudentVerificationStatus): boolean {
+  return from === to ? false : VERIFICATION_TRANSITIONS[from]?.includes(to) ?? false;
+}
 
 export const COMMITTEE_TYPES = [
   'anti_ragging',

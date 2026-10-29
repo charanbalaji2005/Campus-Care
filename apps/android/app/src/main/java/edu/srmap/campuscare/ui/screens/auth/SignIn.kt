@@ -1,7 +1,6 @@
 package edu.srmap.campuscare.ui.screens.auth
 
 import edu.srmap.campuscare.AppAudience
-import edu.srmap.campuscare.BuildConfig
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -81,6 +80,9 @@ import edu.srmap.campuscare.ui.components.rememberTurnstile
 import edu.srmap.campuscare.ui.navigation.Routes
 import edu.srmap.campuscare.ui.theme.CcColors
 import edu.srmap.campuscare.util.GoogleFailure
+import edu.srmap.campuscare.util.GoogleIntent
+import edu.srmap.campuscare.util.GoogleRefusal
+import edu.srmap.campuscare.util.GoogleRefusals
 import edu.srmap.campuscare.util.GoogleResult
 import edu.srmap.campuscare.util.GoogleSignIn
 import kotlinx.coroutines.delay
@@ -91,7 +93,6 @@ fun LoginScreen() {
     val app = LocalApp.current
     val nav = LocalNav.current
     val snack = LocalSnack.current
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings = app.config.config.value.settings
     val domain = settings.accountEmailDomain
@@ -104,9 +105,6 @@ fun LoginScreen() {
     var needMfa by remember { mutableStateOf(false) }
     var challengeToken by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    var googleBusy by remember { mutableStateOf(false) }
-    /** Last native Google sign-in problem, shown in place (with a retry when it can help). */
-    var googleError by remember { mutableStateOf<GoogleResult.Failed?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var unverified by remember { mutableStateOf(false) }
     var verificationTicket by remember { mutableStateOf<String?>(null) }
@@ -124,7 +122,8 @@ fun LoginScreen() {
                 error = null
                 try {
                     val resp = app.api.auth.mfaChallenge(challenge, mfaCode)
-                    app.rememberedEmail = if (rememberMe) email.trim().lowercase() else null
+                    // After Google the email field may be empty: keep what was remembered before.
+                    if (email.isNotBlank()) app.rememberedEmail = if (rememberMe) email.trim().lowercase() else null
                     completeSignIn(app, nav, resp, rememberMe)
                 } catch (e: ApiException) {
                     if (e.code == "mfa_challenge_expired") {
@@ -168,7 +167,10 @@ fun LoginScreen() {
     val college = AppAudience.current == AppAudience.College
     AuthLayout("Welcome Back", if (college) "CampusCare College · sign in with your staff account" else "CampusCare Student · sign in to a safer campus") {
         CcTextField(email, { email = it; emailError = null }, label = "University email", placeholder = "you@$domain", leadingIcon = Icons.Rounded.Email, keyboardType = KeyboardType.Email, error = emailError)
-        CcTextField(password, { password = it }, label = "Password", placeholder = "Enter your password", leadingIcon = Icons.Rounded.Lock, password = true, imeAction = if (needMfa) ImeAction.Next else ImeAction.Done, onImeAction = { if (!needMfa) submit() })
+        // Once the first factor passed (password or Google), only the code is asked for.
+        if (challengeToken == null) {
+            CcTextField(password, { password = it }, label = "Password", placeholder = "Enter your password", leadingIcon = Icons.Rounded.Lock, password = true, imeAction = if (needMfa) ImeAction.Next else ImeAction.Done, onImeAction = { if (!needMfa) submit() })
+        }
         if (needMfa) {
             CcTextField(mfaCode, { if (it.length <= 6 && it.all(Char::isDigit)) mfaCode = it }, label = "6-digit code from your authenticator", leadingIcon = Icons.Rounded.Pin, keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done, onImeAction = { submit() })
         }
@@ -216,59 +218,23 @@ fun LoginScreen() {
         CcButton(if (waitingForCheck) "Verifying…" else "Sign In", { submit() }, modifier = Modifier.fillMaxWidth(), loading = busy || waitingForCheck, trailingIcon = Icons.AutoMirrored.Rounded.ArrowForward)
         if (GoogleSignIn.configured) {
             Text("or continue with", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-            fun continueWithGoogle() {
-                if (googleBusy) return
-                scope.launch {
-                    googleBusy = true
-                    googleError = null
-                    error = null
-                    try {
-                        when (val r = GoogleSignIn.signIn(context)) {
-                            // The server verifies the ID token and decides whether this account may use this app.
-                            is GoogleResult.Token -> try {
-                                completeSignIn(app, nav, app.api.auth.google(r.idToken, r.nonce, rememberMe), rememberMe)
-                            } catch (e: ApiException) {
-                                if (e.isNetwork || e.status >= 500) googleError = GoogleResult.Failed(GoogleFailure.Other, e.message ?: "Couldn't reach CampusCare. Please try again.")
-                                else error = e.message
-                            }
-                            is GoogleResult.Failed -> {
-                                // CampusCare College never leaves the app for a website; Student keeps its older browser fallback.
-                                val opened = GoogleSignIn.browserFallbackAllowed(AppAudience.current) && runCatching {
-                                    val authUrl = "${BuildConfig.API_BASE_URL}/api/v1/auth/google?client=android&app=${BuildConfig.APP_AUDIENCE}"
-                                    context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(authUrl)))
-                                    true
-                                }.getOrDefault(false)
-                                if (!opened) googleError = r
-                            }
-                            GoogleResult.Cancelled -> Unit
-                        }
-                    } finally {
-                        googleBusy = false
-                    }
-                }
-            }
-            googleError?.let { g ->
-                InfoBanner(
-                    g.message, tone = Tone.Danger, icon = Icons.Rounded.Warning,
-                    action = if (g.retryable) ({ TextButton(onClick = { continueWithGoogle() }) { Text("Try again") } }) else null,
-                )
-            }
-            OutlinedButton(
-                onClick = { continueWithGoogle() },
-                enabled = !googleBusy,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, CcColors.Line),
-            ) {
-                GoogleG()
-                Spacer(Modifier.width(10.dp))
-                Text(if (googleBusy) "Connecting…" else "Continue with Google", color = CcColors.Ink, fontWeight = FontWeight.SemiBold)
+            // Google is the first factor only for accounts with two-step verification: the code step above takes over.
+            GoogleAuthBlock(GoogleIntent.SignIn, rememberMe) { challenge ->
+                error = null
+                needMfa = true
+                challengeToken = challenge
             }
         }
         if (college) {
-            // No sign-up in the College app: staff accounts come from an administrator's invitation.
+            // Staff apply for a role here; nothing is granted until a Super Admin approves the request.
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                Text("New college staff?", style = MaterialTheme.typography.bodyMedium, color = CcColors.InkSoft)
+                TextButton(onClick = { nav.navigate(Routes.staffRegister()) }) {
+                    Text("Register as College Staff", color = CcColors.Emerald, fontWeight = FontWeight.Bold)
+                }
+            }
             Text(
-                "Staff accounts are created by your campus administrator. Open the invitation email on this phone to set your password. Students use the ${AppAudience.Student.appName} app.",
+                "Invited by your administrator? Open the invitation email on this phone to set your password. Students use the ${AppAudience.Student.appName} app.",
                 style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
             )
         } else {
@@ -291,6 +257,88 @@ fun LoginScreen() {
 private fun GoogleG() {
     Box(Modifier.size(22.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) {
         Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+/**
+ * "Continue with Google" for both apps: the native account picker (never a website), then
+ * POST /auth/google/mobile with what the person chose. The server decides what this Google account
+ * may do in this app; this only shows its answer. [onMfaChallenge] receives the second-step ticket for
+ * accounts with two-step verification (no session exists until the code is entered).
+ */
+@Composable
+private fun GoogleAuthBlock(intent: GoogleIntent, rememberMe: Boolean, onMfaChallenge: (String) -> Unit) {
+    val app = LocalApp.current
+    val nav = LocalNav.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    /** Last problem, shown in place with the one action that can help. */
+    var failure by remember { mutableStateOf<GoogleResult.Failed?>(null) }
+    var refusal by remember { mutableStateOf<GoogleRefusal?>(null) }
+
+    fun run(chosen: GoogleIntent) {
+        if (busy) return
+        scope.launch {
+            busy = true
+            failure = null
+            refusal = null
+            try {
+                when (val r = GoogleSignIn.signIn(context)) {
+                    is GoogleResult.Token -> try {
+                        val resp = app.api.auth.google(r.idToken, r.nonce, rememberMe, chosen.wire)
+                        val challenge = resp.challengeToken
+                        if (resp.mfaRequired && resp.sessionToken == null && challenge != null) onMfaChallenge(challenge)
+                        else completeSignIn(app, nav, resp, rememberMe)
+                    } catch (e: ApiException) {
+                        when (val g = GoogleRefusals.from(AppAudience.current, e.status, e.code, e.message, e.details)) {
+                            is GoogleRefusal.ApplyAsStaff -> nav.navigate(Routes.staffRegister(g.ticket, g.email, g.fullName))
+                            is GoogleRefusal.Retry -> failure = GoogleResult.Failed(GoogleFailure.Other, g.message)
+                            else -> refusal = g
+                        }
+                    }
+                    is GoogleResult.Failed -> failure = r
+                    GoogleResult.Cancelled -> Unit
+                }
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    failure?.let { g ->
+        InfoBanner(
+            g.message, tone = Tone.Danger, icon = Icons.Rounded.Warning,
+            action = if (g.retryable) ({ TextButton(onClick = { run(intent) }) { Text("Try again") } }) else null,
+        )
+    }
+    refusal?.let { g ->
+        InfoBanner(
+            g.message, tone = Tone.Danger, icon = Icons.Rounded.Warning,
+            action = when (g) {
+                is GoogleRefusal.OfferStudentSignUp -> ({ TextButton(onClick = { run(GoogleIntent.SignUp) }) { Text("Sign up with Google") } })
+                is GoogleRefusal.VerifyEmail -> ({ TextButton(onClick = { nav.navigate(Routes.verify(ticket = g.ticket)) }) { Text("Verify your email") } })
+                else -> null
+            },
+        )
+    }
+    OutlinedButton(
+        onClick = { run(intent) },
+        enabled = !busy,
+        modifier = Modifier.fillMaxWidth().height(52.dp),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, CcColors.Line),
+    ) {
+        GoogleG()
+        Spacer(Modifier.width(10.dp))
+        Text(
+            when {
+                busy -> "Connecting…"
+                intent == GoogleIntent.SignUp -> "Sign up with Google"
+                else -> "Continue with Google"
+            },
+            color = CcColors.Ink, fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
@@ -359,6 +407,13 @@ fun RegisterScreen() {
 
     AuthLayout("Create Your Account", "Join a safer, more inclusive campus.", onBack = { nav.popBackStack() }, hero = true) {
         InfoBanner("Only official @$domain email addresses can create an account.", tone = Tone.Brand, icon = Icons.Rounded.School)
+        if (GoogleSignIn.configured) {
+            // Student sign-up with the university Google account; the server creates only a student account.
+            GoogleAuthBlock(GoogleIntent.SignUp, rememberMe = true) {
+                general = "This account uses two-step verification. Sign in from the sign-in screen."
+            }
+            Text("or create an account with your email", style = MaterialTheme.typography.bodySmall, color = CcColors.InkSoft, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        }
         CcTextField(name, { name = it }, label = "Full name", placeholder = "Enter your full name", leadingIcon = Icons.Rounded.Person, error = errors["fullName"], capitalization = KeyboardCapitalization.Words)
         CcTextField(email, { email = it }, label = "University email", placeholder = "name@$domain", leadingIcon = Icons.Rounded.Email, keyboardType = KeyboardType.Email, error = errors["email"] ?: email.takeIf { it.contains('@') }?.let { universityEmailError(it, domain) })
         CcTextField(studentId, { studentId = it.uppercase() }, label = "Student ID / Roll number", placeholder = "e.g. AP21110010001", leadingIcon = Icons.Rounded.Badge, error = errors["studentId"], capitalization = KeyboardCapitalization.Characters)
@@ -845,7 +900,8 @@ fun VerifyEmailScreen(token: String, email: String, ticket: String = "", method:
                 else -> "Choose how you'd like to verify $masked."
             }
             "ready" -> "Tap the button to confirm this is your email address."
-            "verified" -> "Your account is active. You can sign in now."
+            // Email proof alone never activates a staff application, so the College app does not say "active".
+            "verified" -> if (AppAudience.current == AppAudience.College) "Email verified. Sign in to continue; a staff application still needs approval before you get access." else "Your account is active. You can sign in now."
             "already" -> "This email was already verified. You can sign in."
             "checking" -> "Checking your link."
             "verifying" -> "Verifying your email."

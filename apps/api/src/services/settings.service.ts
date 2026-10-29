@@ -1,4 +1,4 @@
-import { ACCOUNT_EMAIL_DOMAIN, DEFAULT_SETTINGS, DISPATCH_POLICIES, DUTY_LIMITS, RESPONDER_SKILLS, deepMerge, type PlatformSettings, type PublicSettings } from '@campuscare/shared';
+import { ACCOUNT_EMAIL_DOMAIN, DEFAULT_SETTINGS, DISPATCH_POLICIES, STAFF_REGISTRATION_ROLES, DUTY_LIMITS, RESPONDER_SKILLS, deepMerge, type PlatformSettings, type PublicSettings } from '@campuscare/shared';
 import { SystemSetting, IdentityProviderConfig } from '../models/platform';
 import { turnstileKeys, env } from '../config/env';
 
@@ -37,6 +37,7 @@ export function validateSettings(s: PlatformSettings) {
   // Every value must keep the type of its default (no strings where numbers/booleans belong).
   const typeCheck = (value: unknown, def: unknown, path: string) => {
     if (Array.isArray(def)) {
+      if (path === 'registration.campuses') return; // a list of records, checked below
       if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) errors.push(`${path} must be a list`);
       return;
     }
@@ -82,6 +83,20 @@ export function validateSettings(s: PlatformSettings) {
   if (s.dispatch.unassignedRetrySeconds < 10 || s.dispatch.unassignedRetrySeconds > 600) errors.push('Unassigned retry must be 10–600 seconds');
   for (const skill of [...s.dispatch.requiredSkills, ...s.dispatch.preferredSkills]) {
     if (!(RESPONDER_SKILLS as readonly string[]).includes(skill)) errors.push(`Unknown responder skill: ${skill}`);
+  }
+  const campuses = s.registration.campuses as unknown;
+  if (!Array.isArray(campuses) || !campuses.length) errors.push('At least one campus is required');
+  else {
+    for (const c of campuses as { id?: unknown; name?: unknown }[]) {
+      if (!c || typeof c.id !== 'string' || !/^[a-z0-9_-]{1,50}$/.test(c.id) || typeof c.name !== 'string' || !c.name.trim() || c.name.length > 120) {
+        errors.push('Each campus needs an id (lower-case letters, digits, - or _) and a name');
+        break;
+      }
+    }
+    if (new Set((campuses as { id: string }[]).map((c) => c.id)).size !== campuses.length) errors.push('Campus ids must be unique');
+  }
+  for (const role of s.registration.staffRegistrationRoles) {
+    if (!(STAFF_REGISTRATION_ROLES as readonly string[]).includes(role)) errors.push(`Staff registration cannot offer the role: ${role}`);
   }
   if (!within(s.chatGovernance.maxReviewMinutes, 'maxReviewMinutes')) errors.push('Private review duration must be 5–240 minutes');
   for (const scope of Object.values(s.chat.media)) {

@@ -8,6 +8,7 @@ import { anonymousReporterTag } from '../lib/crypto';
 import { AppError, notFound, forbidden } from '../lib/http';
 import { CaseActivity, CaseMessage, CaseReadState, Committee, Evidence, Incident, RoutingRule, nextSequence, type IncidentDoc } from '../models/incident';
 import { User, type UserDoc } from '../models/user';
+import { knownCampus } from './campus-scope.service';
 import { audit } from './audit.service';
 import { notify, notifyMany } from './notification.service';
 import { appLink } from './email/email.service';
@@ -141,6 +142,7 @@ export async function createIncident(user: UserDoc, input: CreateIncidentInput, 
     latitude: input.latitude ?? null,
     longitude: input.longitude ?? null,
     suggestedCategory: input.suggestedCategory ?? null,
+    campus: knownCampus(user.campusZone, ((await getSettings()).registration as { campuses?: { id: string }[] }).campuses?.map((c) => c.id) ?? []),
   });
   if (evidence.length) {
     await Evidence.updateMany({ _id: { $in: evidence.map((e) => e._id) } }, { $set: { bound: true, incidentId: incident._id } });

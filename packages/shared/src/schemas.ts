@@ -6,6 +6,7 @@ import {
   NOTIFICATION_CATEGORIES, DATA_REQUEST_TYPES, type NotificationCategory, DUTY_STATUSES, RESPONDER_SKILLS, RESPONDER_RESPONSIBILITIES,
   CHAT_REVIEW_SCOPES, CHAT_REVIEW_BASES, STUDENT_VERIFICATION_STATUSES, SUPPORT_CATEGORIES, SUPPORT_STATUSES, SUPPORT_PRIORITIES, FAQ_STATUSES, COUNSELLING_TYPES,
 } from './enums';
+import { COMMITTEE_ELIGIBILITY, COMMITTEE_JOIN_POLICIES } from './staff-registration';
 
 const trimmed = (max: number) => z.string().trim().max(max);
 export const objectId = z.string().regex(/^[a-f0-9]{24}$/i, 'Invalid id');
@@ -154,6 +155,8 @@ export const committeeSchema = z.object({
   slaAcknowledgeHours: z.coerce.number().int().min(1).max(720).default(24),
   slaResolveDays: z.coerce.number().int().min(1).max(365).default(30),
   active: z.boolean().default(true),
+  memberEligibility: z.enum(COMMITTEE_ELIGIBILITY).default('staff'),
+  joinPolicy: z.enum(COMMITTEE_JOIN_POLICIES).default('open_application'),
 });
 export const committeeMemberSchema = z.object({ userId: objectId, position: z.enum(['chair', 'member']).default('member') });
 
@@ -483,7 +486,10 @@ export type LoginInput = z.infer<typeof loginSchema>;
 export type IncidentCreateInput = z.infer<typeof incidentCreateSchema>;
 
 // ------------------------------------------------------------------ mobile app
-export const googleIdTokenSchema = z.object({ idToken: z.string().min(100).max(5000), nonce: z.string().max(200).optional(), rememberMe: z.boolean().nullish() });
+/** What the person chose in the app. Absent = an older build: sign in, or (Student app only) create a student account. */
+export const GOOGLE_AUTH_INTENTS = ['sign_in', 'sign_up'] as const;
+export type GoogleAuthIntent = (typeof GOOGLE_AUTH_INTENTS)[number];
+export const googleIdTokenSchema = z.object({ idToken: z.string().min(100).max(5000), nonce: z.string().max(200).optional(), rememberMe: z.boolean().nullish(), intent: z.enum(GOOGLE_AUTH_INTENTS).optional() });
 export const deviceRegistrationSchema = z.object({
   platform: z.enum(['android']),
   pushToken: z.string().min(20).max(4096).optional().nullable(),

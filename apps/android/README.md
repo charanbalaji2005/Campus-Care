@@ -103,10 +103,13 @@ top of the workflow. Artifacts are attached to the workflow run.
 3. **Cloudflare Turnstile** — the app runs the widget from a page served by the API
    (`/api/v1/mobile/turnstile`). Add the API's hostname to the widget's hostname list in Cloudflare
    and to `TURNSTILE_EXPECTED_HOSTNAMES` on the server.
-4. **Google sign-in (optional)** — in Google Cloud create an *Android* OAuth client for **each**
-   package name with your signing certificate's SHA-1, and pass the existing *Web* client ID as
-   `campuscare.googleWebClientId`. Only `@srmap.edu.in` Google accounts are accepted, and accounts are
-   never linked automatically by email.
+4. **Google sign-in (optional)** — both apps share one *Web* client ID (`campuscare.googleWebClientId`,
+   the token audience the API checks) and one API endpoint. In the same Google Cloud project create an
+   *Android* OAuth client for **each** package name (`in.edu.srmap.campuscare`,
+   `in.edu.srmap.campuscare.college`) with each signing certificate's SHA-1 (debug, release, and the Play
+   app-signing key). Print the local ones with `./gradlew :app:signingReport`. A missing registration
+   shows "Google sign-in isn't set up for this app yet (app ID: …)" — never a browser. Only
+   `@srmap.edu.in` Google accounts are accepted; the server decides what each account may do in each app.
 5. **Push notifications (optional)** — register **both** package names in the Firebase project and add
    the downloaded `app/google-services.json`, which then lists both apps (or put one file in each of
    `app/src/student/` and `app/src/college/`). Then set

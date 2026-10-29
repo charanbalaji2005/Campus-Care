@@ -17,6 +17,14 @@ export interface PlatformSettings {
     /** When true, only addresses on an active approved domain may register or sign in with Google. */
     restrictToApprovedDomains: boolean;
     requireEmailVerification: boolean;
+    /** CampusCare College staff applications (always reviewed by a Super Admin before any access). */
+    staffRegistrationOpen: boolean;
+    /** Roles a staff applicant may request; a subset of STAFF_REGISTRATION_ROLES (never super_admin). */
+    staffRegistrationRoles: string[];
+    /** Campus Admin applicants must quote an institutional authorization / approval reference. */
+    requireAdminAuthorizationReference: boolean;
+    /** Authoritative campus records: every requested or assigned campus must be one of these ids. */
+    campuses: { id: string; name: string }[];
   };
   turnstile: {
     enabled: boolean;
@@ -199,6 +207,10 @@ export const DEFAULT_SETTINGS: PlatformSettings = {
     studentRegistrationOpen: true,
     restrictToApprovedDomains: true,
     requireEmailVerification: true,
+    staffRegistrationOpen: true,
+    staffRegistrationRoles: ['counsellor', 'admin', 'committee_member', 'security_officer'],
+    requireAdminAuthorizationReference: true,
+    campuses: [{ id: 'main', name: 'SRM University-AP, Amaravati (Main Campus)' }],
   },
   turnstile: {
     enabled: true,

@@ -11,7 +11,7 @@ import { notify } from './notification.service';
 import { appLink, sendEmail } from './email/email.service';
 import { emitToRoom, emitToUser, registerRoomAuthoriser } from '../realtime/socket';
 import { registerPeriodic } from './jobs.service';
-import { changeDutyStatus, dutySupervisors, getAvailability, isResponder, onResponderRemovedFromDuty, onResponderUnreachable } from './duty.service';
+import { changeDutyStatus, dutySupervisors, getAvailability, isResponder, onDutyResponderIds, onResponderRemovedFromDuty, onResponderUnreachable } from './duty.service';
 import { rankResponders, zoneForLocation, type DispatchCandidate, type DispatchRules } from './dispatch.policy';
 import { logger } from '../lib/logger';
 
@@ -163,14 +163,28 @@ async function notifyAssignee(assignment: AlertAssignmentDoc, alert: { _id: unkn
   emitToUser(responderId, 'sos:assigned', { alertId: String(alert._id), alertNumber: alert.alertNumber, assignmentId: String(assignment._id), ackDeadlineAt: assignment.ackDeadlineAt });
 }
 
-/** People alerted when dispatch finds nobody: backup recipients, supervisors, every active officer and dispatchers. */
+/** People alerted when dispatch finds nobody: backup recipients, supervisors, on-duty responders and dispatchers. Off-duty officers are excluded. */
 async function fallbackRecipients() {
   const backup = await EmergencyRecipient.find({ active: true, tier: 'backup' }).lean();
   const ids = new Set<string>(backup.filter((r) => r.type === 'user' && r.userId).map((r) => String(r.userId)));
   (await dutySupervisors()).forEach((id) => ids.add(id));
-  const others = await User.find({ accountStatus: 'active', $or: [{ role: { $in: ['security_officer', 'super_admin'] } }, { permissions: { $in: ['sos:dispatch', 'sos:respond'] } }] }, { _id: 1, role: 1, permissions: 1 }).lean();
-  others.filter((u) => hasPermission(subject(u), 'sos:respond') || hasPermission(subject(u), 'sos:dispatch')).forEach((u) => ids.add(String(u._id)));
-  return { userIds: [...ids], emails: backup.filter((r) => r.type === 'email' && r.email).map((r) => r.email!) };
+  const others = await User.find({ accountStatus: 'active', $or: [{ role: { $in: ['security_officer', 'super_admin'] } }, { permissions: { $in: ['sos:dispatch', 'sos:respond'] } }] }, { _id: 1, role: 1, permissions: 1, email: 1 }).lean();
+  const onDutyIds = new Set(await onDutyResponderIds());
+  const emails = new Set(backup.filter((r) => r.type === 'email' && r.email).map((r) => r.email!));
+
+  for (const u of others) {
+    const isDispatcher = hasPermission(subject(u), 'sos:dispatch') || u.role === 'super_admin';
+    const isResponderOnly = (u.role === 'security_officer' || hasPermission(subject(u), 'sos:respond')) && !isDispatcher;
+    // Off-duty responders must not receive fallback alerts
+    if (isResponderOnly && !onDutyIds.has(String(u._id))) {
+      continue;
+    }
+    ids.add(String(u._id));
+    if (onDutyIds.has(String(u._id)) && u.email) {
+      emails.add(u.email);
+    }
+  }
+  return { userIds: [...ids], emails: [...emails] };
 }
 
 async function enterFallback(alertId: unknown, why: string) {
@@ -490,6 +504,10 @@ async function handOff(userId: string, why: string, includeAcknowledged: boolean
     await audit({ action: 'sos.assignment_handed_off', targetType: 'sos', targetId: String(a.alertId), reason: why, meta: { responderId: userId, previous: a.status } });
     await runAssignment(String(a.alertId), { reason: why });
   }
+}
+/** Moves every open offer and acknowledged alert of this responder to someone else (e.g. account suspended). */
+export async function handOffResponder(userId: string, why: string) {
+  await handOff(userId, why, true);
 }
 onResponderUnreachable((userId, why) => handOff(userId, why, false));
 onResponderRemovedFromDuty((userId, why) => handOff(userId, why, true));

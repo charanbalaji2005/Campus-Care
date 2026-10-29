@@ -8,7 +8,9 @@ import { Contact, Announcement, TrainingModule } from '../models/content';
 import { ChatChannel, ChatMembership, ChatMessage } from '../models/chat';
 import { EmailDomain, EmailProviderConfig, IdentityProviderConfig, SystemSetting } from '../models/platform';
 import { User } from '../models/user';
-import { Availability } from '../models/counselling';
+import { Appointment, Availability, CounsellingCase, CounsellingNote, CounsellingResource } from '../models/counselling';
+import { EmergencyAlert } from '../models/safety';
+import { PatrolRoute } from '../models/patrol';
 import { createIncident } from '../services/incident.service';
 import { seedFaqArticlesIfEmpty } from '../services/support-seed';
 import { logger } from '../lib/logger';
@@ -234,9 +236,17 @@ export async function autoSeedDatabase() {
     // 7. Demo accounts for testing with password Charan@123
     const demo = [
       { fullName: 'Asha Demo (Student)', email: 'cc-demo-student@srmap.edu.in', role: 'student', studentId: 'DEMO-0001', department: 'Computer Science & Engineering', academicYear: 3 },
-      { fullName: 'Dr. Meera Demo (Counsellor)', email: 'cc-demo-counsellor@srmap.edu.in', role: 'counsellor' },
-      { fullName: 'Officer Demo (Security)', email: 'cc-demo-security@srmap.edu.in', role: 'security_officer', memberships: [{ committeeId: committees.security?._id, position: 'member' }] },
+      { fullName: 'Dr. Meera Sharma', email: 'cc-demo-counsellor@srmap.edu.in', role: 'counsellor', designation: 'Counsellor', department: 'Student Wellbeing Centre', campusZone: 'Main Campus' },
+      { fullName: 'Officer Kumar', email: 'cc-demo-security@srmap.edu.in', role: 'security_officer', designation: 'Security Officer', department: 'Campus Safety & Security', campusZone: 'Main Campus', phone: '+91 98765 00001', memberships: [{ committeeId: committees.security?._id, position: 'member' }] },
+      { fullName: 'Dr. Priya Nair', email: 'cc-demo-committee@srmap.edu.in', role: 'committee_member', designation: 'Committee Member', department: 'Internal Complaints Committee', campusZone: 'Main Campus', phone: '+91 98765 00002', memberships: [{ committeeId: committees.gender_sensitivity?._id, position: 'member' }, { committeeId: committees.anti_ragging?._id, position: 'member' }] },
       { fullName: 'Admin Demo', email: 'cc-demo-admin@srmap.edu.in', role: 'admin' },
+      { fullName: 'Ananya Reddy', email: 'ananya.reddy@srmap.edu.in', role: 'student', studentId: 'CSE22045', department: 'Computer Science', academicYear: 2, campusZone: 'Main Campus', phone: '+91 98765 43210' },
+      { fullName: 'Rohit Kumar', email: 'rohit.kumar@srmap.edu.in', role: 'student', studentId: 'ECE23012', department: 'Electronics & Communication', academicYear: 1, campusZone: 'Main Campus' },
+      { fullName: 'Priya Nair', email: 'priya.nair@srmap.edu.in', role: 'student', studentId: 'CSE22098', department: 'Computer Science & Engineering', academicYear: 2, campusZone: 'Main Campus' },
+      { fullName: 'Aditya Verma', email: 'aditya.verma@srmap.edu.in', role: 'student', studentId: 'ECE23045', department: 'Electronics & Communication', academicYear: 1, campusZone: 'Main Campus' },
+      { fullName: 'Kavya S', email: 'kavya.s@srmap.edu.in', role: 'student', studentId: 'BBA21004', department: 'Business Administration', academicYear: 3, campusZone: 'Main Campus' },
+      { fullName: 'Sneha Iyer', email: 'sneha.iyer@srmap.edu.in', role: 'student', studentId: 'CSE22019', department: 'Computer Science', academicYear: 2, campusZone: 'Main Campus' },
+      { fullName: 'Vikram Patel', email: 'vikram.patel@srmap.edu.in', role: 'student', studentId: 'MEC21088', department: 'Mechanical Engineering', academicYear: 3, campusZone: 'Main Campus' },
     ];
     for (const d of demo) {
       const { memberships, ...rest } = d as typeof d & { memberships?: unknown[] };
@@ -262,9 +272,9 @@ export async function autoSeedDatabase() {
         await ResponderAvailability.findOneAndUpdate(
           { userId: u!._id },
           {
-            $setOnInsert: {
+            $set: {
               userId: u!._id,
-              status: 'off_duty',
+              status: 'on_duty',
               campus: 'main',
               responsibilities: ['sos_response', 'patrol'],
               skills: ['first_aid', 'fire_safety', 'de_escalation'],
@@ -364,6 +374,452 @@ export async function autoSeedDatabase() {
         clientMessageId: randomUUID(),
         createdAt: new Date(),
       });
+    }
+
+    // 8. Seed Counselling Resources Library
+    const sampleResources = [
+      {
+        title: 'Managing Academic Stress',
+        category: 'academic',
+        type: 'article',
+        readTime: 'Article • 5 min read',
+        summary: 'Evidence-based cognitive restructuring and practical study-scheduling techniques for midterms.',
+        content: 'College academics often present overlapping deadlines. Break assignments into 25-minute sprints using the Pomodoro technique. Prioritize tasks by urgency and impact rather than anxiety level.',
+        tags: ['Academic Stress', 'Study Habits', 'Time Management'],
+        order: 1,
+      },
+      {
+        title: 'Anxiety Relief Techniques',
+        category: 'mental_health',
+        type: 'video',
+        readTime: 'Video • 8 min',
+        summary: 'Guided grounding exercises (5-4-3-2-1 sensory orientation) and diaphragmatic breathing.',
+        content: 'When feeling overwhelmed, practice diaphragmatic breathing: inhale for 4 seconds, hold for 4, exhale slowly for 6 seconds. This activates the parasympathetic nervous system.',
+        tags: ['Anxiety', 'Grounding', 'Wellness'],
+        order: 2,
+      },
+      {
+        title: 'Career Planning Guide',
+        category: 'career',
+        type: 'pdf',
+        fileSize: '2.4 MB',
+        readTime: 'PDF • 2.4 MB',
+        summary: 'A step-by-step career path discovery tool designed for first-to-final-year students.',
+        content: 'Comprehensive roadmap for evaluating industry interests, resume readiness, networking strategies, and campus placement prep.',
+        tags: ['Career', 'Guidance', 'Planning'],
+        order: 3,
+      },
+      {
+        title: 'Mindfulness for Students',
+        category: 'mindfulness',
+        type: 'article',
+        readTime: 'Article • 6 min read',
+        summary: 'Simple, practical mindfulness micro-practices to build focus and calm during lectures.',
+        content: 'Take three conscious breaths before each lecture. Notice physical tension in your shoulders and jaw, and deliberately release it with every exhale.',
+        tags: ['Mindfulness', 'Focus', 'Meditation'],
+        order: 4,
+      },
+      {
+        title: 'Healthy Lifestyle Tips',
+        category: 'healthy_habits',
+        type: 'article',
+        readTime: 'Article • 4 min read',
+        summary: 'Sleep hygiene, balanced cafeteria nutrition, and physical movement habits for students.',
+        content: 'Protect 7 hours of sleep each night. Limit caffeine intake after 4 PM. Regular 20-minute daily walks noticeably improve concentration and emotional resilience.',
+        tags: ['Healthy Habits', 'Sleep', 'Nutrition'],
+        order: 5,
+      },
+    ];
+    for (const r of sampleResources) {
+      await CounsellingResource.findOneAndUpdate({ title: r.title }, { $setOnInsert: r }, { upsert: true });
+    }
+
+    // 9. Seed Appointments, Requests and Cases for Dr. Meera Sharma
+    const meera = await User.findOne({ email: 'cc-demo-counsellor@srmap.edu.in' });
+    const ananya = await User.findOne({ email: 'ananya.reddy@srmap.edu.in' });
+    const rohit = await User.findOne({ email: 'rohit.kumar@srmap.edu.in' });
+    const priya = await User.findOne({ email: 'priya.nair@srmap.edu.in' });
+    const aditya = await User.findOne({ email: 'aditya.verma@srmap.edu.in' });
+    const kavya = await User.findOne({ email: 'kavya.s@srmap.edu.in' });
+    const sneha = await User.findOne({ email: 'sneha.iyer@srmap.edu.in' });
+    const vikram = await User.findOne({ email: 'vikram.patel@srmap.edu.in' });
+
+    if (meera && ananya) {
+      const today = new Date();
+      const setTime = (hours: number, mins: number) => {
+        const d = new Date(today);
+        d.setHours(hours, mins, 0, 0);
+        return d;
+      };
+
+      // Appointment 1: Ananya Reddy (10:00 AM - 11:00 AM Online)
+      await Appointment.findOneAndUpdate(
+        { studentId: ananya._id, counsellorId: meera._id, startAt: setTime(10, 0) },
+        {
+          $setOnInsert: {
+            studentId: ananya._id,
+            counsellorId: meera._id,
+            startAt: setTime(10, 0),
+            endAt: setTime(11, 0),
+            mode: 'online',
+            counsellingType: 'individual_counselling',
+            status: 'confirmed',
+            reason: 'Exam stress and study habit balance',
+            meetingLink: 'https://meet.srmap.edu.in/counsel-ananya',
+            idempotencyKey: 'seed-appt-ananya-1',
+          },
+        },
+        { upsert: true },
+      );
+
+      // Appointment 2: Rohit Kumar (11:30 AM - 12:30 PM In-person Room 203)
+      if (rohit) {
+        await Appointment.findOneAndUpdate(
+          { studentId: rohit._id, counsellorId: meera._id, startAt: setTime(11, 30) },
+          {
+            $setOnInsert: {
+              studentId: rohit._id,
+              counsellorId: meera._id,
+              startAt: setTime(11, 30),
+              endAt: setTime(12, 30),
+              mode: 'in_person',
+              counsellingType: 'follow_up_session',
+              status: 'confirmed',
+              reason: 'Room 203 - Follow up on anxiety progress',
+              idempotencyKey: 'seed-appt-rohit-1',
+            },
+          },
+          { upsert: true },
+        );
+      }
+
+      // Appointment 3: Sneha Iyer (02:00 PM - 03:00 PM Room 105)
+      if (sneha) {
+        await Appointment.findOneAndUpdate(
+          { studentId: sneha._id, counsellorId: meera._id, startAt: setTime(14, 0) },
+          {
+            $setOnInsert: {
+              studentId: sneha._id,
+              counsellorId: meera._id,
+              startAt: setTime(14, 0),
+              endAt: setTime(15, 0),
+              mode: 'in_person',
+              counsellingType: 'career_guidance',
+              status: 'confirmed',
+              reason: 'Room 105 - Career transition support',
+              idempotencyKey: 'seed-appt-sneha-1',
+            },
+          },
+          { upsert: true },
+        );
+      }
+
+      // Appointment 4: Vikram Patel (04:00 PM - 05:00 PM Online)
+      if (vikram) {
+        await Appointment.findOneAndUpdate(
+          { studentId: vikram._id, counsellorId: meera._id, startAt: setTime(16, 0) },
+          {
+            $setOnInsert: {
+              studentId: vikram._id,
+              counsellorId: meera._id,
+              startAt: setTime(16, 0),
+              endAt: setTime(17, 0),
+              mode: 'online',
+              counsellingType: 'anxiety_support',
+              status: 'confirmed',
+              reason: 'Anxiety coping strategies',
+              meetingLink: 'https://meet.srmap.edu.in/counsel-vikram',
+              idempotencyKey: 'seed-appt-vikram-1',
+            },
+          },
+          { upsert: true },
+        );
+      }
+
+      // Requests: Priya Nair, Aditya Verma, Kavya S
+      if (priya) {
+        await Appointment.findOneAndUpdate(
+          { studentId: priya._id, status: 'requested' },
+          {
+            $setOnInsert: {
+              studentId: priya._id,
+              counsellorId: meera._id,
+              startAt: setTime(10, 0),
+              mode: 'in_person',
+              counsellingType: 'counseling',
+              status: 'requested',
+              reason: 'Anxiety & Stress, Academic Pressure',
+              idempotencyKey: 'seed-req-priya',
+            },
+          },
+          { upsert: true },
+        );
+      }
+      if (aditya) {
+        await Appointment.findOneAndUpdate(
+          { studentId: aditya._id, status: 'requested' },
+          {
+            $setOnInsert: {
+              studentId: aditya._id,
+              counsellorId: meera._id,
+              startAt: setTime(14, 0),
+              mode: 'online',
+              counsellingType: 'career_guidance',
+              status: 'requested',
+              reason: 'Career Confusion',
+              idempotencyKey: 'seed-req-aditya',
+            },
+          },
+          { upsert: true },
+        );
+      }
+      if (kavya) {
+        await Appointment.findOneAndUpdate(
+          { studentId: kavya._id, status: 'requested' },
+          {
+            $setOnInsert: {
+              studentId: kavya._id,
+              counsellorId: meera._id,
+              startAt: setTime(15, 0),
+              mode: 'in_person',
+              counsellingType: 'personal_support',
+              status: 'requested',
+              reason: 'Personal Issues',
+              idempotencyKey: 'seed-req-kavya',
+            },
+          },
+          { upsert: true },
+        );
+      }
+
+      // Cases for Screen 7
+      const sampleCases = [
+        {
+          caseNumber: 'CC-CS-2026-0012',
+          studentId: ananya._id,
+          counsellorId: meera._id,
+          status: 'active',
+          priority: 'normal',
+          concern: 'Academic Stress',
+          tags: ['Academic Stress', 'Anxiety', 'Time Management'],
+          keyObservations: ['Anxiety about exams', 'Low confidence'],
+          supportPlan: ['Practice daily 10-minute mindfulness breathing', 'Establish regular study schedule and breaks', 'Follow-up in 2 weeks'],
+          reviewDate: new Date(Date.now() + 14 * 86_400_000),
+          timeline: [
+            { action: 'Case Opened', note: 'Initial assessment conducted', actorId: meera._id, actorName: meera.fullName, at: new Date(Date.now() - 18 * 86_400_000) },
+          ],
+        },
+        rohit && {
+          caseNumber: 'CC-CS-2026-0009',
+          studentId: rohit._id,
+          counsellorId: meera._id,
+          status: 'active',
+          priority: 'normal',
+          concern: 'Anxiety & Wellbeing',
+          tags: ['Anxiety & Wellbeing', 'Stress'],
+          keyObservations: ['Difficulty unwinding after practicals'],
+          supportPlan: ['Gradual exposure techniques', 'Sleep schedule consistency'],
+          timeline: [{ action: 'Case Opened', note: 'Referred by tutor', actorId: meera._id, actorName: meera.fullName, at: new Date(Date.now() - 30 * 86_400_000) }],
+        },
+        sneha && {
+          caseNumber: 'CC-CS-2026-0008',
+          studentId: sneha._id,
+          counsellorId: meera._id,
+          status: 'follow_up',
+          priority: 'normal',
+          concern: 'Career Guidance',
+          tags: ['Career Guidance', 'Internship Prep'],
+          keyObservations: ['Unsure about industry specialization vs higher studies'],
+          supportPlan: ['Review departmental internship roadmap', 'Follow-up consultation'],
+          timeline: [{ action: 'Case Opened', note: 'Career discovery started', actorId: meera._id, actorName: meera.fullName, at: new Date(Date.now() - 43 * 86_400_000) }],
+        },
+        vikram && {
+          caseNumber: 'CC-CS-2026-0005',
+          studentId: vikram._id,
+          counsellorId: meera._id,
+          status: 'active',
+          priority: 'normal',
+          concern: 'Personal Issues',
+          tags: ['Personal Issues', 'Homesickness'],
+          keyObservations: ['First time staying in hostel, adjusting to campus routine'],
+          supportPlan: ['Weekly check-ins', 'Joining campus club activities'],
+          timeline: [{ action: 'Case Opened', note: 'Hostel warden assisted referral', actorId: meera._id, actorName: meera.fullName, at: new Date(Date.now() - 59 * 86_400_000) }],
+        },
+      ].filter(Boolean);
+
+      for (const cs of sampleCases) {
+        if (!cs) continue;
+        await CounsellingCase.findOneAndUpdate({ caseNumber: cs.caseNumber }, { $setOnInsert: cs }, { upsert: true });
+      }
+
+      // Seed Conversations for Messages Screen (Screen 10)
+      const chatSeed = [
+        { student: ananya, preview: 'Thank you for today’s session!', unread: 2 },
+        { student: rohit, preview: 'See you tomorrow.', unread: 0 },
+        { student: kavya, preview: 'I have a question about the exercise.', unread: 0 },
+        { student: aditya, preview: 'Thank you!', unread: 0 },
+      ];
+
+      for (const ch of chatSeed) {
+        if (!ch.student) continue;
+        const exists = await ChatChannel.findOne({ kind: 'counselling_thread', studentId: ch.student._id });
+        if (!exists) {
+          const t = await ChatChannel.create({
+            kind: 'counselling_thread',
+            studentId: ch.student._id,
+            name: `Consultation: ${ch.student.fullName}`,
+            assignedStaffId: meera._id,
+            published: true,
+            createdBy: ch.student._id,
+            lastMessageAt: new Date(),
+          });
+          await ChatMembership.insertMany([
+            { channelId: t._id, userId: ch.student._id, role: 'student', lastReadAt: new Date() },
+            { channelId: t._id, userId: meera._id, role: 'staff', lastReadAt: ch.unread > 0 ? new Date(0) : new Date() },
+          ]);
+          await ChatMessage.create({
+            channelId: t._id,
+            senderId: ch.student._id,
+            senderLabel: ch.student.fullName,
+            body: ch.preview,
+            clientMessageId: randomUUID(),
+            createdAt: new Date(),
+          });
+        }
+      }
+    }
+
+    // 10. Seed SOS Alert #2026-1042 and Patrol Route for Security Officer Portal
+    const ananyaUser = await User.findOne({ email: 'ananya.reddy@srmap.edu.in' });
+    const kumarUser = await User.findOne({ email: 'cc-demo-security@srmap.edu.in' });
+    if (ananyaUser && kumarUser) {
+      const existingSos = await EmergencyAlert.findOne({ alertNumber: '#2026-1042' });
+      if (!existingSos) {
+        await EmergencyAlert.create({
+          alertNumber: '#2026-1042',
+          userId: ananyaUser._id,
+          status: 'en_route',
+          severity: 'high',
+          assignedTo: kumarUser._id,
+          latitude: 16.4636,
+          longitude: 80.5074,
+          locationLabel: 'Library Block - Room 202',
+          note: 'I feel unsafe. Someone is following me near the library.',
+          idempotencyKey: 'seed-sos-2026-1042',
+          acknowledgedAt: new Date(Date.now() - 120_000),
+          enRouteAt: new Date(Date.now() - 60_000),
+          events: [
+            { type: 'created', at: new Date(Date.now() - 180_000), actorId: ananyaUser._id, actorLabel: ananyaUser.fullName, studentVisible: true },
+            { type: 'acknowledged', at: new Date(Date.now() - 120_000), actorId: kumarUser._id, actorLabel: 'Officer Kumar (Security)', studentVisible: true },
+            { type: 'en_route', at: new Date(Date.now() - 60_000), actorId: kumarUser._id, actorLabel: 'Officer Kumar (Security)', studentVisible: true },
+          ],
+        });
+      }
+
+      const existingPatrol = await PatrolRoute.findOne({ campus: 'main', status: 'in_progress' });
+      if (!existingPatrol) {
+        await PatrolRoute.create({
+          name: 'Main Campus Patrol',
+          campus: 'main',
+          shiftTime: '09:00 AM - 05:00 PM',
+          status: 'in_progress',
+          assignedOfficerId: kumarUser._id,
+          assignedOfficerName: kumarUser.fullName,
+          checkpoints: [
+            { name: 'Main Gate', requiredTime: '09:05 AM', status: 'completed', completedAt: new Date(Date.now() - 3600_000), locationLabel: 'Main Entrance Gate' },
+            { name: 'Library', requiredTime: '09:28 AM', status: 'completed', completedAt: new Date(Date.now() - 1800_000), locationLabel: 'Central Library Block' },
+            { name: 'Academic Block', requiredTime: '10:15 AM', status: 'pending', locationLabel: 'Academic Complex A' },
+            { name: 'Hostel Block', requiredTime: '11:00 AM', status: 'pending', locationLabel: 'Hostel Block B' },
+            { name: 'Sports Complex', requiredTime: '12:00 PM', status: 'pending', locationLabel: 'Athletic Ground & Arena' },
+            { name: 'Cafeteria', requiredTime: '01:00 PM', status: 'pending', locationLabel: 'Central Dining Hall' },
+          ],
+        });
+      }
+    }
+
+    // 11. Seed Incident Reports for Committee Member Portal
+    const priyaUser = await User.findOne({ email: 'cc-demo-committee@srmap.edu.in' });
+    const rohitUser = await User.findOne({ email: 'rohit.kumar@srmap.edu.in' });
+    if (ananyaUser && priyaUser) {
+      const sampleReports = [
+        {
+          caseNumber: '#2026-0871',
+          category: 'harassment',
+          title: 'Harassment near library',
+          description: 'A student reported inappropriate behaviour from another student near the library.',
+          location: 'Library Block',
+          incidentDate: new Date(Date.now() - 86400_000),
+          reporterId: ananyaUser._id,
+          status: 'submitted',
+          severity: 'high',
+          priority: 'urgent',
+          urgent: true,
+          assignedTo: priyaUser._id,
+          idempotencyKey: 'seed-rep-2026-0871',
+        },
+        {
+          caseNumber: '#2026-0865',
+          category: 'property_damage',
+          title: 'Damaged lab equipment',
+          description: 'Broken display monitor reported in laboratory 3.',
+          location: 'Hostel Block C',
+          incidentDate: new Date(Date.now() - 2 * 86400_000),
+          reporterId: rohitUser?._id || ananyaUser._id,
+          status: 'in_review',
+          severity: 'medium',
+          priority: 'normal',
+          assignedTo: priyaUser._id,
+          idempotencyKey: 'seed-rep-2026-0865',
+        },
+        {
+          caseNumber: '#2026-0861',
+          category: 'theft_vandalism',
+          title: 'Missing sports equipment',
+          description: 'Equipment locker in sports arena found damaged.',
+          location: 'Sports Complex',
+          incidentDate: new Date(Date.now() - 3 * 86400_000),
+          reporterId: ananyaUser._id,
+          status: 'investigating',
+          severity: 'medium',
+          priority: 'normal',
+          assignedTo: priyaUser._id,
+          idempotencyKey: 'seed-rep-2026-0861',
+        },
+        {
+          caseNumber: '#2026-0859',
+          category: 'academic_misconduct',
+          title: 'Academic integrity inquiry',
+          description: 'Report regarding unauthorized examination materials.',
+          location: 'Academic Complex',
+          incidentDate: new Date(Date.now() - 4 * 86400_000),
+          reporterId: rohitUser?._id || ananyaUser._id,
+          status: 'investigating',
+          severity: 'medium',
+          priority: 'normal',
+          assignedTo: priyaUser._id,
+          idempotencyKey: 'seed-rep-2026-0859',
+        },
+        {
+          caseNumber: '#2026-0856',
+          category: 'other',
+          title: 'Noise disturbance inquiry',
+          description: 'Resolved complaint regarding late night noise in courtyard.',
+          location: 'Hostel Courtyard',
+          incidentDate: new Date(Date.now() - 5 * 86400_000),
+          reporterId: ananyaUser._id,
+          status: 'closed',
+          severity: 'low',
+          priority: 'low',
+          assignedTo: priyaUser._id,
+          resolvedAt: new Date(Date.now() - 2 * 86400_000),
+          closedAt: new Date(Date.now() - 86400_000),
+          idempotencyKey: 'seed-rep-2026-0856',
+        },
+      ];
+
+      for (const rep of sampleReports) {
+        await Incident.findOneAndUpdate({ caseNumber: rep.caseNumber }, { $setOnInsert: rep }, { upsert: true });
+      }
     }
 
     await seedFaqArticlesIfEmpty();

@@ -68,6 +68,15 @@ const userSchema = new Schema(
     verificationReviewedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     verificationReason: { type: String, default: null },
     verificationNotes: { type: String, default: null },
+    /**
+     * Self-registered staff: the account stays inactive (even after email verification) until an
+     * authorised reviewer gives final institutional approval. Invited staff and students never set it.
+     */
+    approvalRequired: { type: Boolean, default: false },
+    /** Role the applicant asked for. Granted only at final approval, by a Super Admin. */
+    requestedRole: { type: String, enum: [...ROLES, null], default: null },
+    approvedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    approvedAt: { type: Date, default: null },
     mustChangePassword: { type: Boolean, default: false },
     staffId: { type: String, trim: true, default: null },
     managedCampuses: { type: [String], default: [] },
@@ -161,6 +170,8 @@ export function publicUser(u: UserDoc | (UserAttrs & { _id: Types.ObjectId; crea
     verificationReason: (u as { verificationReason?: string }).verificationReason ?? null,
     verificationNotes: (u as { verificationNotes?: string }).verificationNotes ?? null,
     mustChangePassword: Boolean((u as { mustChangePassword?: boolean }).mustChangePassword),
+    approvalRequired: Boolean((u as { approvalRequired?: boolean }).approvalRequired),
+    requestedRole: (u as { requestedRole?: string | null }).requestedRole ?? null,
     staffId: (u as { staffId?: string }).staffId ?? null,
     managedCampuses: (u as { managedCampuses?: string[] }).managedCampuses ?? [],
     counsellorCredentials: (u as { counsellorCredentials?: string }).counsellorCredentials ?? null,

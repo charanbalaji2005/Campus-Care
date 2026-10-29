@@ -16,6 +16,7 @@ import {
   openDirectConversation, participantsOf, serializeAnnouncement, settleAnnouncementSchedule,
 } from '../services/chats.service';
 import { emitBroadcast, emitToUser } from '../realtime/socket';
+import { campusScopeOf, inCampusScope } from '../services/campus-scope.service';
 
 /**
  * Unified Chats center. It only organises what other APIs already authorise:
@@ -119,6 +120,14 @@ chatsRouter.post(
 );
 
 // ------------------------------------------------------------------ official announcements
+/** Campus Admins publish only to campuses they manage; "all campuses" is for Super Admins. */
+function assertAnnouncementCampus(user: { role: string; campusZone?: string | null; managedCampuses?: string[] | null }, campus: string) {
+  const scope = campusScopeOf(user);
+  if (scope === null) return;
+  if (campus === 'all' || !inCampusScope(scope, campus)) {
+    throw new AppError(403, 'campus_out_of_scope', 'You can only publish announcements for the campuses you manage.');
+  }
+}
 const announcementAuthorRole = (role: string) => (role === 'super_admin' ? 'Super Admin' : role === 'admin' ? 'Campus Admin' : role === 'counsellor' ? 'Counsellor' : 'Staff');
 
 chatsRouter.get(
@@ -153,6 +162,7 @@ chatsRouter.post(
   asyncHandler(async (req, res) => {
     const input = parse(announcementPublishSchema, req.body);
     const user = req.user!;
+    assertAnnouncementCampus(user, input.campus);
     const doc = await Announcement.create({
       ...input,
       scheduledAt: input.status === 'scheduled' ? input.scheduledAt : null,
@@ -176,6 +186,9 @@ chatsRouter.patch(
     const doc = await Announcement.findById(req.params.id);
     if (!doc) throw notFound();
     const user = req.user!;
+    // A Campus Admin edits only announcements for their own campuses, and cannot move one elsewhere.
+    assertAnnouncementCampus(user, doc.campus ?? 'all');
+    if (input.campus !== undefined) assertAnnouncementCampus(user, input.campus);
     const before = doc.toObject();
     const wasPublished = (doc.status ?? (doc.published ? 'published' : 'draft')) === 'published';
     const { note, ...changes } = input;

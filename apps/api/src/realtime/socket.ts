@@ -5,6 +5,7 @@ import { RealtimeTicket } from '../models/platform';
 import { Session, User, type UserDoc } from '../models/user';
 import { sha256 } from '../lib/crypto';
 import { logger } from '../lib/logger';
+import { appAudienceForRole, type Role } from '@campuscare/shared';
 
 let io: Server | null = null;
 
@@ -16,6 +17,13 @@ type RoomAuthoriser = (user: UserDoc, id: string) => Promise<boolean>;
 const authorisers: Record<string, RoomAuthoriser> = {};
 export function registerRoomAuthoriser(prefix: 'case' | 'chat' | 'responders' | 'sos' | 'duty' | 'ops', fn: RoomAuthoriser) {
   authorisers[prefix] = fn;
+}
+
+/** Whether [user] may subscribe to [room] ("prefix:id"). Unknown prefixes are refused. */
+export async function canJoinRoom(user: UserDoc, room: string): Promise<boolean> {
+  const [prefix, id] = room.split(':');
+  const authorise = authorisers[prefix];
+  return Boolean(authorise && user.accountStatus === 'active' && (await authorise(user, id ?? '')));
 }
 
 interface SocketData {
@@ -39,6 +47,9 @@ export function initRealtime(server: HttpServer) {
       if (!doc) return next(new Error('unauthorized'));
       const session = await Session.findOne({ _id: doc.sessionId, revokedAt: null, expiresAt: { $gt: new Date() } });
       if (!session) return next(new Error('unauthorized'));
+      // Same rule as the HTTP API: an active account, connected from the app its role belongs to.
+      const user = await User.findById(doc.userId, { role: 1, accountStatus: 1 }).lean();
+      if (!user || user.accountStatus !== 'active' || (session.app && appAudienceForRole(user.role as Role) !== session.app)) return next(new Error('unauthorized'));
       (socket.data as SocketData) = { userId: String(doc.userId), sessionId: String(doc.sessionId) };
       next();
     } catch {
@@ -52,12 +63,10 @@ export function initRealtime(server: HttpServer) {
 
     socket.on('subscribe', async (payload: { room?: string }, ack?: (r: { ok: boolean }) => void) => {
       const room = String(payload?.room ?? '');
-      const [prefix, id] = room.split(':');
-      const authorise = authorisers[prefix];
       try {
         const session = await Session.findOne({ _id: data.sessionId, revokedAt: null, expiresAt: { $gt: new Date() } });
         const user = session ? await User.findById(data.userId) : null;
-        if (!authorise || !user || user.accountStatus !== 'active' || !(await authorise(user, id ?? ''))) {
+        if (!user || !(await canJoinRoom(user, room))) {
           ack?.({ ok: false });
           return;
         }

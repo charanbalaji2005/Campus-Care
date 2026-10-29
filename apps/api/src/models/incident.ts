@@ -1,5 +1,5 @@
 import { Schema, model, type InferSchemaType, type HydratedDocument } from 'mongoose';
-import { COMMITTEE_TYPES, INCIDENT_CATEGORIES, INCIDENT_STATUSES, PRIORITIES, SEVERITIES } from '@campuscare/shared';
+import { COMMITTEE_ELIGIBILITY, COMMITTEE_JOIN_POLICIES, COMMITTEE_TYPES, INCIDENT_CATEGORIES, INCIDENT_STATUSES, PRIORITIES, SEVERITIES } from '@campuscare/shared';
 
 // ------------------------------------------------------------------ atomic counters (case numbers)
 const counterSchema = new Schema({ _id: { type: String, required: true }, seq: { type: Number, default: 0 } });
@@ -24,6 +24,10 @@ const committeeSchema = new Schema(
     slaAcknowledgeHours: { type: Number, default: 24 },
     slaResolveDays: { type: Number, default: 30 },
     active: { type: Boolean, default: true },
+    /** Who may apply from CampusCare College: staff only, or staff and students (by student ID). */
+    memberEligibility: { type: String, enum: COMMITTEE_ELIGIBILITY, default: 'staff' },
+    /** invitation_only committees take no applications: an administrator adds members. */
+    joinPolicy: { type: String, enum: COMMITTEE_JOIN_POLICIES, default: 'open_application' },
   },
   { timestamps: true },
 );
@@ -89,10 +93,13 @@ const incidentSchema = new Schema(
     withdrawnAt: { type: Date, default: null },
     reopenedAt: { type: Date, default: null },
     reopenCount: { type: Number, default: 0 },
+    /** Reporter's campus at submission (missing = the default campus). Used only for Campus Admin scoping. */
+    campus: { type: String, default: null },
   },
   { timestamps: true },
 );
 incidentSchema.index({ caseNumber: 1 }, { unique: true });
+incidentSchema.index({ campus: 1, status: 1, createdAt: -1 });
 incidentSchema.index({ idempotencyKey: 1 }, { unique: true });
 incidentSchema.index({ reporterId: 1, createdAt: -1 });
 incidentSchema.index({ reporterTag: 1, createdAt: -1 });

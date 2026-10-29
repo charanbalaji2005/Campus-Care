@@ -171,7 +171,9 @@ fun IdentityVerificationScreen() {
     ) {
         if (uploadSuccess) {
             SuccessCard(onContinue = {
-                nav.navigate(Routes.Home) { popUpTo(0) { inclusive = true } }
+                // A staff applicant goes back to the application screen; nothing else is open to them yet.
+                if (user?.approvalRequired == true) nav.navigate(Routes.StaffApplication) { popUpTo(Routes.StaffApplication) { inclusive = true } }
+                else nav.navigate(Routes.Home) { popUpTo(0) { inclusive = true } }
             })
             return@CcScreen
         }

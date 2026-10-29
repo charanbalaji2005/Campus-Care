@@ -12,11 +12,14 @@ import { notify } from './services/notification.service';
 import { getSettings } from './services/settings.service';
 import { appLink } from './services/email/email.service';
 import { autoSeedDatabase } from './db/auto-seed';
+import { reconcileLegacyStaffApplications } from './services/staff-registration.service';
 import { startDbWatcher, stopDbWatcher } from './services/db-watcher.service';
 
 async function main() {
   await connectDatabase();
   await autoSeedDatabase();
+  // Self-registered staff from before applications needed approval go back to review (idempotent).
+  await reconcileLegacyStaffApplications().catch((err) => logger.error({ err: (err as Error).message }, 'staff application reconciliation failed'));
   const app = createApp();
   const server = http.createServer(app);
   initRealtime(server);

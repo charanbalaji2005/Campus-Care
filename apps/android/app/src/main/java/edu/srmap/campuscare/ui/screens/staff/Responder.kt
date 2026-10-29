@@ -107,14 +107,23 @@ fun ResponderAlertsScreen() {
     val app = LocalApp.current
     val nav = LocalNav.current
     val context = LocalContext.current
+    val dutyState by app.duty.state.collectAsState()
     val live by app.realtime.connected.collectAsState()
     var showAll by rememberSaveable { mutableStateOf(false) }
     val alerts = rememberLoad(showAll) { app.api.safety.responderAlerts(all = showAll) }
     val walks = rememberLoad { runCatching { app.api.safety.overdueWalks() }.getOrDefault(emptyList()) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    DisposableEffect(Unit) {
-        app.realtime.subscribe("responders:all")
-        onDispose { if (!app.duty.state.value.onDuty) app.realtime.unsubscribe("responders:all") }
+
+    LaunchedEffect(dutyState.onDuty) {
+        alerts.reload()
+    }
+    DisposableEffect(dutyState.onDuty) {
+        if (dutyState.onDuty) {
+            app.realtime.subscribe("responders:all")
+        }
+        onDispose {
+            app.realtime.unsubscribe("responders:all")
+        }
     }
     LaunchedEffect(Unit) { app.realtime.events.collect { e -> if (e.name == "sos:new" || e.name == "sos:updated") { alerts.reload(); walks.reload() } } }
     LaunchedEffect(Unit) { while (true) { delay(1_000); now = System.currentTimeMillis() } }
@@ -125,14 +134,21 @@ fun ResponderAlertsScreen() {
         refreshing = alerts.refreshing, onRefresh = { alerts.reload(); walks.reload() },
         actions = { LiveDot(live, Modifier.padding(end = 12.dp)) },
     ) {
-        ResponderDutyCard()
+        ResponderDutyCard(onChanged = { alerts.reload(); walks.reload() })
         ChoiceChips(listOf("open" to "Active", "all" to "Recent (24h)"), if (showAll) "all" else "open", { showAll = it == "all" })
         LoadContent(alerts, skeleton = { SkeletonList(3) }) { list ->
             val shown = if (showAll) list else list.filter { it.status in OPEN_SOS }
-            if (shown.isEmpty()) EmptyState("No active alerts", message = "New SOS alerts appear here instantly.", icon = Icons.Rounded.Shield)
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                shown.sortedWith(compareBy<SosAlert> { if (it.status in setOf("sent", "queued", "sending", "failed")) 0 else 1 }.thenByDescending { it.createdAt }).forEachIndexed { i, a ->
-                    AlertRow(a, now, Modifier.enterStagger(i)) { nav.navigate(Routes.responderAlert(a.id)) }
+            if (shown.isEmpty()) {
+                if (!dutyState.onDuty && !showAll) {
+                    EmptyState("Off duty", message = "Switch to on duty above to receive and respond to SOS alerts.", icon = Icons.Rounded.Shield)
+                } else {
+                    EmptyState("No active alerts", message = "New SOS alerts appear here instantly.", icon = Icons.Rounded.Shield)
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    shown.sortedWith(compareBy<SosAlert> { if (it.status in setOf("sent", "queued", "sending", "failed")) 0 else 1 }.thenByDescending { it.createdAt }).forEachIndexed { i, a ->
+                        AlertRow(a, now, Modifier.enterStagger(i)) { nav.navigate(Routes.responderAlert(a.id)) }
+                    }
                 }
             }
         }

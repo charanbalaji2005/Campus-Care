@@ -15,6 +15,8 @@ const emergencyAlertSchema = new Schema(
     status: { type: String, enum: SOS_STATUSES, default: 'queued' },
     ...geoFields,
     locationUnavailableReason: { type: String, default: null },
+    locationLabel: { type: String, default: null },
+    severity: { type: String, enum: ['critical', 'high', 'medium', 'low'], default: 'high' },
     note: { type: String, default: null, maxlength: 300 },
     acknowledgedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     acknowledgedAt: { type: Date, default: null },
